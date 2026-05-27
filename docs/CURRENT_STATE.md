@@ -37,16 +37,30 @@ _Last updated: 2026-05-27 — Phase 0 COMPLETE._
   pass (9 auth lifecycle + 6 RLS + …), plus an HTTP smoke on the built bundle (login → /me →
   admin all 200; unauth/bad-password 401); lint/typecheck/build all green.
 
+- **Staging deployed to Hetzner (2026-05-27).** Box `rsoc-staging` (CPX32, Falkenstein, Ubuntu
+  24.04, IP `178.105.241.185`) in the KNN project. Full stack runs via
+  `deploy/docker-compose.staging.yml` and is **verified healthy** (all 7 services up, api
+  `db:up/redis:up`, `knn_app` RLS role bootstrapped, super admin `admin@rsoc.app` seeded). Code in
+  `/opt/rsoc`; secrets in `/opt/rsoc/deploy/.env.staging`. See memory `staging-deployment`.
+
+- **Staging is LIVE with TLS (2026-05-27).** DNS on Cloudflare (zone `rsoc.app`; Namecheap NS →
+  `damian`/`gina.ns.cloudflare.com`; staging A records grey-cloud → `178.105.241.185`). Caddy
+  (`edge` profile) issued Let's Encrypt certs. Verified end-to-end over public HTTPS:
+  - `https://app.staging.rsoc.app/` → 200 (dashboard) · `/api/auth/login` → 200 + tokens
+  - `https://articles.staging.rsoc.app/` → 200 · `https://go.staging.rsoc.app/go/x` → 302
+  - Super-admin `admin@rsoc.app` login works. See memory `staging-deployment`.
+
 ## In progress
 
-- Nothing — Phase 1 closed. Ready for Phase 2.
+- Nothing — staging is live. Ready for Phase 2.
 
 ## Next
 
 - **Phase 2 (Facebook integration)** — OAuth connect, AES-256 token encryption, account/page/pixel
   sync, the per-ad-account rate-limit queue + backoff + circuit breaker (the `BATCHED` state), and
-  `CONNECTION_BROKEN` handling. Stand up the Hetzner staging box (FB needs public HTTPS URLs); see
-  memory `deploy-workflow`.
+  `CONNECTION_BROKEN` handling. Staging now provides the public HTTPS URLs FB needs (FB **test**
+  accounts only — D18). Set `FB_OAUTH_REDIRECT_URI=https://app.staging.rsoc.app/api/facebook/callback`
+  in the FB app + `deploy/.env.staging`.
 
 ## New setup step
 
