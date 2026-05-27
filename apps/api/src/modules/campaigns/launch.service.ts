@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { env } from '@knn/config';
 import { FbConnectionStatus } from '@knn/db';
 import {
+  FbRateLimitError,
   createFbAd,
   createFbAdCreative,
   createFbAdSet,
@@ -10,25 +11,38 @@ import {
   decryptToken,
   uploadFbAdImage,
 } from '@knn/fb';
-import { ROLES, campaignSubmitIssues } from '@knn/shared';
+import { CAMPAIGN_STATUS, ROLES, campaignSubmitIssues, canTransitionCampaign } from '@knn/shared';
+import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
+import { KvNotConfiguredError, type RedirectConfigPayload, writeRedirectConfigs } from '../../lib/kv-sync.js';
+import { notify } from '../../lib/notify.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
+import { generateArticleForCampaign } from '../articles/articles.service.js';
 import { type CampaignWithChildren, campaignInclude, toDraft } from './campaigns.service.js';
 
-/** Our pxe → a Facebook standard conversion event (best-effort for the test path). */
+/** Our pxe → a Facebook standard conversion event. */
 const PXE_TO_EVENT: Record<string, string> = {
   search: 'SEARCH',
   lander: 'VIEW_CONTENT',
   adclick: 'LEAD',
 };
 
-export interface TestLaunchResult {
+export interface FbStructureResult {
   fbCampaignId: string;
   adSets: { id: string; fbAdSetId: string; ads: { id: string; fbAdId: string }[] }[];
 }
+export type TestLaunchResult = FbStructureResult;
 
 type StoredAdSet = CampaignWithChildren['adSets'][number];
+
+interface LaunchPlan {
+  campaign: CampaignWithChildren;
+  token: string;
+  fbAccountId: string;
+  fbPageId: string;
+  adSets: { set: StoredAdSet; fbPixelId: string | null; ads: { ad: StoredAdSet['ads'][number]; storageKey: string | null }[] }[];
+}
 
 /** Core FB targeting spec from an ad set (geo / age / gender / device / OS). */
 function buildTargeting(set: StoredAdSet): Record<string, unknown> {
@@ -47,15 +61,9 @@ function buildTargeting(set: StoredAdSet): Record<string, unknown> {
   return t;
 }
 
-/**
- * Test-launch (DECISION: stopgap before the real Phase 8 pipeline). Pushes a
- * complete campaign to Facebook in **PAUSED** state with the per-ad redirect URL
- * as the destination, to validate the create write-path. Bid strategy is forced to
- * the default (no cap) and placements are left automatic to keep the test simple.
- */
-export async function testLaunchCampaign(auth: AuthContext, campaignId: string): Promise<TestLaunchResult> {
-  // 1. Read phase — validate + resolve all FB ids + the owner's token (no network in the txn).
-  const plan = await runScoped(auth, async (tx) => {
+/** Read phase — validate + resolve FB ids + the owner's token. No network in the txn. */
+async function resolveLaunchPlan(auth: AuthContext, campaignId: string): Promise<LaunchPlan> {
+  return runScoped(auth, async (tx) => {
     const campaign = await tx.campaign.findUnique({ where: { id: campaignId }, include: campaignInclude });
     if (!campaign) throw new AppError(404, 'Campaign not found');
     if (auth.role === ROLES.MEDIA_BUYER && campaign.buyerId !== auth.userId) {
@@ -97,20 +105,22 @@ export async function testLaunchCampaign(auth: AuthContext, campaignId: string):
 
     return { campaign, token: decryptToken(conn.accessTokenEnc), fbAccountId: adAccount.fbAccountId, fbPageId: page.fbPageId, adSets };
   });
+}
 
+/** FB write phase — campaign → ad sets → (image, creative, ad), all at `status`. */
+async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'): Promise<FbStructureResult> {
   const { campaign, token, fbAccountId, fbPageId } = plan;
   const cbo = campaign.budgetMode === 'CAMPAIGN';
 
-  // 2. FB write phase — campaign → ad sets → (image, creative, ad). All PAUSED.
   const fbCampaign = await createFbCampaign(fbAccountId, token, {
     name: campaign.name,
     objective: campaign.objective,
     specialAdCategories: campaign.specialAdCategories,
-    status: 'PAUSED',
+    status,
     dailyBudgetCents: cbo ? campaign.dailyBudgetCents ?? undefined : undefined,
   });
 
-  const adSets: TestLaunchResult['adSets'] = [];
+  const adSets: FbStructureResult['adSets'] = [];
   for (const { set, fbPixelId, ads } of plan.adSets) {
     const fbAdSet = await createFbAdSet(fbAccountId, token, {
       name: set.name,
@@ -124,7 +134,7 @@ export async function testLaunchCampaign(auth: AuthContext, campaignId: string):
       targeting: buildTargeting(set),
       startTime: set.startTime?.toISOString(),
       endTime: set.endTime?.toISOString(),
-      status: 'PAUSED',
+      status,
     });
 
     const adResults: { id: string; fbAdId: string }[] = [];
@@ -151,21 +161,162 @@ export async function testLaunchCampaign(auth: AuthContext, campaignId: string):
         name: ad.name,
         adSetId: fbAdSet.id,
         creativeId: creative.id,
-        status: 'PAUSED',
+        status,
       });
       adResults.push({ id: ad.id, fbAdId: fbAd.id });
     }
     adSets.push({ id: set.id, fbAdSetId: fbAdSet.id, ads: adResults });
   }
 
-  // 3. Persist the returned FB ids.
+  return { fbCampaignId: fbCampaign.id, adSets };
+}
+
+/** Persist the returned FB ids onto the campaign/adsets/ads. */
+async function persistFbIds(auth: AuthContext, campaignId: string, result: FbStructureResult): Promise<void> {
   await runScoped(auth, async (tx) => {
-    await tx.campaign.update({ where: { id: campaign.id }, data: { fbCampaignId: fbCampaign.id } });
-    for (const s of adSets) {
+    await tx.campaign.update({ where: { id: campaignId }, data: { fbCampaignId: result.fbCampaignId } });
+    for (const s of result.adSets) {
       await tx.adSet.update({ where: { id: s.id }, data: { fbAdSetId: s.fbAdSetId } });
       for (const a of s.ads) await tx.ad.update({ where: { id: a.id }, data: { fbAdId: a.fbAdId } });
     }
   });
+}
 
-  return { fbCampaignId: fbCampaign.id, adSets };
+/**
+ * Test-launch (stopgap, task #14): push a complete campaign to Facebook in PAUSED
+ * state with the per-ad redirect URL as the destination, to validate the write-path.
+ */
+export async function testLaunchCampaign(auth: AuthContext, campaignId: string): Promise<TestLaunchResult> {
+  const plan = await resolveLaunchPlan(auth, campaignId);
+  const result = await createFbStructure(plan, 'PAUSED');
+  await persistFbIds(auth, campaignId, result);
+  return result;
+}
+
+/** Verbatim ad creative for AFS `referrerAdCreative` (required for paid traffic). */
+function buildAdCreativeText(ad: StoredAdSet['ads'][number]): string {
+  return [ad.headline, ad.primaryText, ad.description].filter(Boolean).join('. ');
+}
+
+export interface LaunchDeps {
+  generateArticle: (auth: AuthContext, campaignId: string) => Promise<{ slug: string }>;
+  writeRedirectConfigs: (entries: { redirectId: string; config: RedirectConfigPayload }[]) => Promise<void>;
+}
+const defaultLaunchDeps: LaunchDeps = {
+  generateArticle: (auth, id) => generateArticleForCampaign(auth, id),
+  writeRedirectConfigs,
+};
+
+export interface LaunchResult {
+  status: 'ACTIVE' | 'BATCHED';
+  fbCampaignId?: string;
+}
+
+/**
+ * The real launch pipeline (Phase 8). For an approved campaign that already has a
+ * channel (Phase 6): ensure its article (Phase 5) → write each ad's redirect config
+ * to edge KV (Phase 7) → create the Campaign→AdSet→Ad on Facebook **ACTIVE** through
+ * the rate-limited client (D12) → ACTIVE + notify. An FB rate-limit parks it in
+ * BATCHED for a later retry. Idempotent-ish: a campaign already launched (fbCampaignId)
+ * is returned as ACTIVE.
+ */
+export async function launchCampaign(
+  auth: AuthContext,
+  campaignId: string,
+  deps: LaunchDeps = defaultLaunchDeps,
+): Promise<LaunchResult> {
+  const campaign = await runScoped(auth, async (tx) => {
+    const c = await tx.campaign.findUnique({ where: { id: campaignId }, include: campaignInclude });
+    if (!c) throw new AppError(404, 'Campaign not found');
+    if (auth.role === ROLES.MEDIA_BUYER && c.buyerId !== auth.userId) throw new AppError(404, 'Campaign not found');
+    return c;
+  });
+
+  if (campaign.fbCampaignId) return { status: 'ACTIVE', fbCampaignId: campaign.fbCampaignId };
+  if (!campaign.channelId) throw new AppError(409, 'Campaign has no channel assigned yet');
+
+  // 1. Ensure the article exists; get its slug.
+  let slug: string;
+  if (campaign.articleId) {
+    const article = await runScoped(auth, (tx) =>
+      tx.article.findUnique({ where: { id: campaign.articleId! }, select: { slug: true } }),
+    );
+    if (!article) throw new AppError(409, 'Campaign article is missing');
+    slug = article.slug;
+  } else {
+    slug = (await deps.generateArticle(auth, campaignId)).slug;
+  }
+
+  // 2. Resolve the AdSense channel (`ch`) for this campaign (global pool, no RLS).
+  const channel = await runScoped(auth, (tx) =>
+    tx.channel.findUnique({ where: { id: campaign.channelId! }, select: { channelId: true } }),
+  );
+  const articleUrl = `${env.ARTICLE_DOMAIN}/a/${slug}`;
+
+  // 3. Write each ad's redirect config to edge KV (so go.* resolves once ads go live).
+  const entries = campaign.adSets.flatMap((set) =>
+    set.ads.map((ad) => ({
+      redirectId: ad.redirectId,
+      config: {
+        campaignId: campaign.id,
+        active: true,
+        articleUrl,
+        channel: channel?.channelId,
+        rac: campaign.racValue ?? undefined,
+        adCreative: buildAdCreativeText(ad),
+        fallbackUrl: ad.fallbackUrl ?? campaign.fallbackUrl ?? undefined,
+      } satisfies RedirectConfigPayload,
+    })),
+  );
+  try {
+    await deps.writeRedirectConfigs(entries);
+  } catch (err) {
+    // Unconfigured CF is tolerated (redirect falls back until synced); real KV
+    // failures should fail the launch (clicks would otherwise hit the fallback).
+    if (err instanceof KvNotConfiguredError) {
+      console.warn(`[launch] Cloudflare KV not configured — redirect configs not synced for ${campaignId}`);
+    } else {
+      throw err;
+    }
+  }
+
+  // 4. LAUNCHING → create on FB → ACTIVE (or BATCHED on rate limit).
+  await runScoped(auth, async (tx) => {
+    if (canTransitionCampaign(campaign.status, CAMPAIGN_STATUS.LAUNCHING)) {
+      await tx.campaign.update({ where: { id: campaignId }, data: { status: CAMPAIGN_STATUS.LAUNCHING } });
+    }
+  });
+
+  try {
+    const plan = await resolveLaunchPlan(auth, campaignId);
+    const result = await createFbStructure(plan, 'ACTIVE');
+    await persistFbIds(auth, campaignId, result);
+    await runScoped(auth, async (tx) => {
+      await tx.campaign.update({ where: { id: campaignId }, data: { status: CAMPAIGN_STATUS.ACTIVE } });
+      await writeAudit(tx, {
+        orgId: campaign.orgId,
+        actorId: auth.userId,
+        action: 'campaign.launched',
+        entityType: 'campaign',
+        entityId: campaignId,
+        details: { fbCampaignId: result.fbCampaignId },
+      });
+    });
+    await notify({
+      orgId: campaign.orgId,
+      userId: campaign.buyerId,
+      type: 'campaign.live',
+      title: 'Campaign is live',
+      body: `"${campaign.name}" is now live on Facebook.`,
+    });
+    return { status: 'ACTIVE', fbCampaignId: result.fbCampaignId };
+  } catch (err) {
+    if (err instanceof FbRateLimitError) {
+      await runScoped(auth, (tx) =>
+        tx.campaign.update({ where: { id: campaignId }, data: { status: CAMPAIGN_STATUS.BATCHED } }),
+      );
+      return { status: 'BATCHED' };
+    }
+    throw err;
+  }
 }

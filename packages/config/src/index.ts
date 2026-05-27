@@ -96,6 +96,12 @@ const EnvSchema = z.object({
   FX_API_URL: z.string().default('https://api.exchangerate.host'),
   FX_API_KEY: optionalString,
 
+  // Cloudflare KV (Phase 7/8): the origin writes per-ad redirect configs to the
+  // edge Worker's KV namespace at launch. Token needs "Workers KV Storage: Edit".
+  CLOUDFLARE_ACCOUNT_ID: optionalString,
+  CLOUDFLARE_API_TOKEN: optionalString,
+  CF_KV_NAMESPACE_ID: optionalString,
+
   // Storage
   UPLOAD_DIR: z.string().default('./var/uploads'),
 

@@ -14,7 +14,7 @@ import {
   submitCampaign,
   updateCampaign,
 } from './campaigns.service.js';
-import { testLaunchCampaign } from './launch.service.js';
+import { launchCampaign, testLaunchCampaign } from './launch.service.js';
 
 const adminOnly = [authenticate, requireRole(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)];
 
@@ -142,6 +142,21 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
         return reply.send({ article: await generateArticleForCampaign(req.auth, req.params.id) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Real launch (Phase 8): article → KV redirect sync → create on FB ACTIVE → ACTIVE.
+  // Requires the campaign to already have a channel (assigned post-approval, Phase 6).
+  app.post<{ Params: { id: string } }>(
+    '/:id/launch',
+    { preHandler: adminOnly },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.send(await launchCampaign(req.auth, req.params.id));
       } catch (err) {
         return handleRouteError(err, reply);
       }
