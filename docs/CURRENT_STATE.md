@@ -95,8 +95,25 @@ _Last updated: 2026-05-27 — Phase 2 (Facebook integration) COMPLETE + DEPLOYED
   `auth-url` and consent in a Facebook account that is an admin/developer/tester on the app, then
   connect a FB **test** ad account (D18 — never connect a real/prod ad account on staging). The app
   can stay in **Development mode** for this (no business verification needed for app-role users).
-  There's no "Connect Facebook" button in the UI yet — that lands with the dashboard (Phase 10);
-  for now trigger it via `GET /api/facebook/auth-url` (authenticated) and open the returned URL.
+  for now trigger it via the dashboard's **Connect Facebook** button (see below).
+
+## Dashboard auth shell + Facebook connect UI (2026-05-27, Phase 10 slice)
+
+- Built a real (hand-crafted, no Tailwind/shadcn yet — that's the deliberate Phase 10 setup) UI in
+  `apps/web`: `/login` (email+password), an `AuthProvider` with localStorage tokens + single-flight
+  401-refresh, a guarded `/dashboard` shell (top nav, user chip, sign out), and `/dashboard/facebook`
+  — **Connect** button (`auth-url` → FB dialog), connection status (scopes/expiry/connectedAt),
+  synced ad accounts (expandable → pixels) and pages, **Re-sync**, **Disconnect**, and broken-state
+  reconnect. Calls the same-origin `/api` (Caddy). Local dev: set `NEXT_PUBLIC_API_BASE=http://localhost:3000`.
+- **Deployed to staging + verified in-browser:** `/login` renders (KNN dark theme, serif display);
+  an unauthenticated `/dashboard/*` visit redirects to `/login` (client guard). Web build/typecheck/
+  lint green; all 8 services healthy.
+- **Tokens live in localStorage for now** (standard SPA pattern); Phase 11 hardening should move to
+  httpOnly cookies. **The live connect is the user's step** — log in at
+  `https://app.staging.rsoc.app/login`, open Facebook, click **Connect**, consent in a Facebook
+  account that's an admin/dev/tester on the app, and pick a FB **test** ad account (D18). (Couldn't
+  self-verify the authed flow: the staging super-admin password is custom and I won't fabricate a
+  user in the shared DB.)
 
 ## New setup step
 
