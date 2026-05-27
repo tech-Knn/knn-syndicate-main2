@@ -2,7 +2,7 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-27 — Phase 2 (Facebook integration) COMPLETE (gate green; live connect pending FB app creds)._
+_Last updated: 2026-05-27 — Phase 2 (Facebook integration) COMPLETE + DEPLOYED to staging with FB app configured. Only a human OAuth consent (connect a FB **test** ad account) remains to exercise a live round-trip._
 
 ## Done
 
@@ -82,14 +82,21 @@ _Last updated: 2026-05-27 — Phase 2 (Facebook integration) COMPLETE (gate gree
   multi-step wizard UI, DRAFT→PENDING_APPROVAL. Pixel-event mapping (`landerEvent`/`searchEvent`/
   `adclickEvent` on `FbPixel`) gets wired to the `pxe` selector here.
 
-## External dependency to unblock FB live-connect (Phase 2 → 8)
+## Staging now runs Phase 2 with Facebook configured (2026-05-27)
 
-- Create the **Facebook Business app** + business verification (OPEN_QUESTIONS #3); request perms
-  `ads_management, ads_read, pages_show_list, pages_read_engagement, business_management`. Then set
-  `FB_APP_ID` / `FB_APP_SECRET` / `FB_OAUTH_REDIRECT_URI=https://app.staging.rsoc.app/api/facebook/callback`
-  in `deploy/.env.staging` and add that redirect URI to the FB app. Use FB **test** ad accounts on
-  staging only (D18). Until then `auth-url` returns 503 by design; everything else is covered by
-  mocked-Graph tests.
+- Shipped the Phase 2 tree to the box (`git archive HEAD` → `tar -x` into `/opt/rsoc`), set
+  `FB_APP_ID` (906408948523489) + `FB_APP_SECRET` in `/opt/rsoc/deploy/.env.staging` (redirect URI
+  was already `https://app.staging.rsoc.app/api/facebook/callback`), rebuilt `knn-app:latest`, and
+  `up -d --build` (the `migrate` one-shot applied `fb_integration`). **Verified:** migrate exit 0 +
+  "All migrations applied"; the 4 `fb_*` tables exist; api container has all 3 FB vars (so
+  `isFbConfigured()` → true, `auth-url` no longer 503); public `GET /api/facebook/callback` → `302`
+  to `/dashboard/facebook?fb_error=missing_code` over HTTPS.
+- **Remaining = a human step (not code):** the live OAuth round-trip needs someone to open the
+  `auth-url` and consent in a Facebook account that is an admin/developer/tester on the app, then
+  connect a FB **test** ad account (D18 — never connect a real/prod ad account on staging). The app
+  can stay in **Development mode** for this (no business verification needed for app-role users).
+  There's no "Connect Facebook" button in the UI yet — that lands with the dashboard (Phase 10);
+  for now trigger it via `GET /api/facebook/auth-url` (authenticated) and open the returned URL.
 
 ## New setup step
 
