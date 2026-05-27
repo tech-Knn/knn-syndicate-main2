@@ -92,6 +92,27 @@ export async function fetchPixels(fbAccountId: string, accessToken: string): Pro
   return data.map((p) => ({ fbPixelId: p.id, name: p.name ?? p.id }));
 }
 
+export interface AdStatusDTO {
+  fbAdId: string;
+  /** FB effective_status: ACTIVE | PAUSED | DISAPPROVED | WITH_ISSUES | PENDING_REVIEW | … */
+  effectiveStatus: string;
+}
+
+/** Effective status of every ad under a campaign — drives meta-rejection polling (D14). */
+export async function fetchCampaignAdStatuses(
+  fbAccountId: string,
+  accessToken: string,
+  fbCampaignId: string,
+): Promise<AdStatusDTO[]> {
+  const data = await fetchAllPages<{ id: string; effective_status?: string }>({
+    path: `/${fbCampaignId}/ads`,
+    params: { fields: 'id,effective_status', limit: '200' },
+    accessToken,
+    accountId: fbAccountId,
+  });
+  return data.map((a) => ({ fbAdId: a.id, effectiveStatus: a.effective_status ?? '' }));
+}
+
 /** Pages that a specific ad account can promote (owned + client pages). Scopes the
  *  page picker to the chosen ad account rather than the whole connection. */
 export async function fetchPromotePages(

@@ -8,6 +8,7 @@ import {
   releaseChannelForCampaign,
   rolloverChannels,
 } from './channel-pool/channel.service.js';
+import { checkMetaRejections } from './jobs/meta-rejection.js';
 import { refreshFbTokens } from './jobs/token-refresh.js';
 
 interface ChannelJob {
@@ -77,6 +78,17 @@ async function main(): Promise<void> {
     console.error(`[worker] ${QUEUES.CHANNEL_MAINTENANCE} job ${job?.id} failed:`, err.message);
   });
 
+  // Meta-rejection polling (D14): FB has no reliable disapproval webhook, so poll
+  // effective_status; a disapproved ad → META_REJECTED + release channel + notify.
+  const metaRejectionWorker = new Worker(
+    QUEUES.META_REJECTION_CHECK,
+    async () => checkMetaRejections(),
+    { connection, concurrency: 1 },
+  );
+  metaRejectionWorker.on('failed', (job, err) => {
+    console.error(`[worker] ${QUEUES.META_REJECTION_CHECK} job ${job?.id} failed:`, err.message);
+  });
+
   // Repeatable heartbeat — visible in Bull-Board, proves the queue round-trips.
   await getQueue(QUEUES.HEALTH).add(
     'heartbeat',
@@ -94,6 +106,15 @@ async function main(): Promise<void> {
         { action: 'rollover' },
         { removeOnComplete: 50, removeOnFail: 50 },
       );
+    },
+    { timezone: env.BUSINESS_TIMEZONE },
+  );
+
+  // Meta-rejection check every 30 min (D14).
+  const metaRejectionCron = cron.schedule(
+    '*/30 * * * *',
+    () => {
+      void getQueue(QUEUES.META_REJECTION_CHECK).add('check', {}, { removeOnComplete: 50, removeOnFail: 50 });
     },
     { timezone: env.BUSINESS_TIMEZONE },
   );
@@ -119,10 +140,12 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`[worker] ${signal} received, shutting down`);
     midnightCleanup.stop();
+    metaRejectionCron.stop();
     tokenRefreshCron.stop();
     await healthWorker.close();
     await tokenRefreshWorker.close();
     await channelWorker.close();
+    await metaRejectionWorker.close();
     await closeQueues();
     await connection.quit();
     process.exit(0);
