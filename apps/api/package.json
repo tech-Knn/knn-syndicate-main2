@@ -16,6 +16,7 @@
     "@bull-board/fastify": "^6.5.3",
     "@fastify/cors": "^10.0.2",
     "@fastify/helmet": "^12.0.1",
+    "@fastify/multipart": "^9.0.3",
     "@fastify/sensible": "^6.0.2",
     "@knn/config": "workspace:*",
     "@knn/db": "workspace:*",

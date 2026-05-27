@@ -7,12 +7,16 @@
     ".": "./src/index.ts",
     "./constants": "./src/constants.ts",
     "./datetime": "./src/datetime.ts",
-    "./money": "./src/money.ts"
+    "./money": "./src/money.ts",
+    "./campaigns": "./src/campaigns.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
   }
 }

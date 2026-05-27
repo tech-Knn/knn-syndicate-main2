@@ -49,7 +49,8 @@ model Organization {
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
 
-  users User[]
+  users     User[]
+  campaigns Campaign[]
 
   @@map("organizations")
 }
@@ -74,6 +75,7 @@ model User {
   organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
   refreshTokens RefreshToken[]
   fbConnection  FbConnection?
+  campaigns     Campaign[]
 
   @@index([orgId, status])
   @@map("users")
@@ -201,4 +203,157 @@ model PlatformSetting {
   updatedBy String?
 
   @@map("platform_settings")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Ad launcher. Campaign = the "offer" (D5/D6/D7): keywords, RAC, the
+// single article, and the AdSense channel live at CAMPAIGN level; ads are
+// creative variations. Per-ad redirect_id (D9) + selectable pxe (D10).
+// ---------------------------------------------------------------------------
+
+enum CampaignStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  PROCESSING
+  LAUNCHING
+  ACTIVE
+  PAUSED
+  REJECTED
+  BATCHED
+  QUEUED_NO_CHANNEL
+  META_REJECTED
+  ARCHIVED
+}
+
+enum CampaignObjective {
+  OUTCOME_SALES
+  OUTCOME_LEADS
+  OUTCOME_TRAFFIC
+  OUTCOME_ENGAGEMENT
+  OUTCOME_AWARENESS
+  OUTCOME_APP_PROMOTION
+}
+
+enum AdCreativeType {
+  IMAGE
+  VIDEO
+}
+
+model Campaign {
+  id               String            @id @default(uuid()) @db.Uuid
+  orgId            String            @map("org_id") @db.Uuid
+  buyerId          String            @map("buyer_id") @db.Uuid
+  name             String
+  status           CampaignStatus    @default(DRAFT)
+  objective        CampaignObjective @default(OUTCOME_SALES)
+  optimizationGoal String            @default("OFFSITE_CONVERSIONS") @map("optimization_goal")
+
+  /// Campaign-level offer config (D5): keywords array + Related Ad Category + fallback.
+  keywords    Json    @default("[]")
+  racValue    String? @map("rac_value")
+  fallbackUrl String? @map("fallback_url")
+
+  /// Selected Facebook assets — scalar refs to fb_* rows, validated in the service
+  /// layer (no FK so disconnect-churn of fb assets can't cascade-delete campaigns).
+  adAccountId String? @map("ad_account_id") @db.Uuid
+  pageId      String? @map("page_id") @db.Uuid
+
+  /// Wired in later phases: article (Phase 5) and AdSense channel (Phase 6).
+  articleId String? @map("article_id") @db.Uuid
+  channelId String? @map("channel_id") @db.Uuid
+
+  /// Populated on launch (Phase 8).
+  fbCampaignId String? @map("fb_campaign_id")
+
+  submittedAt DateTime? @map("submitted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  buyer        User         @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  adSets       AdSet[]
+
+  @@index([orgId, status])
+  @@index([buyerId])
+  @@map("campaigns")
+}
+
+model AdSet {
+  id               String    @id @default(uuid()) @db.Uuid
+  orgId            String    @map("org_id") @db.Uuid
+  campaignId       String    @map("campaign_id") @db.Uuid
+  name             String
+  /// Daily budget in minor units (cents) of the ad-account currency. Money = integer cents.
+  dailyBudgetCents Int       @map("daily_budget_cents")
+  billingEvent     String    @default("IMPRESSIONS") @map("billing_event")
+  optimizationGoal String    @default("OFFSITE_CONVERSIONS") @map("optimization_goal")
+  /// FB targeting spec (geo / age / gender / interests).
+  targeting        Json      @default("{}")
+  startTime        DateTime? @map("start_time")
+  endTime          DateTime? @map("end_time")
+  fbAdSetId        String?   @map("fb_ad_set_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  ads      Ad[]
+
+  @@index([orgId])
+  @@index([campaignId])
+  @@map("ad_sets")
+}
+
+model Ad {
+  id           String         @id @default(uuid()) @db.Uuid
+  orgId        String         @map("org_id") @db.Uuid
+  adSetId      String         @map("ad_set_id") @db.Uuid
+  name         String
+  /// Creative.
+  headline     String
+  primaryText  String         @map("primary_text")
+  description  String?
+  cta          String         @default("LEARN_MORE")
+  creativeType AdCreativeType @default(IMAGE) @map("creative_type")
+  uploadId     String?        @map("upload_id") @db.Uuid
+
+  /// Per-ad cloaked redirect (D9) — unique link FB targets; resolves ad -> campaign.
+  redirectId  String  @unique @map("redirect_id")
+  /// Per-ad pixel conversion event (D10), default 'search'.
+  pxeEvent    String  @default("search") @map("pxe_event")
+  /// Selected pixel — scalar ref to fb_pixels, validated in the service layer.
+  pixelId     String? @map("pixel_id") @db.Uuid
+  fallbackUrl String? @map("fallback_url")
+  beneficiary String?
+
+  fbAdId    String?  @map("fb_ad_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  adSet  AdSet   @relation(fields: [adSetId], references: [id], onDelete: Cascade)
+  upload Upload? @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+  @@index([adSetId])
+  @@map("ads")
+}
+
+/// An uploaded creative asset (image/video) stored on disk under UPLOAD_DIR.
+model Upload {
+  id         String         @id @default(uuid()) @db.Uuid
+  orgId      String         @map("org_id") @db.Uuid
+  buyerId    String         @map("buyer_id") @db.Uuid
+  kind       AdCreativeType
+  filename   String
+  mimeType   String         @map("mime_type")
+  sizeBytes  Int            @map("size_bytes")
+  storageKey String         @unique @map("storage_key")
+  width      Int?
+  height     Int?
+  createdAt  DateTime       @default(now()) @map("created_at")
+
+  ads Ad[]
+
+  @@index([orgId])
+  @@map("uploads")
 }
