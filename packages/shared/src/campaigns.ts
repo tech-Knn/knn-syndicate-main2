@@ -1,4 +1,11 @@
 import { z } from 'zod';
+import {
+  ATTRIBUTION_WINDOWS,
+  CONVERSION_TYPES,
+  DEVICE_PLATFORMS,
+  MOBILE_OS,
+  SPECIAL_AD_CATEGORIES,
+} from './facebook-options.js';
 
 /**
  * Campaign / ad-set / ad validation, shared by the API (source of truth) and the
@@ -89,15 +96,27 @@ export const adSetInputSchema = z
     ageMin: z.number().int().min(AGE_BOUND_MIN).max(AGE_BOUND_MAX).default(18),
     ageMax: z.number().int().min(AGE_BOUND_MIN).max(AGE_BOUND_MAX).default(AGE_BOUND_MAX),
     genders: z.array(z.enum(GENDERS)).default([]),
-    // Placements.
+    // Placements (granular position keys when manual; see PLACEMENT_OPTIONS).
     placementMode: z.enum(PLACEMENT_MODES).default('automatic'),
-    placements: z.array(z.enum(PLACEMENT_PLATFORMS)).default([]),
+    placements: z.array(z.string()).max(40).default([]),
+    // Extended targeting (parity).
+    excludeCountries: z.array(z.string().length(2)).max(200).default([]),
+    languages: z.array(z.string()).max(50).default([]),
+    devicePlatforms: z.array(z.enum(DEVICE_PLATFORMS)).default([]),
+    mobileOs: z.array(z.enum(MOBILE_OS)).default([]),
+    advantageAudience: z.boolean().default(false),
     // Conversion tracking (ad-set level).
     pixelId: uuid.optional(),
     pxeEvent: z.enum(PXE_EVENTS).default('search'),
+    conversionType: z.enum(CONVERSION_TYPES).default('instant'),
+    // Optimization knobs.
+    costCapCents: z.number().int().min(1).optional(),
+    roasFactor: z.number().min(0).optional(),
+    attributionWindow: z.enum(ATTRIBUTION_WINDOWS).optional(),
     // Schedule.
     startTime: z.string().datetime().optional(),
     endTime: z.string().datetime().optional(),
+    timezone: z.string().optional(),
     ads: z.array(adInputSchema).max(20).default([]),
   })
   .refine((s) => s.ageMax >= s.ageMin, {
@@ -111,6 +130,9 @@ export const campaignDraftSchema = z.object({
   name: z.string().trim().min(1, 'Campaign name is required').max(120),
   objective: z.enum(CAMPAIGN_OBJECTIVES).default('OUTCOME_SALES'),
   optimizationGoal: z.string().default('OFFSITE_CONVERSIONS'),
+  specialAdCategories: z.array(z.enum(SPECIAL_AD_CATEGORIES)).default([]),
+  nameTemplate: z.string().trim().max(200).optional(),
+  adsetNameTemplate: z.string().trim().max(200).optional(),
   budgetMode: z.enum(BUDGET_MODES).default('AD_SET'),
   // Campaign budget (cents) — used under CBO.
   dailyBudgetCents: z.number().int().min(100, 'Minimum daily budget is $1.00').optional(),
