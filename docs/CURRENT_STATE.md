@@ -2,7 +2,30 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-27 — Phase 2 (Facebook integration) COMPLETE, DEPLOYED, and **VERIFIED LIVE**: a real Business Manager connected via Facebook Login for Business and synced 8 ad accounts + pages + pixels end-to-end._
+_Last updated: 2026-05-27 — Phase 3 (Ad launcher) COMPLETE + DEPLOYED. Phase 2 verified live (real BM, FLB, 8 ad accounts synced)._
+
+## Phase 3 — Ad launcher (complete, deployed)
+
+- **Schema** (migration `20260527135109_campaigns_adsets_ads`, RLS on all 4 tables): `campaigns`
+  (the offer — keywords/RAC/article-ref/channel-ref, D5–D7), `ad_sets`, `ads` (unique `redirect_id`
+  D9 + selectable `pxe_event` D10), `uploads` (creative assets). FB asset refs (ad account/page/
+  pixel) are scalar so disconnect-churn can't cascade-delete campaigns.
+- **Validation** in `@knn/shared/campaigns`: lenient `campaignDraftSchema` + strict
+  `campaignSubmitIssues` gate (DRAFT → PENDING_APPROVAL). 8 unit tests.
+- **API** `apps/api/src/modules/{campaigns,uploads}`: campaigns CRUD + submit (buyer-scoped;
+  FB-asset ownership enforced; only DRAFT editable/deletable) and a validated multipart creative
+  upload (type/size). 11 integration tests on real PG (incl. unique redirect ids, 422 issue list,
+  buyer-scope 404). `AppError` now carries `details` for the submit-issue list.
+- **Web** `apps/web/app/dashboard/campaigns`: campaigns list (status badges, edit/view/delete) + a
+  3-step **launch wizard** (Offer → Ad sets & ads w/ creative upload + pixel/pxe → Review) that
+  pulls the buyer's live FB ad accounts/pages/pixels, saves drafts, and submits (surfacing server
+  issues). `next.config` `extensionAlias` lets Next resolve the shared package's `.js` specifiers.
+- **Gate green:** typecheck (10) · lint · build (5) · tests (api 31, shared 22, fb 14, worker 5,
+  db 6, redirect 2). **Deployed:** migration applied on staging; `/api/campaigns` + `/api/uploads`
+  mounted (401), `/dashboard/campaigns` served (200).
+- **Pending = your in-browser walkthrough** of the wizard with real FB data (I can't log into the
+  authed dashboard — the super-admin password is custom and I won't fabricate a session). The
+  wizard will list the 8 ad accounts you just connected.
 
 ## Facebook connect — verified live (2026-05-27)
 
