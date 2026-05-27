@@ -1,6 +1,20 @@
 # @knn/redirect — public redirect engine (Hono)
 
-The latency-critical public hot path. Target **p95 < 50ms**, cache HIT < 5ms. Keep it lean.
+The latency-critical public hot path. Target **p95 < 50ms** globally. Keep it lean.
+
+## Architecture: EDGE (Cloudflare Workers + KV)
+
+Phase-7 research settled D3's "move to edge later": a single origin can't hit <50ms for a global FB
+audience (physics — 90–250ms RTT for far users), so the redirect runs as a **Hono Cloudflare Worker**
+across 300+ PoPs (~8–25ms). Per-ad configs live in **Workers KV** (`redirect:{redirectId}`), write-
+through-synced from the origin (Postgres = source of truth) on launch/update. Hot path = one KV read
+(1–5ms) + the pure `resolveRedirect` — **no origin round-trip**.
+
+- `src/resolve.ts` — the pure, runtime-agnostic decision (tested in `resolve.test.ts`).
+- `src/worker.ts` + `wrangler.toml` — the Worker (the deploy target). KV eventually-consistent
+  (config propagates in seconds — fine; configs change rarely).
+- `src/app.ts` / `index.ts` — the legacy Node service (still on the box); **transitional** — retire
+  once the Worker is live on `go.*` and DNS/route is switched.
 
 ## Invariants
 

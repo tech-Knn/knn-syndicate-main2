@@ -1,0 +1,24 @@
+# Cloudflare Worker config for the edge redirect engine (Phase 7).
+#
+# One-time provisioning (needs the Cloudflare account that holds the zone):
+#   1. wrangler kv namespace create REDIRECTS      → paste the id below
+#   2. set ARTICLE_FALLBACK to the approved article domain
+#   3. uncomment + set the route to the redirect host (go.<approved-domain>)
+#   4. wrangler deploy
+name = "knn-redirect"
+main = "src/worker.ts"
+compatibility_date = "2026-05-01"
+workers_dev = false
+
+# KV holding redirect:{redirectId} configs, write-through-synced from the origin.
+[[kv_namespaces]]
+binding = "REDIRECTS"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[vars]
+ARTICLE_FALLBACK = "https://articles.10linesabout.com/"
+
+# Route the worker to the redirect domain (the zone must be on this Cloudflare account):
+# [[routes]]
+# pattern = "go.10linesabout.com/*"
+# zone_name = "10linesabout.com"

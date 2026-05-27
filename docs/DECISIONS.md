@@ -172,3 +172,20 @@ the approved plan.
   `channel_assignment` span, open today's — per-day attribution for Phase 9), then drain the queue.
 - **Pool provisioning**: `packages/db/scripts/seed-channels.ts` (`CHANNEL_POOL_SEED`, target 2000).
   Placeholder ids today; real AdSense **custom-channel** ids are the operational input (OPEN_QUESTIONS #4).
+
+### 2026-05-28 — Phase 7 redirect runs at the EDGE (Cloudflare Workers + KV), refining D3
+
+- **Decision:** deploy the redirect as a **Hono Cloudflare Worker** (not on the single Hetzner origin).
+  Research (RSOC best practice + edge-latency benchmarks): a single region can't hit <50ms for a
+  global FB audience (90–250ms RTT for far users); Workers serve from 300+ PoPs at ~8–25ms. Hono is
+  the edge-native standard (Express→Hono-on-Workers measured p50 4ms). This is D3's "move to edge
+  later" brought forward — Hono code ports unchanged.
+- **Data:** per-ad configs in **Workers KV** (`redirect:{redirectId}`), write-through-synced from the
+  origin (Postgres = source of truth) on launch/update; KV reads are 1–5ms globally and eventually
+  consistent (fine — configs rarely change). Hot path = one KV read + the pure `resolveRedirect`, no
+  origin round-trip. Workers can't open Postgres/Redis TCP — hence KV.
+- **Code:** `apps/redirect/src/resolve.ts` (pure, runtime-agnostic: paid-vs-organic detection via
+  `fbclid`/`utm_source`, AFS param build `rc`/`ch`/`rac`/`styleId`/`txid`, weighted traffic split,
+  fallback) + `worker.ts`/`wrangler.toml`. The legacy Node service is transitional (retire once the
+  Worker is live on `go.*`). Needs CF provisioning (Workers, KV namespace, `go.*` route, API token
+  for the origin→KV sync) — then deploy + the p95<50ms latency benchmark.
