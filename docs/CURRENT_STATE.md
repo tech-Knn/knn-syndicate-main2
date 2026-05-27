@@ -2,7 +2,7 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-27 — Phase 0 COMPLETE._
+_Last updated: 2026-05-27 — Phase 2 (Facebook integration) COMPLETE (gate green; live connect pending FB app creds)._
 
 ## Done
 
@@ -50,17 +50,46 @@ _Last updated: 2026-05-27 — Phase 0 COMPLETE._
   - `https://articles.staging.rsoc.app/` → 200 · `https://go.staging.rsoc.app/go/x` → 302
   - Super-admin `admin@rsoc.app` login works. See memory `staging-deployment`.
 
+- **Phase 2 — Facebook integration DONE (gate green).** New `@knn/fb` package: AES-256-GCM token
+  crypto, `fetch`-based Graph client, error classification (`FbConnectionBrokenError` /
+  `FbRateLimitError` / `FbApiError`), per-ad-account `FbRateLimiter` (concurrency cap + exponential
+  backoff honoring `x-business-use-case-usage` + circuit breaker — D12), OAuth (long-lived ~60d token
+  exchange, `FB_SCOPES`), and account/page/pixel sync → DTOs. See `packages/fb/CLAUDE.md`.
+  - **Schema** (migration `20260527104653_fb_integration`, RLS on all 4 tables): `FbConnection`
+    (one per user, encrypted token, `status` ACTIVE/CONNECTION_BROKEN), `FbAdAccount`, `FbPage`,
+    `FbPixel` (lander/search/adclick event slots for the D10 `pxe` selector, populated later).
+  - **API** `apps/api/src/modules/facebook`: signed OAuth `state` (jose, 10m, purpose-checked);
+    `GET /api/facebook/auth-url` (503 if FB unconfigured), public `GET /callback` (exchange → encrypt
+    → upsert connection → best-effort sync → 302 back to `WEB_DOMAIN/dashboard/facebook`),
+    `GET /status|/accounts|/pages|/accounts/:id/pixels`, `POST /sync`, `DELETE /connection`. All
+    reads go through `runScoped` (RLS-scoped); the callback uses `withSystem` (no session yet).
+    Sync fetches from FB **outside** any txn, then upserts in one txn (no open txn across network).
+  - **Worker** daily `token-refresh` job (02:30 IST cron → `TOKEN_REFRESH` queue): extends tokens in
+    a 10-day window, degrades expired/190 → `CONNECTION_BROKEN` + notify, nudges re-auth ~day 55 (D13).
+  - **Verified:** typecheck (10 pkgs), lint (0), build (5). **Tests:** FB integration (7, real PG +
+    mocked Graph — connect+sync, broken-token→CONNECTION_BROKEN+notify, scoped lists, auth guards),
+    token-refresh (5, real PG + injected clock — extend/degrade/proactive), `@knn/fb` unit (12 —
+    classification, BUC throttle→retryAfterMs, limiter backoff/breaker, DTO mapping).
+
 ## In progress
 
-- Nothing — staging is live. Ready for Phase 2.
+- Nothing — Phase 2 code-complete and green. Ready for Phase 3.
 
 ## Next
 
-- **Phase 2 (Facebook integration)** — OAuth connect, AES-256 token encryption, account/page/pixel
-  sync, the per-ad-account rate-limit queue + backoff + circuit breaker (the `BATCHED` state), and
-  `CONNECTION_BROKEN` handling. Staging now provides the public HTTPS URLs FB needs (FB **test**
-  accounts only — D18). Set `FB_OAUTH_REDIRECT_URI=https://app.staging.rsoc.app/api/facebook/callback`
-  in the FB app + `deploy/.env.staging`.
+- **Phase 3 (Ad launcher)** — Campaign→Adset→Ad(s) schema (campaign-level keywords/RAC/article-ref/
+  channel-ref per D5–D7; per-ad `redirect_id` + `pxe` per D9/D10), multipart creative upload, the
+  multi-step wizard UI, DRAFT→PENDING_APPROVAL. Pixel-event mapping (`landerEvent`/`searchEvent`/
+  `adclickEvent` on `FbPixel`) gets wired to the `pxe` selector here.
+
+## External dependency to unblock FB live-connect (Phase 2 → 8)
+
+- Create the **Facebook Business app** + business verification (OPEN_QUESTIONS #3); request perms
+  `ads_management, ads_read, pages_show_list, pages_read_engagement, business_management`. Then set
+  `FB_APP_ID` / `FB_APP_SECRET` / `FB_OAUTH_REDIRECT_URI=https://app.staging.rsoc.app/api/facebook/callback`
+  in `deploy/.env.staging` and add that redirect URI to the FB app. Use FB **test** ad accounts on
+  staging only (D18). Until then `auth-url` returns 503 by design; everything else is covered by
+  mocked-Graph tests.
 
 ## New setup step
 

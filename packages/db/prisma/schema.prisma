@@ -31,6 +31,11 @@ enum OrgStatus {
   SUSPENDED
 }
 
+enum FbConnectionStatus {
+  ACTIVE
+  CONNECTION_BROKEN
+}
+
 /// A tenant company. The platform operator (KNN) is the single `isPlatform` org
 /// that SUPER_ADMINs belong to; every other org is a client company.
 model Organization {
@@ -68,9 +73,88 @@ model User {
 
   organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
   refreshTokens RefreshToken[]
+  fbConnection  FbConnection?
 
   @@index([orgId, status])
   @@map("users")
+}
+
+/// A media buyer's connected Facebook account (one per user). The long-lived
+/// user access token (~60d) is stored encrypted at rest (AES-256-GCM).
+model FbConnection {
+  id             String             @id @default(uuid()) @db.Uuid
+  orgId          String             @map("org_id") @db.Uuid
+  userId         String             @unique @map("user_id") @db.Uuid
+  fbUserId       String             @map("fb_user_id")
+  accessTokenEnc String             @map("access_token_enc")
+  tokenExpiresAt DateTime           @map("token_expires_at")
+  scopes         String             @default("")
+  status         FbConnectionStatus @default(ACTIVE)
+  lastError      String?            @map("last_error")
+  connectedAt    DateTime           @default(now()) @map("connected_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  adAccounts FbAdAccount[]
+  pages      FbPage[]
+
+  @@index([orgId, status])
+  @@index([status, tokenExpiresAt])
+  @@map("fb_connections")
+}
+
+model FbAdAccount {
+  id           String   @id @default(uuid()) @db.Uuid
+  orgId        String   @map("org_id") @db.Uuid
+  connectionId String   @map("connection_id") @db.Uuid
+  fbAccountId  String   @map("fb_account_id")
+  name         String
+  currency     String
+  timezone     String
+  status       String
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  connection FbConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  pixels     FbPixel[]
+
+  @@unique([connectionId, fbAccountId])
+  @@index([orgId])
+  @@map("fb_ad_accounts")
+}
+
+model FbPage {
+  id           String   @id @default(uuid()) @db.Uuid
+  orgId        String   @map("org_id") @db.Uuid
+  connectionId String   @map("connection_id") @db.Uuid
+  fbPageId     String   @map("fb_page_id")
+  name         String
+  instagramId  String?  @map("instagram_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  connection FbConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, fbPageId])
+  @@index([orgId])
+  @@map("fb_pages")
+}
+
+model FbPixel {
+  id           String   @id @default(uuid()) @db.Uuid
+  orgId        String   @map("org_id") @db.Uuid
+  adAccountId  String   @map("ad_account_id") @db.Uuid
+  fbPixelId    String   @map("fb_pixel_id")
+  name         String
+  landerEvent  String?  @map("lander_event")
+  searchEvent  String?  @map("search_event")
+  adclickEvent String?  @map("adclick_event")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  adAccount FbAdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([adAccountId, fbPixelId])
+  @@index([orgId])
+  @@map("fb_pixels")
 }
 
 /// Hashed refresh tokens for JWT rotation (access 15m / refresh 7d).

@@ -2,6 +2,7 @@ import { Worker, type Job } from 'bullmq';
 import cron from 'node-cron';
 import { env } from '@knn/config';
 import { QUEUES, closeQueues, createConnection, getQueue } from '@knn/queue';
+import { refreshFbTokens } from './jobs/token-refresh.js';
 
 /**
  * Background worker. Phase 0 runs a heartbeat on the HEALTH queue (so Bull-Board
@@ -25,6 +26,20 @@ async function main(): Promise<void> {
     console.error(`[worker] job ${job?.id} failed:`, err.message);
   });
 
+  // Facebook long-lived-token maintenance (DECISION D13). The cron enqueues a job
+  // daily (IST); this worker extends/degrades connections per the refresh windows.
+  const tokenRefreshWorker = new Worker(
+    QUEUES.TOKEN_REFRESH,
+    async () => refreshFbTokens(),
+    { connection, concurrency: 1 },
+  );
+  tokenRefreshWorker.on('completed', (job, result) => {
+    console.log(`[worker] ${QUEUES.TOKEN_REFRESH} job ${job.id} done:`, result);
+  });
+  tokenRefreshWorker.on('failed', (job, err) => {
+    console.error(`[worker] ${QUEUES.TOKEN_REFRESH} job ${job?.id} failed:`, err.message);
+  });
+
   // Repeatable heartbeat — visible in Bull-Board, proves the queue round-trips.
   await getQueue(QUEUES.HEALTH).add(
     'heartbeat',
@@ -41,6 +56,20 @@ async function main(): Promise<void> {
     { timezone: env.BUSINESS_TIMEZONE },
   );
 
+  // Daily FB token maintenance at 02:30 IST. Runs daily (not every ~60d) so a
+  // token entering the refresh window or expiring is handled within a day (D13).
+  const tokenRefreshCron = cron.schedule(
+    '30 2 * * *',
+    () => {
+      void getQueue(QUEUES.TOKEN_REFRESH).add(
+        'refresh',
+        {},
+        { removeOnComplete: 50, removeOnFail: 50 },
+      );
+    },
+    { timezone: env.BUSINESS_TIMEZONE },
+  );
+
   console.log(
     `[worker] started — processing ${QUEUES.HEALTH}; business tz=${env.BUSINESS_TIMEZONE}`,
   );
@@ -48,7 +77,9 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`[worker] ${signal} received, shutting down`);
     midnightCleanup.stop();
+    tokenRefreshCron.stop();
     await healthWorker.close();
+    await tokenRefreshWorker.close();
     await closeQueues();
     await connection.quit();
     process.exit(0);

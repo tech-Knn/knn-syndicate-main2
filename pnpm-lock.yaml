@@ -65,6 +65,9 @@ importers:
       '@knn/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@knn/fb':
+        specifier: workspace:*
+        version: link:../../packages/fb
       '@knn/queue':
         specifier: workspace:*
         version: link:../../packages/queue
@@ -177,6 +180,9 @@ importers:
       '@knn/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@knn/fb':
+        specifier: workspace:*
+        version: link:../../packages/fb
       '@knn/queue':
         specifier: workspace:*
         version: link:../../packages/queue
@@ -239,6 +245,15 @@ importers:
       prisma:
         specifier: ^6.2.1
         version: 6.19.3(typescript@5.9.3)
+
+  packages/fb:
+    dependencies:
+      '@knn/config':
+        specifier: workspace:*
+        version: link:../config
+      '@knn/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/queue:
     dependencies:

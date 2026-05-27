@@ -8,11 +8,13 @@
     "build": "tsup",
     "start": "node dist/index.js",
     "lint": "eslint src",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@knn/config": "workspace:*",
     "@knn/db": "workspace:*",
+    "@knn/fb": "workspace:*",
     "@knn/queue": "workspace:*",
     "@knn/shared": "workspace:*",
     "@prisma/client": "^6.2.1",

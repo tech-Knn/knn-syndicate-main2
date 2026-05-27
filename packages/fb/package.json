@@ -1,0 +1,19 @@
+{
+  "name": "@knn/fb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@knn/config": "workspace:*",
+    "@knn/shared": "workspace:*"
+  }
+}

@@ -19,6 +19,7 @@
     "@fastify/sensible": "^6.0.2",
     "@knn/config": "workspace:*",
     "@knn/db": "workspace:*",
+    "@knn/fb": "workspace:*",
     "@knn/queue": "workspace:*",
     "@knn/shared": "workspace:*",
     "@prisma/client": "^6.2.1",
