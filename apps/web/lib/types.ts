@@ -87,16 +87,26 @@ export interface CampaignAdSet {
   optimizationGoal: string;
   bidStrategy: string | null;
   countries: string[];
+  excludeCountries: string[];
   ageMin: number;
   ageMax: number;
   genders: string[];
+  languages: string[];
+  devicePlatforms: string[];
+  mobileOs: string[];
+  advantageAudience: boolean;
   placementMode: string;
   placements: string[];
   pixelId: string | null;
   pxeEvent: string;
+  conversionType: string;
+  costCapCents: number | null;
+  roasFactor: number | null;
+  attributionWindow: string | null;
   targeting: Record<string, unknown>;
   startTime: string | null;
   endTime: string | null;
+  timezone: string | null;
   ads: CampaignAd[];
 }
 
@@ -106,6 +116,9 @@ export interface Campaign {
   status: CampaignStatus;
   objective: string;
   optimizationGoal: string;
+  specialAdCategories: string[];
+  nameTemplate: string | null;
+  adsetNameTemplate: string | null;
   budgetMode: 'AD_SET' | 'CAMPAIGN';
   dailyBudgetCents: number | null;
   keywords: string[];

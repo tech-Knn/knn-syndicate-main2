@@ -6,21 +6,31 @@ import Link from 'next/link';
 import {
   AGE_BOUND_MAX,
   AGE_BOUND_MIN,
+  ATTRIBUTION_WINDOWS,
+  BID_STRATEGIES,
   CAMPAIGN_OBJECTIVES,
+  CONVERSION_TYPES,
   COUNTRIES,
   CTA_OPTIONS,
+  DEVICE_PLATFORMS,
   GENDERS,
-  PLACEMENT_PLATFORMS,
+  LANGUAGES,
+  MOBILE_OS,
+  PLACEMENT_OPTIONS,
   PXE_EVENTS,
+  SPECIAL_AD_CATEGORIES,
+  type AttributionWindow,
+  type BidStrategy,
   type CampaignDraftInput,
+  type ConversionType,
   type CreativeType,
   type CtaOption,
+  type DevicePlatform,
   type Gender,
+  type MobileOs,
   type PlacementMode,
-  type PlacementPlatform,
   type PxeEvent,
-  campaignDraftSchema,
-  campaignSubmitIssues,
+  type SpecialAdCategory,
   countryName,
 } from '@knn/shared';
 import { ApiError, campaigns as campaignsApi, facebook, uploads as uploadsApi } from '@/lib/api';
@@ -48,19 +58,35 @@ interface AdSetForm {
   name: string;
   dailyBudget: string;
   countries: string[];
+  excludeCountries: string[];
   ageMin: number;
   ageMax: number;
   genders: Gender[];
+  languages: string[];
+  devicePlatforms: DevicePlatform[];
+  mobileOs: MobileOs[];
+  advantageAudience: boolean;
   placementMode: PlacementMode;
-  placements: PlacementPlatform[];
+  placements: string[];
   pixelId?: string;
   pxeEvent: PxeEvent;
+  conversionType: ConversionType;
+  bidStrategy: BidStrategy | '';
+  costCap: string;
+  roasFactor: string;
+  attributionWindow: AttributionWindow | '';
+  startTime: string;
+  endTime: string;
+  timezone: string;
   ads: AdForm[];
 }
 
 interface CampaignForm {
   name: string;
   objective: (typeof CAMPAIGN_OBJECTIVES)[number];
+  specialAdCategories: SpecialAdCategory[];
+  nameTemplate: string;
+  adsetNameTemplate: string;
   budgetMode: 'AD_SET' | 'CAMPAIGN';
   dailyBudget: string;
   keywords: string[];
@@ -78,19 +104,12 @@ const centsOrUndef = (dollars: string): number | undefined => {
   return c > 0 ? c : undefined;
 };
 const MONEY = (cents: number): string => `$${(cents / 100).toFixed(2)}`;
+function toggle<T>(list: T[], v: T): T[] {
+  return list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
+}
 
 function emptyAd(): AdForm {
-  return {
-    key: uuid(),
-    name: '',
-    headline: '',
-    primaryText: '',
-    description: '',
-    cta: 'LEARN_MORE',
-    creativeType: 'IMAGE',
-    fallbackUrl: '',
-    beneficiary: '',
-  };
+  return { key: uuid(), name: '', headline: '', primaryText: '', description: '', cta: 'LEARN_MORE', creativeType: 'IMAGE', fallbackUrl: '', beneficiary: '' };
 }
 
 function emptyAdSet(n: number): AdSetForm {
@@ -99,12 +118,25 @@ function emptyAdSet(n: number): AdSetForm {
     name: `Ad set ${n}`,
     dailyBudget: '50',
     countries: [],
+    excludeCountries: [],
     ageMin: 18,
     ageMax: AGE_BOUND_MAX,
     genders: [],
+    languages: [],
+    devicePlatforms: [],
+    mobileOs: [],
+    advantageAudience: false,
     placementMode: 'automatic',
     placements: [],
     pxeEvent: 'search',
+    conversionType: 'instant',
+    bidStrategy: '',
+    costCap: '',
+    roasFactor: '',
+    attributionWindow: '',
+    startTime: '',
+    endTime: '',
+    timezone: '',
     ads: [emptyAd()],
   };
 }
@@ -114,6 +146,9 @@ function toForm(c?: Campaign): CampaignForm {
     return {
       name: '',
       objective: 'OUTCOME_SALES',
+      specialAdCategories: [],
+      nameTemplate: '',
+      adsetNameTemplate: '',
       budgetMode: 'AD_SET',
       dailyBudget: '100',
       keywords: [],
@@ -128,6 +163,9 @@ function toForm(c?: Campaign): CampaignForm {
   return {
     name: c.name,
     objective: (c.objective as CampaignForm['objective']) ?? 'OUTCOME_SALES',
+    specialAdCategories: (c.specialAdCategories as SpecialAdCategory[]) ?? [],
+    nameTemplate: c.nameTemplate ?? '',
+    adsetNameTemplate: c.adsetNameTemplate ?? '',
     budgetMode: c.budgetMode,
     dailyBudget: c.dailyBudgetCents ? (c.dailyBudgetCents / 100).toString() : '',
     keywords: c.keywords ?? [],
@@ -141,13 +179,26 @@ function toForm(c?: Campaign): CampaignForm {
       name: s.name,
       dailyBudget: s.dailyBudgetCents ? (s.dailyBudgetCents / 100).toString() : '',
       countries: s.countries ?? [],
+      excludeCountries: s.excludeCountries ?? [],
       ageMin: s.ageMin,
       ageMax: s.ageMax,
       genders: (s.genders as Gender[]) ?? [],
+      languages: s.languages ?? [],
+      devicePlatforms: (s.devicePlatforms as DevicePlatform[]) ?? [],
+      mobileOs: (s.mobileOs as MobileOs[]) ?? [],
+      advantageAudience: s.advantageAudience ?? false,
       placementMode: (s.placementMode as PlacementMode) ?? 'automatic',
-      placements: (s.placements as PlacementPlatform[]) ?? [],
+      placements: s.placements ?? [],
       pixelId: s.pixelId ?? undefined,
       pxeEvent: (s.pxeEvent as PxeEvent) ?? 'search',
+      conversionType: (s.conversionType as ConversionType) ?? 'instant',
+      bidStrategy: (s.bidStrategy as BidStrategy) ?? '',
+      costCap: s.costCapCents ? (s.costCapCents / 100).toString() : '',
+      roasFactor: s.roasFactor ? String(s.roasFactor) : '',
+      attributionWindow: (s.attributionWindow as AttributionWindow) ?? '',
+      startTime: s.startTime ? s.startTime.slice(0, 16) : '',
+      endTime: s.endTime ? s.endTime.slice(0, 16) : '',
+      timezone: s.timezone ?? '',
       ads: s.ads.map((a) => ({
         key: uuid(),
         name: a.name,
@@ -170,6 +221,9 @@ function toDraft(form: CampaignForm): CampaignDraftInput {
   return {
     name: form.name.trim(),
     objective: form.objective,
+    specialAdCategories: form.specialAdCategories,
+    nameTemplate: form.nameTemplate.trim() || undefined,
+    adsetNameTemplate: form.adsetNameTemplate.trim() || undefined,
     budgetMode: form.budgetMode,
     dailyBudgetCents: cbo ? centsOrUndef(form.dailyBudget) : undefined,
     keywords: form.keywords,
@@ -182,13 +236,26 @@ function toDraft(form: CampaignForm): CampaignDraftInput {
       name: s.name.trim(),
       dailyBudgetCents: cbo ? undefined : centsOrUndef(s.dailyBudget),
       countries: s.countries,
+      excludeCountries: s.excludeCountries,
       ageMin: s.ageMin,
       ageMax: s.ageMax,
       genders: s.genders,
+      languages: s.languages,
+      devicePlatforms: s.devicePlatforms,
+      mobileOs: s.mobileOs,
+      advantageAudience: s.advantageAudience,
       placementMode: s.placementMode,
       placements: s.placementMode === 'manual' ? s.placements : [],
       pixelId: s.pixelId || undefined,
       pxeEvent: s.pxeEvent,
+      conversionType: s.conversionType,
+      bidStrategy: s.bidStrategy || undefined,
+      costCapCents: centsOrUndef(s.costCap),
+      roasFactor: s.roasFactor ? Number(s.roasFactor) : undefined,
+      attributionWindow: s.attributionWindow || undefined,
+      startTime: s.startTime ? new Date(s.startTime).toISOString() : undefined,
+      endTime: s.endTime ? new Date(s.endTime).toISOString() : undefined,
+      timezone: s.timezone || undefined,
       ads: s.ads.map((a) => ({
         name: a.name.trim(),
         headline: a.headline.trim(),
@@ -204,8 +271,8 @@ function toDraft(form: CampaignForm): CampaignDraftInput {
   };
 }
 
-/** Hard fields the API's draft schema needs on present entities (clear messages, no raw 400s). */
-function localErrors(form: CampaignForm): string[] {
+/** Hard fields the API's draft schema requires on present entities (blocks Save draft). */
+function hardErrors(form: CampaignForm): string[] {
   const errs: string[] = [];
   if (!form.name.trim()) errs.push('Campaign name is required.');
   if (form.budgetMode === 'CAMPAIGN') {
@@ -225,6 +292,29 @@ function localErrors(form: CampaignForm): string[] {
     });
   });
   return errs;
+}
+
+/** Full completeness for submit — computed directly from the form (always specific). */
+function formIssues(form: CampaignForm): string[] {
+  const issues = [...hardErrors(form)];
+  if (!form.adAccountId) issues.push('Select a Facebook ad account.');
+  if (!form.pageId) issues.push('Select a Facebook page.');
+  if (form.keywords.length === 0) issues.push('Add at least one keyword.');
+  if (!form.racValue.trim()) issues.push('Set the RAC (Related Ad Category) value.');
+  if (form.budgetMode === 'CAMPAIGN' && !centsOrUndef(form.dailyBudget)) issues.push('Set the campaign daily budget.');
+  if (form.adSets.length === 0) issues.push('Add at least one ad set.');
+  form.adSets.forEach((s, i) => {
+    const L = `Ad set ${i + 1}`;
+    if (form.budgetMode === 'AD_SET' && !centsOrUndef(s.dailyBudget)) issues.push(`${L} needs a daily budget.`);
+    if (s.countries.length === 0) issues.push(`${L} needs at least one target country.`);
+    if (!s.pixelId) issues.push(`${L} needs a pixel.`);
+    if (s.placementMode === 'manual' && s.placements.length === 0) issues.push(`${L} needs at least one placement.`);
+    if (s.ads.length === 0) issues.push(`${L} needs at least one ad.`);
+    s.ads.forEach((a, j) => {
+      if (!a.uploadId) issues.push(`Ad ${i + 1}.${j + 1} needs a creative.`);
+    });
+  });
+  return [...new Set(issues)];
 }
 
 const STEPS = ['Offer', 'Ad sets', 'Review'];
@@ -277,26 +367,19 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
 
   const patch = useCallback((p: Partial<CampaignForm>) => setForm((f) => ({ ...f, ...p })), []);
   const patchAdSet = useCallback(
-    (key: string, p: Partial<AdSetForm>) =>
-      setForm((f) => ({ ...f, adSets: f.adSets.map((s) => (s.key === key ? { ...s, ...p } : s)) })),
+    (key: string, p: Partial<AdSetForm>) => setForm((f) => ({ ...f, adSets: f.adSets.map((s) => (s.key === key ? { ...s, ...p } : s)) })),
     [],
   );
   const patchAd = useCallback(
     (setKey: string, adKey: string, p: Partial<AdForm>) =>
       setForm((f) => ({
         ...f,
-        adSets: f.adSets.map((s) =>
-          s.key === setKey ? { ...s, ads: s.ads.map((a) => (a.key === adKey ? { ...a, ...p } : a)) } : s,
-        ),
+        adSets: f.adSets.map((s) => (s.key === setKey ? { ...s, ads: s.ads.map((a) => (a.key === adKey ? { ...a, ...p } : a)) } : s)),
       })),
     [],
   );
 
-  const clientIssues = useMemo(() => {
-    const parsed = campaignDraftSchema.safeParse(toDraft(form));
-    if (!parsed.success) return ['Some fields still need fixing (see earlier steps).'];
-    return campaignSubmitIssues(parsed.data);
-  }, [form]);
+  const issues = useMemo(() => formIssues(form), [form]);
 
   async function uploadCreative(setKey: string, ad: AdForm, file: File) {
     setUploadingKey(ad.key);
@@ -317,7 +400,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
   }
 
   async function saveDraft(): Promise<Campaign | null> {
-    const errs = localErrors(form);
+    const errs = hardErrors(form);
     if (errs.length) {
       setBannerError(errs[0] ?? 'Fix the highlighted fields.');
       return null;
@@ -355,11 +438,8 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
       await campaignsApi.submit(saved.id);
       router.push('/dashboard/campaigns');
     } catch (err) {
-      if (err instanceof ApiError && err.status === 422 && Array.isArray(err.details)) {
-        setServerIssues(err.details as string[]);
-      } else {
-        setBannerError(err instanceof ApiError ? err.message : 'Could not submit.');
-      }
+      if (err instanceof ApiError && err.status === 422 && Array.isArray(err.details)) setServerIssues(err.details as string[]);
+      else setBannerError(err instanceof ApiError ? err.message : 'Could not submit.');
     } finally {
       setSubmitting(false);
     }
@@ -369,13 +449,9 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
     <div className={styles.wrap}>
       <div className={styles.head}>
         <div>
-          <h1 className={`serif ${styles.title}`}>
-            {readOnly ? campaign?.name : campaign ? 'Edit campaign' : 'New campaign'}
-          </h1>
+          <h1 className={`serif ${styles.title}`}>{readOnly ? campaign?.name : campaign ? 'Edit campaign' : 'New campaign'}</h1>
           <p className={styles.subtitle}>
-            {readOnly
-              ? 'This campaign has been submitted and is read-only.'
-              : 'Campaign → ad sets (audience, budget, pixel) → ads (creatives).'}
+            {readOnly ? 'This campaign has been submitted and is read-only.' : 'Campaign → ad sets (audience, placements, budget, pixel) → ads.'}
           </p>
         </div>
         <Link href="/dashboard/campaigns" className={styles.removeBtn} style={{ alignSelf: 'center' }}>
@@ -386,12 +462,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
       {!readOnly && (
         <div className={styles.steps}>
           {STEPS.map((label, i) => (
-            <div
-              key={label}
-              className={`${styles.step} ${i === step ? styles.stepActive : i < step ? styles.stepDone : ''}`}
-              onClick={() => setStep(i)}
-              role="button"
-            >
+            <div key={label} className={`${styles.step} ${i === step ? styles.stepActive : i < step ? styles.stepDone : ''}`} onClick={() => setStep(i)} role="button">
               <span className={styles.stepNum}>{i + 1}</span>
               {label}
             </div>
@@ -412,17 +483,9 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
         ) : step === 0 ? (
           <OfferStep form={form} patch={patch} accounts={accounts} pages={pages} />
         ) : step === 1 ? (
-          <AdSetsStep
-            form={form}
-            pixels={pixels}
-            patchAdSet={patchAdSet}
-            patchAd={patchAd}
-            setForm={setForm}
-            uploadingKey={uploadingKey}
-            uploadCreative={uploadCreative}
-          />
+          <AdSetsStep form={form} pixels={pixels} patchAdSet={patchAdSet} patchAd={patchAd} setForm={setForm} uploadingKey={uploadingKey} uploadCreative={uploadCreative} />
         ) : (
-          <ReviewStep form={form} accounts={accounts} pages={pages} issues={[...serverIssues, ...clientIssues]} />
+          <ReviewStep form={form} accounts={accounts} pages={pages} issues={[...serverIssues, ...issues]} />
         )}
       </Card>
 
@@ -438,7 +501,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
             {step < STEPS.length - 1 ? (
               <Button onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}>Next</Button>
             ) : (
-              <Button onClick={() => void onSubmit()} loading={submitting} disabled={clientIssues.length > 0}>
+              <Button onClick={() => void onSubmit()} loading={submitting} disabled={issues.length > 0}>
                 Submit for approval
               </Button>
             )}
@@ -449,18 +512,11 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
   );
 }
 
-// ---- Country picker --------------------------------------------------------
+// ---- Reusable pickers ------------------------------------------------------
 
-function CountryPicker({ selected, onChange }: { selected: string[]; onChange: (codes: string[]) => void }) {
+function CountryPicker({ selected, onChange, placeholder }: { selected: string[]; onChange: (codes: string[]) => void; placeholder?: string }) {
   const [search, setSearch] = useState('');
-  const filtered = COUNTRIES.filter(
-    (c) =>
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
-      c.code.toLowerCase() === search.toLowerCase(),
-  );
-  const toggle = (code: string) =>
-    onChange(selected.includes(code) ? selected.filter((x) => x !== code) : [...selected, code]);
-
+  const filtered = COUNTRIES.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()) || c.code.toLowerCase() === search.toLowerCase());
   return (
     <div>
       {selected.length > 0 && (
@@ -468,23 +524,18 @@ function CountryPicker({ selected, onChange }: { selected: string[]; onChange: (
           {selected.map((code) => (
             <span key={code} className={styles.chip}>
               {countryName(code)}
-              <button className={styles.chipX} onClick={() => toggle(code)}>
+              <button className={styles.chipX} onClick={() => onChange(toggle(selected, code))}>
                 ×
               </button>
             </span>
           ))}
         </div>
       )}
-      <input
-        className={styles.input}
-        placeholder="Search countries…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-      />
+      <input className={styles.input} placeholder={placeholder ?? 'Search countries…'} value={search} onChange={(e) => setSearch(e.target.value)} />
       <div className={styles.countryList}>
         {filtered.map((c) => (
           <label key={c.code} className={styles.countryItem}>
-            <input type="checkbox" checked={selected.includes(c.code)} onChange={() => toggle(c.code)} />
+            <input type="checkbox" checked={selected.includes(c.code)} onChange={() => onChange(toggle(selected, c.code))} />
             {c.name}
           </label>
         ))}
@@ -494,19 +545,26 @@ function CountryPicker({ selected, onChange }: { selected: string[]; onChange: (
   );
 }
 
+function ChipGroup<T extends string>({ options, selected, onToggle, allLabel }: { options: readonly { value: T; label: string }[]; selected: T[]; onToggle: (v: T) => void; allLabel?: string }) {
+  return (
+    <div className={styles.toggle}>
+      {allLabel && (
+        <span className={`${styles.toggleBtn} ${selected.length === 0 ? styles.toggleOn : ''}`} style={{ opacity: 0.85 }}>
+          {allLabel}
+        </span>
+      )}
+      {options.map((o) => (
+        <button key={o.value} className={`${styles.toggleBtn} ${selected.includes(o.value) ? styles.toggleOn : ''}`} onClick={() => onToggle(o.value)}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ---- Steps -----------------------------------------------------------------
 
-function OfferStep({
-  form,
-  patch,
-  accounts,
-  pages,
-}: {
-  form: CampaignForm;
-  patch: (p: Partial<CampaignForm>) => void;
-  accounts: FbAccount[];
-  pages: FbPage[];
-}) {
+function OfferStep({ form, patch, accounts, pages }: { form: CampaignForm; patch: (p: Partial<CampaignForm>) => void; accounts: FbAccount[]; pages: FbPage[] }) {
   const [keywordDraft, setKeywordDraft] = useState('');
   function addKeyword() {
     const k = keywordDraft.trim();
@@ -542,16 +600,10 @@ function OfferStep({
         <div className={styles.field}>
           <label className={styles.label}>Budget optimization</label>
           <div className={styles.toggle}>
-            <button
-              className={`${styles.toggleBtn} ${form.budgetMode === 'AD_SET' ? styles.toggleOn : ''}`}
-              onClick={() => patch({ budgetMode: 'AD_SET' })}
-            >
+            <button className={`${styles.toggleBtn} ${form.budgetMode === 'AD_SET' ? styles.toggleOn : ''}`} onClick={() => patch({ budgetMode: 'AD_SET' })}>
               Per ad set (ABO)
             </button>
-            <button
-              className={`${styles.toggleBtn} ${form.budgetMode === 'CAMPAIGN' ? styles.toggleOn : ''}`}
-              onClick={() => patch({ budgetMode: 'CAMPAIGN' })}
-            >
+            <button className={`${styles.toggleBtn} ${form.budgetMode === 'CAMPAIGN' ? styles.toggleOn : ''}`} onClick={() => patch({ budgetMode: 'CAMPAIGN' })}>
               Campaign (CBO)
             </button>
           </div>
@@ -562,6 +614,16 @@ function OfferStep({
             <input className={styles.input} type="number" min="1" step="1" value={form.dailyBudget} onChange={(e) => patch({ dailyBudget: e.target.value })} />
           </div>
         )}
+        <div className={`${styles.field} ${styles.full}`}>
+          <label className={styles.label}>Special ad categories</label>
+          <ChipGroup
+            options={SPECIAL_AD_CATEGORIES.map((c) => ({ value: c, label: c.replace(/_/g, ' ').toLowerCase() }))}
+            selected={form.specialAdCategories}
+            onToggle={(v) => patch({ specialAdCategories: toggle(form.specialAdCategories, v) })}
+            allLabel="None"
+          />
+          <span className={styles.hint}>Required by Facebook for credit / employment / housing / social-issue offers.</span>
+        </div>
         <div className={styles.field}>
           <label className={styles.label}>Ad account</label>
           <select className={styles.select} value={form.adAccountId} onChange={(e) => patch({ adAccountId: e.target.value, pageId: '' })}>
@@ -620,6 +682,14 @@ function OfferStep({
             </div>
           )}
         </div>
+        <div className={styles.field}>
+          <label className={styles.label}>Campaign name template</label>
+          <input className={styles.input} value={form.nameTemplate} onChange={(e) => patch({ nameTemplate: e.target.value })} placeholder="{country} - {query} - {id}" />
+        </div>
+        <div className={styles.field}>
+          <label className={styles.label}>Ad set name template</label>
+          <input className={styles.input} value={form.adsetNameTemplate} onChange={(e) => patch({ adsetNameTemplate: e.target.value })} placeholder="{country} - {age} - {id}" />
+        </div>
         <div className={`${styles.field} ${styles.full}`}>
           <label className={styles.label}>Fallback URL (non-ad traffic)</label>
           <input className={styles.input} value={form.fallbackUrl} onChange={(e) => patch({ fallbackUrl: e.target.value })} placeholder="https://…" />
@@ -648,213 +718,279 @@ function AdSetsStep({
 }) {
   const cbo = form.budgetMode === 'CAMPAIGN';
   const hasAccount = Boolean(form.adAccountId);
+  const placementsByPlatform = useMemo(() => {
+    const groups: Record<string, typeof PLACEMENT_OPTIONS[number][]> = {};
+    for (const p of PLACEMENT_OPTIONS) (groups[p.platform] ??= []).push(p);
+    return groups;
+  }, []);
 
   const addAdSet = () => setForm((f) => ({ ...f, adSets: [...f.adSets, emptyAdSet(f.adSets.length + 1)] }));
   const removeAdSet = (key: string) => setForm((f) => ({ ...f, adSets: f.adSets.filter((s) => s.key !== key) }));
-  const addAd = (setKey: string) =>
-    setForm((f) => ({ ...f, adSets: f.adSets.map((s) => (s.key === setKey ? { ...s, ads: [...s.ads, emptyAd()] } : s)) }));
+  const addAd = (setKey: string) => setForm((f) => ({ ...f, adSets: f.adSets.map((s) => (s.key === setKey ? { ...s, ads: [...s.ads, emptyAd()] } : s)) }));
   const removeAd = (setKey: string, adKey: string) =>
-    setForm((f) => ({
-      ...f,
-      adSets: f.adSets.map((s) => (s.key === setKey ? { ...s, ads: s.ads.filter((a) => a.key !== adKey) } : s)),
-    }));
+    setForm((f) => ({ ...f, adSets: f.adSets.map((s) => (s.key === setKey ? { ...s, ads: s.ads.filter((a) => a.key !== adKey) } : s)) }));
 
   return (
     <div>
-      {form.adSets.map((set, i) => {
-        const toggleGender = (g: Gender) =>
-          patchAdSet(set.key, {
-            genders: set.genders.includes(g) ? set.genders.filter((x) => x !== g) : [...set.genders, g],
-          });
-        const togglePlacement = (p: PlacementPlatform) =>
-          patchAdSet(set.key, {
-            placements: set.placements.includes(p) ? set.placements.filter((x) => x !== p) : [...set.placements, p],
-          });
-        return (
-          <div key={set.key} className={styles.adset}>
-            <div className={styles.adsetHead}>
-              <span className={styles.adsetTitle}>Ad set {i + 1}</span>
-              {form.adSets.length > 1 && (
-                <button className={styles.removeBtn} onClick={() => removeAdSet(set.key)}>
-                  Remove ad set
-                </button>
-              )}
-            </div>
+      {form.adSets.map((set, i) => (
+        <div key={set.key} className={styles.adset}>
+          <div className={styles.adsetHead}>
+            <span className={styles.adsetTitle}>Ad set {i + 1}</span>
+            {form.adSets.length > 1 && (
+              <button className={styles.removeBtn} onClick={() => removeAdSet(set.key)}>
+                Remove ad set
+              </button>
+            )}
+          </div>
 
-            <div className={styles.grid}>
+          <div className={styles.grid}>
+            <div className={styles.field}>
+              <label className={styles.label}>Name</label>
+              <input className={styles.input} value={set.name} onChange={(e) => patchAdSet(set.key, { name: e.target.value })} />
+            </div>
+            {!cbo && (
               <div className={styles.field}>
-                <label className={styles.label}>Name</label>
-                <input className={styles.input} value={set.name} onChange={(e) => patchAdSet(set.key, { name: e.target.value })} />
+                <label className={styles.label}>Daily budget (USD)</label>
+                <input className={styles.input} type="number" min="1" step="1" value={set.dailyBudget} onChange={(e) => patchAdSet(set.key, { dailyBudget: e.target.value })} />
               </div>
-              {!cbo && (
-                <div className={styles.field}>
-                  <label className={styles.label}>Daily budget (USD)</label>
-                  <input className={styles.input} type="number" min="1" step="1" value={set.dailyBudget} onChange={(e) => patchAdSet(set.key, { dailyBudget: e.target.value })} />
-                </div>
-              )}
-            </div>
+            )}
+          </div>
 
-            {/* Audience */}
-            <div className={styles.section}>
-              <div className={styles.sectionHead}>
-                <h3 className={styles.sectionTitle}>Audience</h3>
+          {/* Audience */}
+          <div className={styles.section}>
+            <div className={styles.sectionHead}>
+              <h3 className={styles.sectionTitle}>Audience</h3>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Countries</label>
+              <CountryPicker selected={set.countries} onChange={(codes) => patchAdSet(set.key, { countries: codes })} />
+            </div>
+            <div className={styles.field} style={{ marginTop: '1rem' }}>
+              <label className={styles.label}>Exclude countries</label>
+              <CountryPicker selected={set.excludeCountries} onChange={(codes) => patchAdSet(set.key, { excludeCountries: codes })} placeholder="Search countries to exclude…" />
+            </div>
+            <div className={styles.grid} style={{ marginTop: '1rem' }}>
+              <div className={styles.field}>
+                <label className={styles.label}>Age min</label>
+                <input className={styles.input} type="number" min={AGE_BOUND_MIN} max={AGE_BOUND_MAX} value={set.ageMin} onChange={(e) => patchAdSet(set.key, { ageMin: Number(e.target.value) })} />
               </div>
               <div className={styles.field}>
-                <label className={styles.label}>Countries</label>
-                <CountryPicker selected={set.countries} onChange={(codes) => patchAdSet(set.key, { countries: codes })} />
+                <label className={styles.label}>Age max</label>
+                <input className={styles.input} type="number" min={AGE_BOUND_MIN} max={AGE_BOUND_MAX} value={set.ageMax} onChange={(e) => patchAdSet(set.key, { ageMax: Number(e.target.value) })} />
               </div>
-              <div className={styles.grid} style={{ marginTop: '1rem' }}>
-                <div className={styles.field}>
-                  <label className={styles.label}>Age min</label>
-                  <input className={styles.input} type="number" min={AGE_BOUND_MIN} max={AGE_BOUND_MAX} value={set.ageMin} onChange={(e) => patchAdSet(set.key, { ageMin: Number(e.target.value) })} />
-                </div>
-                <div className={styles.field}>
-                  <label className={styles.label}>Age max</label>
-                  <input className={styles.input} type="number" min={AGE_BOUND_MIN} max={AGE_BOUND_MAX} value={set.ageMax} onChange={(e) => patchAdSet(set.key, { ageMax: Number(e.target.value) })} />
-                </div>
-                <div className={`${styles.field} ${styles.full}`}>
-                  <label className={styles.label}>Gender</label>
-                  <div className={styles.toggle}>
-                    <button className={`${styles.toggleBtn} ${set.genders.length === 0 ? styles.toggleOn : ''}`} onClick={() => patchAdSet(set.key, { genders: [] })}>
-                      All
-                    </button>
-                    {GENDERS.map((g) => (
-                      <button key={g} className={`${styles.toggleBtn} ${set.genders.includes(g) ? styles.toggleOn : ''}`} onClick={() => toggleGender(g)}>
-                        {g[0]?.toUpperCase()}
-                        {g.slice(1)}
-                      </button>
-                    ))}
-                  </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Gender</label>
+                <ChipGroup options={GENDERS.map((g) => ({ value: g, label: g[0]!.toUpperCase() + g.slice(1) }))} selected={set.genders} onToggle={(g) => patchAdSet(set.key, { genders: toggle(set.genders, g) })} allLabel="All" />
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Devices</label>
+                <ChipGroup options={DEVICE_PLATFORMS.map((d) => ({ value: d, label: d[0]!.toUpperCase() + d.slice(1) }))} selected={set.devicePlatforms} onToggle={(d) => patchAdSet(set.key, { devicePlatforms: toggle(set.devicePlatforms, d) })} allLabel="All" />
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Mobile OS</label>
+                <ChipGroup options={MOBILE_OS.map((o) => ({ value: o, label: o === 'ios' ? 'iOS' : 'Android' }))} selected={set.mobileOs} onToggle={(o) => patchAdSet(set.key, { mobileOs: toggle(set.mobileOs, o) })} allLabel="All" />
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Advantage+ audience</label>
+                <div className={styles.toggle}>
+                  <button className={`${styles.toggleBtn} ${set.advantageAudience ? styles.toggleOn : ''}`} onClick={() => patchAdSet(set.key, { advantageAudience: !set.advantageAudience })}>
+                    {set.advantageAudience ? 'On' : 'Off'}
+                  </button>
                 </div>
               </div>
-            </div>
-
-            {/* Placements */}
-            <div className={styles.section}>
-              <div className={styles.sectionHead}>
-                <h3 className={styles.sectionTitle}>Placements</h3>
-              </div>
-              <div className={styles.toggle}>
-                <button className={`${styles.toggleBtn} ${set.placementMode === 'automatic' ? styles.toggleOn : ''}`} onClick={() => patchAdSet(set.key, { placementMode: 'automatic' })}>
-                  Automatic
-                </button>
-                <button className={`${styles.toggleBtn} ${set.placementMode === 'manual' ? styles.toggleOn : ''}`} onClick={() => patchAdSet(set.key, { placementMode: 'manual' })}>
-                  Manual
-                </button>
-              </div>
-              {set.placementMode === 'manual' && (
-                <div className={styles.chips} style={{ marginTop: '0.6rem' }}>
-                  {PLACEMENT_PLATFORMS.map((p) => (
-                    <button key={p} className={`${styles.toggleBtn} ${set.placements.includes(p) ? styles.toggleOn : ''}`} onClick={() => togglePlacement(p)}>
-                      {p.replace(/_/g, ' ')}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Conversion tracking */}
-            <div className={styles.section}>
-              <div className={styles.sectionHead}>
-                <h3 className={styles.sectionTitle}>Conversion tracking</h3>
-              </div>
-              <div className={styles.grid}>
-                <div className={styles.field}>
-                  <label className={styles.label}>Pixel</label>
-                  <select className={styles.select} value={set.pixelId ?? ''} onChange={(e) => patchAdSet(set.key, { pixelId: e.target.value || undefined })} disabled={!hasAccount}>
-                    <option value="">{hasAccount ? 'Select a pixel…' : 'Pick an ad account first'}</option>
-                    {pixels.map((px) => (
-                      <option key={px.id} value={px.id}>
-                        {px.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className={styles.field}>
-                  <label className={styles.label}>Conversion event (pxe)</label>
-                  <select className={styles.select} value={set.pxeEvent} onChange={(e) => patchAdSet(set.key, { pxeEvent: e.target.value as PxeEvent })}>
-                    {PXE_EVENTS.map((p) => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Ads */}
-            <div className={styles.section}>
-              <div className={styles.sectionHead}>
-                <h3 className={styles.sectionTitle}>Ads</h3>
-                <span className={styles.count}>{set.ads.length}</span>
-              </div>
-              {set.ads.map((ad, j) => (
-                <div key={ad.key} className={styles.ad}>
-                  <div className={styles.adHead}>
-                    <span className={styles.adLabel}>
-                      AD {i + 1}.{j + 1}
-                    </span>
-                    {set.ads.length > 1 && (
-                      <button className={styles.removeBtn} onClick={() => removeAd(set.key, ad.key)}>
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                  <div className={styles.grid}>
-                    <div className={styles.field}>
-                      <label className={styles.label}>Ad name</label>
-                      <input className={styles.input} value={ad.name} onChange={(e) => patchAd(set.key, ad.key, { name: e.target.value })} />
-                    </div>
-                    <div className={styles.field}>
-                      <label className={styles.label}>Headline</label>
-                      <input className={styles.input} value={ad.headline} onChange={(e) => patchAd(set.key, ad.key, { headline: e.target.value })} />
-                    </div>
-                    <div className={`${styles.field} ${styles.full}`}>
-                      <label className={styles.label}>Primary text</label>
-                      <textarea className={styles.textarea} value={ad.primaryText} onChange={(e) => patchAd(set.key, ad.key, { primaryText: e.target.value })} />
-                    </div>
-                    <div className={styles.field}>
-                      <label className={styles.label}>Call to action</label>
-                      <select className={styles.select} value={ad.cta} onChange={(e) => patchAd(set.key, ad.key, { cta: e.target.value as CtaOption })}>
-                        {CTA_OPTIONS.map((c) => (
-                          <option key={c} value={c}>
-                            {c.replace(/_/g, ' ')}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className={`${styles.field} ${styles.full}`}>
-                      <label className={styles.label}>Creative</label>
-                      <div className={styles.creative}>
-                        {ad.previewUrl && <img className={styles.thumb} src={ad.previewUrl} alt="creative preview" />}
-                        <label className={styles.removeBtn} style={{ cursor: 'pointer' }}>
-                          {uploadingKey === ad.key ? 'Uploading…' : ad.uploadId ? 'Replace' : 'Upload image / video'}
-                          <input
-                            type="file"
-                            accept="image/*,video/mp4,video/quicktime"
-                            hidden
-                            onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                              const file = e.target.files?.[0];
-                              if (file) uploadCreative(set.key, ad, file);
-                            }}
-                          />
-                        </label>
-                        {ad.uploadName && <span className={styles.creativeMeta}>{ad.uploadName}</span>}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-              <div style={{ marginTop: '0.75rem' }}>
-                <button className={styles.addBtn} onClick={() => addAd(set.key)}>
-                  + Add ad
-                </button>
+              <div className={`${styles.field} ${styles.full}`}>
+                <label className={styles.label}>Languages</label>
+                <ChipGroup options={LANGUAGES.map((l) => ({ value: l.code, label: l.name }))} selected={set.languages} onToggle={(c) => patchAdSet(set.key, { languages: toggle(set.languages, c) })} allLabel="All" />
               </div>
             </div>
           </div>
-        );
-      })}
+
+          {/* Placements */}
+          <div className={styles.section}>
+            <div className={styles.sectionHead}>
+              <h3 className={styles.sectionTitle}>Placements</h3>
+            </div>
+            <div className={styles.toggle}>
+              <button className={`${styles.toggleBtn} ${set.placementMode === 'automatic' ? styles.toggleOn : ''}`} onClick={() => patchAdSet(set.key, { placementMode: 'automatic' })}>
+                Automatic
+              </button>
+              <button className={`${styles.toggleBtn} ${set.placementMode === 'manual' ? styles.toggleOn : ''}`} onClick={() => patchAdSet(set.key, { placementMode: 'manual' })}>
+                Manual
+              </button>
+            </div>
+            {set.placementMode === 'manual' &&
+              Object.entries(placementsByPlatform).map(([platform, opts]) => (
+                <div key={platform} style={{ marginTop: '0.7rem' }}>
+                  <span className={styles.metaLabel}>{platform}</span>
+                  <div className={styles.toggle} style={{ marginTop: '0.3rem' }}>
+                    {opts.map((o) => (
+                      <button key={o.key} className={`${styles.toggleBtn} ${set.placements.includes(o.key) ? styles.toggleOn : ''}`} onClick={() => patchAdSet(set.key, { placements: toggle(set.placements, o.key) })}>
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+          </div>
+
+          {/* Conversion tracking */}
+          <div className={styles.section}>
+            <div className={styles.sectionHead}>
+              <h3 className={styles.sectionTitle}>Conversion tracking</h3>
+            </div>
+            <div className={styles.grid}>
+              <div className={styles.field}>
+                <label className={styles.label}>Pixel</label>
+                <select className={styles.select} value={set.pixelId ?? ''} onChange={(e) => patchAdSet(set.key, { pixelId: e.target.value || undefined })} disabled={!hasAccount}>
+                  <option value="">{hasAccount ? 'Select a pixel…' : 'Pick an ad account first'}</option>
+                  {pixels.map((px) => (
+                    <option key={px.id} value={px.id}>
+                      {px.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Conversion event (pxe)</label>
+                <select className={styles.select} value={set.pxeEvent} onChange={(e) => patchAdSet(set.key, { pxeEvent: e.target.value as PxeEvent })}>
+                  {PXE_EVENTS.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Conversion reporting</label>
+                <div className={styles.toggle}>
+                  {CONVERSION_TYPES.map((c) => (
+                    <button key={c} className={`${styles.toggleBtn} ${set.conversionType === c ? styles.toggleOn : ''}`} onClick={() => patchAdSet(set.key, { conversionType: c })}>
+                      {c[0]!.toUpperCase() + c.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Optimization & schedule */}
+          <div className={styles.section}>
+            <div className={styles.sectionHead}>
+              <h3 className={styles.sectionTitle}>Optimization & schedule</h3>
+            </div>
+            <div className={styles.grid}>
+              <div className={styles.field}>
+                <label className={styles.label}>Bid strategy</label>
+                <select className={styles.select} value={set.bidStrategy} onChange={(e) => patchAdSet(set.key, { bidStrategy: e.target.value as BidStrategy | '' })}>
+                  <option value="">Highest volume (default)</option>
+                  {BID_STRATEGIES.map((b) => (
+                    <option key={b} value={b}>
+                      {b.replace(/_/g, ' ').toLowerCase()}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Cost cap (USD, optional)</label>
+                <input className={styles.input} type="number" min="0" step="0.01" value={set.costCap} onChange={(e) => patchAdSet(set.key, { costCap: e.target.value })} />
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>ROAS factor (optional)</label>
+                <input className={styles.input} type="number" min="0" step="0.1" value={set.roasFactor} onChange={(e) => patchAdSet(set.key, { roasFactor: e.target.value })} />
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Attribution window</label>
+                <select className={styles.select} value={set.attributionWindow} onChange={(e) => patchAdSet(set.key, { attributionWindow: e.target.value as AttributionWindow | '' })}>
+                  <option value="">Default</option>
+                  {ATTRIBUTION_WINDOWS.map((w) => (
+                    <option key={w} value={w}>
+                      {w.replace(/_/g, ' ')}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Start (optional)</label>
+                <input className={styles.input} type="datetime-local" value={set.startTime} onChange={(e) => patchAdSet(set.key, { startTime: e.target.value })} />
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>End (optional)</label>
+                <input className={styles.input} type="datetime-local" value={set.endTime} onChange={(e) => patchAdSet(set.key, { endTime: e.target.value })} />
+              </div>
+            </div>
+          </div>
+
+          {/* Ads */}
+          <div className={styles.section}>
+            <div className={styles.sectionHead}>
+              <h3 className={styles.sectionTitle}>Ads</h3>
+              <span className={styles.count}>{set.ads.length}</span>
+            </div>
+            {set.ads.map((ad, j) => (
+              <div key={ad.key} className={styles.ad}>
+                <div className={styles.adHead}>
+                  <span className={styles.adLabel}>
+                    AD {i + 1}.{j + 1}
+                  </span>
+                  {set.ads.length > 1 && (
+                    <button className={styles.removeBtn} onClick={() => removeAd(set.key, ad.key)}>
+                      Remove
+                    </button>
+                  )}
+                </div>
+                <div className={styles.grid}>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Ad name</label>
+                    <input className={styles.input} value={ad.name} onChange={(e) => patchAd(set.key, ad.key, { name: e.target.value })} />
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Headline</label>
+                    <input className={styles.input} value={ad.headline} onChange={(e) => patchAd(set.key, ad.key, { headline: e.target.value })} />
+                  </div>
+                  <div className={`${styles.field} ${styles.full}`}>
+                    <label className={styles.label}>Primary text</label>
+                    <textarea className={styles.textarea} value={ad.primaryText} onChange={(e) => patchAd(set.key, ad.key, { primaryText: e.target.value })} />
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Call to action</label>
+                    <select className={styles.select} value={ad.cta} onChange={(e) => patchAd(set.key, ad.key, { cta: e.target.value as CtaOption })}>
+                      {CTA_OPTIONS.map((c) => (
+                        <option key={c} value={c}>
+                          {c.replace(/_/g, ' ')}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className={`${styles.field} ${styles.full}`}>
+                    <label className={styles.label}>Creative</label>
+                    <div className={styles.creative}>
+                      {ad.previewUrl && <img className={styles.thumb} src={ad.previewUrl} alt="creative preview" />}
+                      <label className={styles.removeBtn} style={{ cursor: 'pointer' }}>
+                        {uploadingKey === ad.key ? 'Uploading…' : ad.uploadId ? 'Replace' : 'Upload image / video'}
+                        <input
+                          type="file"
+                          accept="image/*,video/mp4,video/quicktime"
+                          hidden
+                          onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                            const file = e.target.files?.[0];
+                            if (file) uploadCreative(set.key, ad, file);
+                          }}
+                        />
+                      </label>
+                      {ad.uploadName && <span className={styles.creativeMeta}>{ad.uploadName}</span>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div style={{ marginTop: '0.75rem' }}>
+              <button className={styles.addBtn} onClick={() => addAd(set.key)}>
+                + Add ad
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
 
       <button className={styles.addBtn} onClick={addAdSet}>
         + Add ad set
@@ -863,24 +999,11 @@ function AdSetsStep({
   );
 }
 
-function ReviewStep({
-  form,
-  accounts,
-  pages,
-  issues,
-}: {
-  form: CampaignForm;
-  accounts: FbAccount[];
-  pages: FbPage[];
-  issues: string[];
-}) {
+function ReviewStep({ form, accounts, pages, issues }: { form: CampaignForm; accounts: FbAccount[]; pages: FbPage[]; issues: string[] }) {
   const account = accounts.find((a) => a.id === form.adAccountId);
   const page = pages.find((p) => p.id === form.pageId);
   const totalAds = form.adSets.reduce((n, s) => n + s.ads.length, 0);
-  const budget =
-    form.budgetMode === 'CAMPAIGN'
-      ? centsOrUndef(form.dailyBudget) ?? 0
-      : form.adSets.reduce((n, s) => n + (centsOrUndef(s.dailyBudget) ?? 0), 0);
+  const budget = form.budgetMode === 'CAMPAIGN' ? centsOrUndef(form.dailyBudget) ?? 0 : form.adSets.reduce((n, s) => n + (centsOrUndef(s.dailyBudget) ?? 0), 0);
 
   return (
     <div>
@@ -905,6 +1028,12 @@ function ReviewStep({
             {form.objective.replace('OUTCOME_', '')} · {form.budgetMode === 'CAMPAIGN' ? 'CBO' : 'ABO'}
           </span>
         </div>
+        {form.specialAdCategories.length > 0 && (
+          <div className={styles.summaryRow}>
+            <span className={styles.summaryKey}>Special ad categories</span>
+            <span className={styles.summaryVal}>{form.specialAdCategories.join(', ').toLowerCase()}</span>
+          </div>
+        )}
         <div className={styles.summaryRow}>
           <span className={styles.summaryKey}>Ad account / Page</span>
           <span className={styles.summaryVal}>
@@ -927,10 +1056,10 @@ function ReviewStep({
         </div>
         {form.adSets.map((s, i) => (
           <div key={s.key} className={styles.summaryRow}>
-            <span className={styles.summaryKey}>Ad set {i + 1} targeting</span>
+            <span className={styles.summaryKey}>Ad set {i + 1}</span>
             <span className={styles.summaryVal}>
-              {s.countries.length > 0 ? s.countries.join(', ') : 'no countries'} · {s.ageMin}–{s.ageMax} ·{' '}
-              {s.genders.length === 0 ? 'all' : s.genders.join('/')}
+              {s.countries.length > 0 ? s.countries.join(', ') : 'no countries'} · {s.ageMin}–{s.ageMax} · {s.genders.length === 0 ? 'all' : s.genders.join('/')} ·{' '}
+              {s.placementMode === 'manual' ? `${s.placements.length} placements` : 'auto placements'}
             </span>
           </div>
         ))}
