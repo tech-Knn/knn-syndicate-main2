@@ -2,9 +2,9 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-27 — Phase 4 (Approval system) COMPLETE (local gate green + in-browser verified). Phase 3 deployed; Phase 4 not yet shipped to staging (pending commit + deploy)._
+_Last updated: 2026-05-27 — Phase 4 (Approval system) COMPLETE + DEPLOYED (local gate green + in-browser verified; shipped to staging, migration applied, endpoints live)._
 
-## Phase 4 — Approval system (complete; gate green; verified in-browser)
+## Phase 4 — Approval system (complete; gate green; verified in-browser; deployed)
 
 - **State machine** in `@knn/shared/campaign-status.ts` — `CAMPAIGN_TRANSITIONS` (the canonical
   campaign lifecycle graph) + `canTransitionCampaign`/`nextCampaignStates`/`isTerminalCampaignStatus`.
@@ -33,6 +33,23 @@ _Last updated: 2026-05-27 — Phase 4 (Approval system) COMPLETE (local gate gre
   with reason (Medicare → REJECTED, reason persisted), **auto-approve toggle** (org flipped to true).
   DB confirmed statuses + `reviewedById` + audit actions `campaign.approved/rejected,
   org.auto_approve.enabled`. (Demo data + scaffolding cleaned up afterward.)
+
+## Audit of Phases 0–4 (2026-05-27)
+
+Full cross-check against the plan's per-phase gates + decisions D1–D18 (two independent
+sub-audits + mechanical checks). **Verdict: gates met for Phases 0, 1, 2, 4; Phase 3 PARTIAL.**
+- **RLS:** all 13 business tables carry `tenant_isolation` (USING + WITH CHECK); only the global
+  `platform_settings` is exempt (correct). Cross-org isolation proven by `rls.test.ts`.
+- **No decision violations.** Prisma `CampaignStatus` ⇄ `CAMPAIGN_STATUS` match exactly (no drift).
+- **Fixed during the audit:** FB sync now follows cursor pagination (`fetchAllPages`) — previously
+  truncated at one page (>200 accounts/pages, >100 pixels); +2 tests. `FB_LOGIN_CONFIG_ID` added to
+  `.env.example`.
+- **Open gaps (tracked):** (1) **Playwright E2E missing** — Phase 3 gate names it; substituted by
+  API integration tests + manual in-browser verification → recommend folding E2E into Phase 10
+  (OPEN_QUESTIONS #8, task #16). (2) traffic split deferred to Phase 7 (OPEN_QUESTIONS #9).
+  (3) LOW: suspension isn't enforced on a live access token until it expires (≤15m) — standard JWT
+  tradeoff, self-heals at refresh; revisit in Phase 11. (4) LOW: `notify` is a console stub (real
+  email is Phase 11; durable signal is entity state per D13).
 
 ## Phase 3 — Ad launcher (complete, deployed)
 
@@ -146,9 +163,11 @@ via the worker's daily token-refresh job.
 
 ## In progress
 
-- Nothing — Phase 4 code-complete, gate green, verified in-browser. **Not yet shipped to staging**:
-  ship `git archive HEAD` → `/opt/rsoc` → `up -d --build` (the one-shot `migrate` applies
-  `campaign_approval`). Pending a commit + deploy go-ahead.
+- Nothing — Phase 4 code-complete, gate green, verified in-browser, **committed (`7bef2ca`) and
+  deployed to staging**. Shipped via `git archive HEAD` → `/opt/rsoc` → image rebuild →
+  `--profile edge up -d`; the one-shot `migrate` applied `campaign_approval` (exit 0). Verified live:
+  `GET /api/campaigns/pending` + `/api/admin/organization` → 401 (auth-gated, routes live),
+  `/dashboard/approvals` → 200, `/api/auth/login` → 400 (healthy); all 8 services up, API healthy.
 
 ## Next
 

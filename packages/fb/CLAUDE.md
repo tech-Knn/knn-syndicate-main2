@@ -26,6 +26,9 @@ library — no DB, no HTTP server. The API/worker apps own persistence and notif
   nudges a proactive re-auth (~day 55). Persisting/notifying is the **caller's** job, not this package's.
 - **`fetchPixels` reads `/act_<id>/adspixels`** and is rate-limited per account; ad-accounts/pages are
   bulk reads with `limit`. Map everything to the small DTOs here — don't leak raw Graph shapes upward.
+- **All sync fetchers follow cursor pagination** via `fetchAllPages` (`paging.next` + `paging.cursors.after`),
+  so a BM with >`limit` accounts/pages/pixels isn't silently truncated. Account-scoped pages stay gated by
+  the per-account limiter (each page passes `accountId`). Don't go back to reading only `r.data`.
 
 ## Tests
 
