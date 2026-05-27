@@ -39,6 +39,8 @@ export interface PublicArticle {
   title: string;
   compliantContent: string;
   query: string | null;
+  /** Campaign keywords — usable as publisher-provided related-search `terms` (D16). */
+  keywords: string[];
 }
 
 /**
@@ -51,7 +53,7 @@ export async function getPublicArticleBySlug(slug: string): Promise<PublicArticl
   return withSystem(async (tx) => {
     const article = await tx.article.findUnique({
       where: { slug },
-      select: { slug: true, title: true, compliantContent: true, query: true, status: true },
+      select: { slug: true, title: true, compliantContent: true, query: true, keywords: true, status: true },
     });
     if (!article || article.status !== 'READY') return null;
     return {
@@ -59,6 +61,7 @@ export async function getPublicArticleBySlug(slug: string): Promise<PublicArticl
       title: article.title,
       compliantContent: article.compliantContent,
       query: article.query,
+      keywords: Array.isArray(article.keywords) ? (article.keywords as string[]) : [],
     };
   });
 }

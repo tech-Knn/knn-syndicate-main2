@@ -13,7 +13,13 @@ import styles from './article.module.css';
  *
  * NOTE: terms only appear after Google has crawled this URL (~1h after first view).
  */
-export function RelatedSearchUnit({ referrerAdCreative }: { referrerAdCreative?: string }) {
+export function RelatedSearchUnit({
+  referrerAdCreative,
+  terms,
+}: {
+  referrerAdCreative?: string;
+  terms?: string;
+}) {
   const live = afsConfigured();
 
   useEffect(() => {
@@ -21,8 +27,10 @@ export function RelatedSearchUnit({ referrerAdCreative }: { referrerAdCreative?:
     const pageOptions = basePageOptions({ relatedSearchTargeting: 'content' });
     // Required (since 2025-11-01) when traffic comes from a source you control (our FB ads).
     if (referrerAdCreative) pageOptions.referrerAdCreative = referrerAdCreative;
+    // Publisher-provided terms are only valid alongside referrerAdCreative (Google's rule).
+    if (terms && referrerAdCreative) pageOptions.terms = terms;
     runCsa('relatedsearch', pageOptions, { container: 'relatedsearches1', relatedSearches: 10 });
-  }, [live, referrerAdCreative]);
+  }, [live, referrerAdCreative, terms]);
 
   return (
     <aside className={styles.afs} aria-label="Related searches">

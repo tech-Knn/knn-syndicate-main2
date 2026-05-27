@@ -13,6 +13,7 @@ interface PublicArticle {
   title: string;
   compliantContent: string;
   query: string | null;
+  keywords: string[];
 }
 
 async function fetchArticle(slug: string): Promise<PublicArticle | null> {
@@ -63,8 +64,12 @@ export default async function ArticlePage({
   const teaser = articleTeaser(article.compliantContent);
   const paragraphs = articleParagraphs(article.compliantContent);
   // Required (since 2025-11-01) when traffic comes from a source you control (our
-  // FB ads); the redirect will pass the originating ad creative as `rc`.
+  // FB ads); the redirect passes the originating ad creative as `rc`.
   const referrerAdCreative = str(sp.rc) || undefined;
+  // Publisher-provided related-search terms (the redirect passes campaign keywords/
+  // RAC as `terms`; falls back to the article's own keywords). Only sent alongside
+  // referrerAdCreative, which Google requires when `terms` is used.
+  const terms = str(sp.terms) || article.keywords.join(',') || undefined;
 
   return (
     <main className={styles.page}>
@@ -73,7 +78,7 @@ export default async function ArticlePage({
         {teaser && <p className={styles.lead}>{teaser}</p>}
 
         {/* RSOC related-search unit (content-targeted). Clicks → /search results page. */}
-        <RelatedSearchUnit referrerAdCreative={referrerAdCreative} />
+        <RelatedSearchUnit referrerAdCreative={referrerAdCreative} terms={terms} />
 
         <div className={styles.body}>
           {paragraphs.map((paragraph, i) => (
