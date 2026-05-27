@@ -1,21 +1,33 @@
 import type { FastifyInstance } from 'fastify';
-import { campaignDraftSchema } from '@knn/shared';
+import { ROLES, campaignDraftSchema } from '@knn/shared';
 import { handleRouteError } from '../../lib/http.js';
-import { authenticate } from '../../middleware/authenticate.js';
+import { authenticate, requireRole } from '../../middleware/authenticate.js';
+import { approveCampaign, listPendingApprovals, rejectCampaign } from './approval.service.js';
+import { rejectCampaignSchema } from './approval.schemas.js';
 import {
   createCampaign,
   deleteCampaign,
   getCampaign,
   listCampaigns,
+  reopenCampaign,
   submitCampaign,
   updateCampaign,
 } from './campaigns.service.js';
 import { testLaunchCampaign } from './launch.service.js';
 
+const adminOnly = [authenticate, requireRole(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)];
+
 export async function campaignRoutes(app: FastifyInstance): Promise<void> {
   app.get('/', { preHandler: [authenticate] }, async (req, reply) => {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     return reply.send({ campaigns: await listCampaigns(req.auth) });
+  });
+
+  // Admin review queue. Registered before `/:id` (static routes take precedence
+  // in Fastify, but keep it ahead for clarity).
+  app.get('/pending', { preHandler: adminOnly }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    return reply.send({ campaigns: await listPendingApprovals(req.auth) });
   });
 
   app.post('/', { preHandler: [authenticate] }, async (req, reply) => {
@@ -58,6 +70,47 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
         return reply.send({ campaign: await submitCampaign(req.auth, req.params.id) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Buyer withdraws a pending submission / revises a rejected one back to DRAFT.
+  app.post<{ Params: { id: string } }>(
+    '/:id/reopen',
+    { preHandler: [authenticate] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.send({ campaign: await reopenCampaign(req.auth, req.params.id) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/:id/approve',
+    { preHandler: adminOnly },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.send({ campaign: await approveCampaign(req.auth, req.params.id) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/:id/reject',
+    { preHandler: adminOnly },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const { reason } = rejectCampaignSchema.parse(req.body);
+        return reply.send({ campaign: await rejectCampaign(req.auth, req.params.id, reason) });
       } catch (err) {
         return handleRouteError(err, reply);
       }

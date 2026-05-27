@@ -2,7 +2,37 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-27 — Phase 3 (Ad launcher) COMPLETE + DEPLOYED. Phase 2 verified live (real BM, FLB, 8 ad accounts synced)._
+_Last updated: 2026-05-27 — Phase 4 (Approval system) COMPLETE (local gate green + in-browser verified). Phase 3 deployed; Phase 4 not yet shipped to staging (pending commit + deploy)._
+
+## Phase 4 — Approval system (complete; gate green; verified in-browser)
+
+- **State machine** in `@knn/shared/campaign-status.ts` — `CAMPAIGN_TRANSITIONS` (the canonical
+  campaign lifecycle graph) + `canTransitionCampaign`/`nextCampaignStates`/`isTerminalCampaignStatus`.
+  Single source of truth for api + worker; the complete graph is defined now, later phases wire
+  routes/jobs to edges. 8 unit tests (legal/illegal transitions, terminal ARCHIVED, self-transition
+  forbidden).
+- **Schema** (migration `20260527165639_campaign_approval`, additive only — no RLS change):
+  `organizations.auto_approve` (Bool) + `campaigns.{reviewed_by_id, reviewed_at, rejection_reason}`.
+- **API** `apps/api/src/modules/campaigns/approval.service.ts` + routes: `GET /api/campaigns/pending`
+  (admin review queue), `POST /:id/approve`, `POST /:id/reject` (reason required), `POST /:id/reopen`
+  (buyer withdraw/revise → DRAFT). `submitCampaign` now honors org **auto-approve** (submit +
+  immediate system approval). Admin `GET /api/admin/organization` + `PATCH /organizations/:id/
+  auto-approve` toggle (SUPER_ADMIN any org; COMPANY_ADMIN own). `requireRole` guards admin routes;
+  RLS isolates COMPANY_ADMIN to their org (cross-org review → 404).
+- **Audit** — `apps/api/src/lib/audit.ts#writeAudit` is the **first writer** to `audit_log` (written
+  in-txn with the change). Also retrofitted onto the existing admin actions (user status changes,
+  org creation).
+- **Web** (Phase 10 slice): admin-only **Approvals** page (`/dashboard/approvals`) — review queue
+  with offer summary (objective/budget ABO·CBO/geo/keywords/special-ad-cat), Approve + Reject
+  (inline reason), and a COMPANY_ADMIN auto-approve toggle. Nav shows "Approvals" for admins.
+  Campaigns list shows the rejection reason + **Revise**/**Withdraw** (reopen) actions.
+- **Gate green:** typecheck (10) · lint (10) · build (5, incl. both Next apps) · tests — shared 32
+  (+8), db 6, fb 14, redirect 2, worker 5, **api 45 (+13 approval/reopen)** = 104 total.
+- **In-browser verified** (Preview MCP, local web+api, seeded demo): logged in as a COMPANY_ADMIN →
+  Approvals page rendered 3 pending campaigns → **Approve** (Auto Insurance → APPROVED), **Reject**
+  with reason (Medicare → REJECTED, reason persisted), **auto-approve toggle** (org flipped to true).
+  DB confirmed statuses + `reviewedById` + audit actions `campaign.approved/rejected,
+  org.auto_approve.enabled`. (Demo data + scaffolding cleaned up afterward.)
 
 ## Phase 3 — Ad launcher (complete, deployed)
 
@@ -116,14 +146,17 @@ via the worker's daily token-refresh job.
 
 ## In progress
 
-- Nothing — Phase 2 code-complete and green. Ready for Phase 3.
+- Nothing — Phase 4 code-complete, gate green, verified in-browser. **Not yet shipped to staging**:
+  ship `git archive HEAD` → `/opt/rsoc` → `up -d --build` (the one-shot `migrate` applies
+  `campaign_approval`). Pending a commit + deploy go-ahead.
 
 ## Next
 
-- **Phase 3 (Ad launcher)** — Campaign→Adset→Ad(s) schema (campaign-level keywords/RAC/article-ref/
-  channel-ref per D5–D7; per-ad `redirect_id` + `pxe` per D9/D10), multipart creative upload, the
-  multi-step wizard UI, DRAFT→PENDING_APPROVAL. Pixel-event mapping (`landerEvent`/`searchEvent`/
-  `adclickEvent` on `FbPixel`) gets wired to the `pxe` selector here.
+- **Phase 5 (Article engine + article frontend)** — embed campaign keywords (OpenAI
+  `text-embedding-3-small`, 1536-dim) → pgvector cosine ≥0.70 reuse else generate (Claude) →
+  compliance rewrite (admin `compliance_prompt`, store raw + compliant) → deploy. Next.js SSR article
+  page (title, ≤100-word/≤300-char first paragraph, AFS widget slot, SEO meta). **External deps:**
+  Anthropic + OpenAI keys, and AdSense AFS eligibility (OPEN_QUESTIONS #4) for the live widget.
 
 ## Staging now runs Phase 2 with Facebook configured (2026-05-27)
 

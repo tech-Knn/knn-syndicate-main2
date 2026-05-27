@@ -130,10 +130,19 @@ export interface Campaign {
   articleId: string | null;
   channelId: string | null;
   fbCampaignId: string | null;
+  reviewedById: string | null;
+  reviewedAt: string | null;
+  rejectionReason: string | null;
   submittedAt: string | null;
   createdAt: string;
   updatedAt: string;
   adSets: CampaignAdSet[];
+}
+
+export interface AdminOrg {
+  id: string;
+  name: string;
+  autoApprove: boolean;
 }
 
 export interface UploadResult {

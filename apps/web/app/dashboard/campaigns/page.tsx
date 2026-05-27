@@ -52,6 +52,16 @@ export default function CampaignsPage() {
     }
   }
 
+  // Withdraw a pending submission / revise a rejected one back to an editable draft.
+  async function reopen(id: string) {
+    try {
+      await campaignsApi.reopen(id);
+      router.push(`/dashboard/campaigns/${id}`);
+    } catch {
+      window.alert('Could not reopen the campaign.');
+    }
+  }
+
   return (
     <div>
       <div className={styles.header}>
@@ -79,6 +89,7 @@ export default function CampaignsPage() {
           {list.map((c) => {
             const editable = c.status === 'DRAFT';
             const removable = c.status === 'DRAFT' || c.status === 'REJECTED';
+            const reopenable = c.status === 'PENDING_APPROVAL' || c.status === 'REJECTED';
             return (
               <div key={c.id} className={styles.row}>
                 <div className={styles.name}>
@@ -87,6 +98,9 @@ export default function CampaignsPage() {
                     {c.adSets.length} ad set{c.adSets.length === 1 ? '' : 's'} · {countAds(c)} ad
                     {countAds(c) === 1 ? '' : 's'}
                   </span>
+                  {c.status === 'REJECTED' && c.rejectionReason && (
+                    <span className={styles.reason}>Rejected: {c.rejectionReason}</span>
+                  )}
                 </div>
                 <Badge tone={STATUS[c.status].tone} dot={c.status === 'ACTIVE'}>
                   {STATUS[c.status].label}
@@ -98,6 +112,11 @@ export default function CampaignsPage() {
                   <Link href={`/dashboard/campaigns/${c.id}`} className={styles.linkBtn}>
                     {editable ? 'Edit' : 'View'}
                   </Link>
+                  {reopenable && (
+                    <button className={styles.linkBtn} onClick={() => void reopen(c.id)}>
+                      {c.status === 'REJECTED' ? 'Revise' : 'Withdraw'}
+                    </button>
+                  )}
                   {removable && (
                     <button className={`${styles.linkBtn} ${styles.del}`} onClick={() => void remove(c.id)}>
                       Delete

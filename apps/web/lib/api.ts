@@ -1,4 +1,5 @@
 import {
+  type AdminOrg,
   type Campaign,
   type ConnectionStatus,
   type FbAccount,
@@ -236,10 +237,49 @@ export const campaigns = {
         await authedFetch(`/api/campaigns/${id}/submit`, { method: 'POST' }),
       )
     ).campaign,
+  reopen: async (id: string): Promise<Campaign> =>
+    (
+      await parse<{ campaign: Campaign }>(
+        await authedFetch(`/api/campaigns/${id}/reopen`, { method: 'POST' }),
+      )
+    ).campaign,
+  pending: async (): Promise<Campaign[]> =>
+    (await parse<{ campaigns: Campaign[] }>(await authedFetch('/api/campaigns/pending'))).campaigns,
+  approve: async (id: string): Promise<Campaign> =>
+    (
+      await parse<{ campaign: Campaign }>(
+        await authedFetch(`/api/campaigns/${id}/approve`, { method: 'POST' }),
+      )
+    ).campaign,
+  reject: async (id: string, reason: string): Promise<Campaign> =>
+    (
+      await parse<{ campaign: Campaign }>(
+        await authedFetch(`/api/campaigns/${id}/reject`, {
+          method: 'POST',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ reason }),
+        }),
+      )
+    ).campaign,
   remove: async (id: string): Promise<void> =>
     parse(await authedFetch(`/api/campaigns/${id}`, { method: 'DELETE' })),
   testLaunch: async (id: string): Promise<{ fbCampaignId: string; adSets: { fbAdSetId: string; ads: { fbAdId: string }[] }[] }> =>
     parse(await authedFetch(`/api/campaigns/${id}/test-launch`, { method: 'POST' })),
+};
+
+export const admin = {
+  organization: async (): Promise<AdminOrg> =>
+    (await parse<{ organization: AdminOrg }>(await authedFetch('/api/admin/organization'))).organization,
+  setAutoApprove: async (orgId: string, autoApprove: boolean): Promise<AdminOrg> =>
+    (
+      await parse<{ organization: AdminOrg }>(
+        await authedFetch(`/api/admin/organizations/${orgId}/auto-approve`, {
+          method: 'PATCH',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ autoApprove }),
+        }),
+      )
+    ).organization,
 };
 
 export const uploads = {

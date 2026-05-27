@@ -44,6 +44,9 @@ model Organization {
   slug                 String    @unique
   status               OrgStatus @default(ACTIVE)
   isPlatform           Boolean   @default(false) @map("is_platform")
+  /// Approval mode (D-Phase4): when true, submitted campaigns skip manual review
+  /// and go straight to APPROVED. Default is manual review.
+  autoApprove          Boolean   @default(false) @map("auto_approve")
   /// Platform's default revenue cut for this org's buyers (0..1).
   defaultRevenueCutPct Decimal   @default(0.30) @map("default_revenue_cut_pct") @db.Decimal(5, 4)
   createdAt            DateTime  @default(now()) @map("created_at")
@@ -288,6 +291,13 @@ model Campaign {
 
   /// Populated on launch (Phase 8).
   fbCampaignId String? @map("fb_campaign_id")
+
+  /// Approval review (Phase 4). `reviewedBy`/`reviewedAt` are set on approve OR
+  /// reject (or auto-approval — then `reviewedById` is null = system); a reject
+  /// also records `rejectionReason`.
+  reviewedById    String?   @map("reviewed_by_id") @db.Uuid
+  reviewedAt      DateTime? @map("reviewed_at")
+  rejectionReason String?   @map("rejection_reason")
 
   submittedAt DateTime? @map("submitted_at")
   createdAt   DateTime  @default(now()) @map("created_at")

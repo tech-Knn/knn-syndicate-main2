@@ -1,0 +1,201 @@
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.title {
+  font-size: 1.9rem;
+  color: var(--cream);
+}
+.subtitle {
+  color: var(--muted);
+  margin-top: 0.35rem;
+  font-size: 0.92rem;
+}
+
+/* auto-approve mode switch */
+.mode {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.65rem 0.9rem;
+}
+.modeText {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  text-align: right;
+}
+.modeLabel {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--cream);
+}
+.modeHint {
+  font-size: 0.72rem;
+  color: var(--muted-2);
+  max-width: 24ch;
+}
+.toggle {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  flex: none;
+}
+.toggle:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.toggleOn {
+  background: var(--rust);
+  border-color: var(--rust);
+}
+.knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--cream);
+  transition: transform 0.15s ease;
+}
+.toggleOn .knob {
+  transform: translateX(20px);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.card {
+  padding: 1.1rem 1.25rem;
+}
+.cardTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.cardName {
+  color: var(--cream);
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+.cardWhen {
+  font-size: 0.78rem;
+  color: var(--muted-2);
+  white-space: nowrap;
+}
+.metaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin-top: 0.6rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.metaRow b {
+  color: var(--cream);
+  font-weight: 600;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+.chip {
+  font-size: 0.74rem;
+  color: var(--cream);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+}
+.badges {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+.spacer {
+  flex: 1;
+}
+
+.rejectBox {
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.reasonLabel {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.textarea {
+  width: 100%;
+  min-height: 70px;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--cream);
+  font-family: var(--font-sans);
+  font-size: 0.88rem;
+  padding: 0.6rem 0.7rem;
+}
+.textarea:focus {
+  outline: none;
+  border-color: var(--rust);
+}
+.rejectActions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
+}
+
+.empty {
+  padding: 3rem 1.5rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+}
+.emptyTitle {
+  font-size: 1.2rem;
+  color: var(--cream);
+}
+.emptyText {
+  color: var(--muted);
+  font-size: 0.9rem;
+  max-width: 40ch;
+}
+.center {
+  display: flex;
+  justify-content: center;
+  padding: 2.5rem;
+  color: var(--muted);
+}

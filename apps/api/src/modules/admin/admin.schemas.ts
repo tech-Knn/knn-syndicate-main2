@@ -18,3 +18,8 @@ export const userActionSchema = z.object({
   action: z.enum(['approve', 'reject', 'suspend', 'reactivate']),
 });
 export type UserAction = z.infer<typeof userActionSchema>['action'];
+
+export const autoApproveSchema = z.object({
+  autoApprove: z.boolean(),
+});
+export type AutoApproveInput = z.infer<typeof autoApproveSchema>;

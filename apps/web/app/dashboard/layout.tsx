@@ -8,17 +8,21 @@ import { type Role } from '@/lib/types';
 import { useAuth } from '../providers';
 import styles from './dashboard.module.css';
 
-const NAV = [
-  { href: '/dashboard', label: 'Overview' },
-  { href: '/dashboard/campaigns', label: 'Campaigns' },
-  { href: '/dashboard/facebook', label: 'Facebook' },
-];
-
 const ROLE_LABEL: Record<Role, string> = {
   SUPER_ADMIN: 'Platform',
   COMPANY_ADMIN: 'Admin',
   MEDIA_BUYER: 'Buyer',
 };
+
+function navFor(role: Role): { href: string; label: string }[] {
+  const isAdmin = role === 'SUPER_ADMIN' || role === 'COMPANY_ADMIN';
+  return [
+    { href: '/dashboard', label: 'Overview' },
+    { href: '/dashboard/campaigns', label: 'Campaigns' },
+    ...(isAdmin ? [{ href: '/dashboard/approvals', label: 'Approvals' }] : []),
+    { href: '/dashboard/facebook', label: 'Facebook' },
+  ];
+}
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const { user, state, logout } = useAuth();
@@ -46,7 +50,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         </Link>
 
         <nav className={styles.nav}>
-          {NAV.map((item) => {
+          {navFor(user.role).map((item) => {
             const active =
               item.href === '/dashboard'
                 ? pathname === '/dashboard'

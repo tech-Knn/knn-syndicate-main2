@@ -87,3 +87,27 @@ the approved plan.
   `knn_app` role) + `db:seed` before apps start. Only Caddy is exposed (80/443).
 - Image is staging-grade (full monorepo + deps for reliability); prod slimming
   (multi-stage prune, Next standalone, non-root) is a Phase 11 TODO.
+
+### 2026-05-27 — Phase 4 (Approval system)
+
+- **Campaign state machine is one source of truth** in `@knn/shared/campaign-status.ts`
+  (`CAMPAIGN_TRANSITIONS` + `canTransitionCampaign`). Every status change (api + worker, all
+  phases) validates against it, so no path can make an illegal transition. The graph is
+  intentionally complete now (covers later-phase states PROCESSING/BATCHED/QUEUED_NO_CHANNEL/
+  LAUNCHING/ACTIVE/META_REJECTED); phases attach routes/jobs to edges as they're built. ARCHIVED
+  is the only terminal state; PENDING_APPROVAL is *not* directly archivable (must be resolved via
+  approve/reject/withdraw so a rejection always carries a reason).
+- **Approval modes per company (org-level toggle `organizations.auto_approve`).** Manual review is
+  the default; auto-approve flips a submission straight to APPROVED. Auto-approve is modeled as
+  _submit + immediate system approval_ (both edges DRAFT→PENDING_APPROVAL and PENDING_APPROVAL→
+  APPROVED are valid) so the graph needs no synthetic DRAFT→APPROVED edge; the auto-approved row
+  has `reviewedById = null` (system) + `reviewedAt` set. SUPER_ADMIN can toggle any org;
+  COMPANY_ADMIN only their own.
+- **Reject requires a reason** (`campaigns.rejection_reason`, shown to the buyer). Approve/reject
+  record `reviewedById`/`reviewedAt`. A buyer can **reopen** (PENDING_APPROVAL→DRAFT = withdraw,
+  REJECTED→DRAFT = revise) to edit + resubmit; reopen clears the review trail.
+- **`audit_log` gets its first writers** (`apps/api/src/lib/audit.ts#writeAudit`, written inside the
+  same txn as the change): `campaign.{submitted,approved,rejected,auto_approved,reopened}`,
+  `org.{created,auto_approve.enabled,auto_approve.disabled}`, `user.{approve,reject,suspend,
+  reactivate}`. Reject entries carry `{reason}` in `details`. RLS applies — under `withTenant` the
+  audit row's `org_id` must equal the active org; super-admin writes via `withSystem`.

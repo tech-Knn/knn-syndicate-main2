@@ -2,17 +2,52 @@ import type { FastifyInstance } from 'fastify';
 import { ROLES } from '@knn/shared';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate, requireRole } from '../../middleware/authenticate.js';
-import { createOrgSchema, userActionSchema } from './admin.schemas.js';
-import { createOrganization, listUsers, setUserStatus } from './admin.service.js';
+import { autoApproveSchema, createOrgSchema, userActionSchema } from './admin.schemas.js';
+import {
+  createOrganization,
+  getActingOrg,
+  listUsers,
+  setOrgAutoApprove,
+  setUserStatus,
+} from './admin.service.js';
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/organizations',
     { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] },
     async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
-        const result = await createOrganization(createOrgSchema.parse(req.body));
+        const result = await createOrganization(req.auth, createOrgSchema.parse(req.body));
         return reply.code(201).send(result);
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  app.get(
+    '/organization',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.send({ organization: await getActingOrg(req.auth) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  app.patch<{ Params: { id: string } }>(
+    '/organizations/:id/auto-approve',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const { autoApprove } = autoApproveSchema.parse(req.body);
+        const org = await setOrgAutoApprove(req.auth, req.params.id, autoApprove);
+        return reply.send({ organization: org });
       } catch (err) {
         return handleRouteError(err, reply);
       }

@@ -1,5 +1,6 @@
 import { withSystem } from '@knn/db';
 import { ROLES, USER_STATUS, type Role, type UserStatus } from '@knn/shared';
+import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { hashPassword } from '../../lib/password.js';
 import { runScoped } from '../../lib/scope.js';
@@ -32,6 +33,7 @@ function toPublicUser(u: PublicUser): PublicUser {
 
 /** Create a company + its first COMPANY_ADMIN (ACTIVE). Super-admin only. */
 export async function createOrganization(
+  actor: AuthContext,
   input: CreateOrgInput,
 ): Promise<{ orgId: string; adminId: string }> {
   const passwordHash = await hashPassword(input.adminPassword);
@@ -51,10 +53,61 @@ export async function createOrganization(
         passwordHash,
         role: ROLES.COMPANY_ADMIN,
         status: USER_STATUS.ACTIVE,
+        approvedById: actor.userId,
         approvedAt: new Date(),
       },
     });
+    await writeAudit(tx, {
+      orgId: org.id,
+      actorId: actor.userId,
+      action: 'org.created',
+      entityType: 'organization',
+      entityId: org.id,
+      details: { slug: org.slug, adminEmail: admin.email },
+    });
     return { orgId: org.id, adminId: admin.id };
+  });
+}
+
+/** The acting admin's own company (id, name, approval mode) — for the settings UI. */
+export async function getActingOrg(
+  actor: AuthContext,
+): Promise<{ id: string; name: string; autoApprove: boolean }> {
+  return runScoped(actor, async (tx) => {
+    const org = await tx.organization.findUnique({
+      where: { id: actor.orgId },
+      select: { id: true, name: true, autoApprove: true },
+    });
+    if (!org) throw new AppError(404, 'Company not found');
+    return org;
+  });
+}
+
+/** Toggle a company's approval mode (manual review vs. auto-approve). */
+export async function setOrgAutoApprove(
+  actor: AuthContext,
+  orgId: string,
+  autoApprove: boolean,
+): Promise<{ id: string; autoApprove: boolean }> {
+  if (actor.role === ROLES.COMPANY_ADMIN && orgId !== actor.orgId) {
+    throw new AppError(403, 'You can only change your own company');
+  }
+  return runScoped(actor, async (tx) => {
+    const org = await tx.organization.findUnique({ where: { id: orgId }, select: { id: true } });
+    if (!org) throw new AppError(404, 'Company not found');
+    const updated = await tx.organization.update({
+      where: { id: orgId },
+      data: { autoApprove },
+      select: { id: true, autoApprove: true },
+    });
+    await writeAudit(tx, {
+      orgId,
+      actorId: actor.userId,
+      action: autoApprove ? 'org.auto_approve.enabled' : 'org.auto_approve.disabled',
+      entityType: 'organization',
+      entityId: orgId,
+    });
+    return updated;
   });
 }
 
@@ -93,6 +146,13 @@ export async function setUserStatus(
         status: ACTION_TO_STATUS[action],
         ...(action === 'approve' ? { approvedById: actor.userId, approvedAt: new Date() } : {}),
       },
+    });
+    await writeAudit(tx, {
+      orgId: updated.orgId,
+      actorId: actor.userId,
+      action: `user.${action}`,
+      entityType: 'user',
+      entityId: userId,
     });
     return toPublicUser(updated);
   });

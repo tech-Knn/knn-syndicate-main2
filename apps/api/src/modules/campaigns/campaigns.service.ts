@@ -1,6 +1,7 @@
 import { type Prisma, type TxClient } from '@knn/db';
 import {
   type AttributionWindow,
+  CAMPAIGN_STATUS,
   type CampaignDraft,
   type ConversionType,
   type CtaOption,
@@ -12,9 +13,12 @@ import {
   ROLES,
   type SpecialAdCategory,
   campaignSubmitIssues,
+  canTransitionCampaign,
 } from '@knn/shared';
+import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { generateRedirectId } from '../../lib/ids.js';
+import { notify } from '../../lib/notify.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 
@@ -257,22 +261,101 @@ export function toDraft(campaign: CampaignWithChildren): CampaignDraft {
   };
 }
 
+/**
+ * Submit a complete draft for review (DRAFT → PENDING_APPROVAL). If the buyer's
+ * org has auto-approve on, the submission is approved in the same step (modeled
+ * as submit + immediate system approval — both state-machine edges are valid, so
+ * the graph needs no synthetic DRAFT → APPROVED edge). Writes an audit entry and,
+ * on auto-approval, notifies the buyer after commit.
+ */
 export async function submitCampaign(
+  auth: AuthContext,
+  id: string,
+): Promise<CampaignWithChildren> {
+  const { campaign, autoApproved } = await runScoped(auth, async (tx) => {
+    const existing = await loadOwnedCampaign(tx, auth, id);
+    if (!canTransitionCampaign(existing.status, CAMPAIGN_STATUS.PENDING_APPROVAL)) {
+      throw new AppError(409, 'Campaign is not a draft');
+    }
+    const issues = campaignSubmitIssues(toDraft(existing));
+    if (issues.length > 0) {
+      throw new AppError(422, 'Campaign is not ready to submit', issues);
+    }
+
+    const org = await tx.organization.findUnique({
+      where: { id: existing.orgId },
+      select: { autoApprove: true },
+    });
+    const auto = org?.autoApprove ?? false;
+    const now = new Date();
+    const updated = await tx.campaign.update({
+      where: { id },
+      data: auto
+        ? {
+            status: CAMPAIGN_STATUS.APPROVED,
+            submittedAt: now,
+            reviewedAt: now,
+            reviewedById: null,
+            rejectionReason: null,
+          }
+        : { status: CAMPAIGN_STATUS.PENDING_APPROVAL, submittedAt: now },
+      include: campaignInclude,
+    });
+    await writeAudit(tx, {
+      orgId: existing.orgId,
+      actorId: auth.userId,
+      action: auto ? 'campaign.auto_approved' : 'campaign.submitted',
+      entityType: 'campaign',
+      entityId: id,
+    });
+    return { campaign: updated, autoApproved: auto };
+  });
+
+  if (autoApproved) {
+    await notify({
+      orgId: campaign.orgId,
+      userId: campaign.buyerId,
+      type: 'campaign.approved',
+      title: 'Campaign approved',
+      body: `"${campaign.name}" was auto-approved and is queued to launch.`,
+    });
+  }
+  return campaign;
+}
+
+/**
+ * Reopen a submitted/rejected campaign back to an editable DRAFT — i.e. withdraw
+ * a PENDING_APPROVAL submission or revise a REJECTED one (both are legal moves to
+ * DRAFT in the state machine). Clears the review trail so it's a clean draft again.
+ */
+export async function reopenCampaign(
   auth: AuthContext,
   id: string,
 ): Promise<CampaignWithChildren> {
   return runScoped(auth, async (tx) => {
     const campaign = await loadOwnedCampaign(tx, auth, id);
-    if (campaign.status !== 'DRAFT') throw new AppError(409, 'Campaign is not a draft');
-    const issues = campaignSubmitIssues(toDraft(campaign));
-    if (issues.length > 0) {
-      throw new AppError(422, 'Campaign is not ready to submit', issues);
+    if (!canTransitionCampaign(campaign.status, CAMPAIGN_STATUS.DRAFT)) {
+      throw new AppError(409, `Cannot reopen a campaign in ${campaign.status} state`);
     }
-    return tx.campaign.update({
+    const updated = await tx.campaign.update({
       where: { id },
-      data: { status: 'PENDING_APPROVAL', submittedAt: new Date() },
+      data: {
+        status: CAMPAIGN_STATUS.DRAFT,
+        submittedAt: null,
+        reviewedAt: null,
+        reviewedById: null,
+        rejectionReason: null,
+      },
       include: campaignInclude,
     });
+    await writeAudit(tx, {
+      orgId: campaign.orgId,
+      actorId: auth.userId,
+      action: 'campaign.reopened',
+      entityType: 'campaign',
+      entityId: id,
+    });
+    return updated;
   });
 }
 

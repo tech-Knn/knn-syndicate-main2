@@ -43,6 +43,11 @@
   font-size: 0.76rem;
   color: var(--muted-2);
 }
+.reason {
+  font-size: 0.76rem;
+  color: var(--red);
+  max-width: 60ch;
+}
 .meta {
   font-size: 0.82rem;
   color: var(--muted);
