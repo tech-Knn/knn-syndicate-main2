@@ -19,7 +19,8 @@ export default async function SearchPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
-  const query = str(sp.query) || str(sp.q);
+  // `q` is the default CSA results param (resultsPageQueryParam); accept `query` too.
+  const query = str(sp.q) || str(sp.query);
   const referrerAdCreative = str(sp.rc) || undefined;
 
   return (

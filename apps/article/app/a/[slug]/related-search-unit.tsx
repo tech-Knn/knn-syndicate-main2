@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { afsConfigured, basePageOptions, runCsa } from '../../_afs/csa';
+import { AFS_TRACKING_PARAMS, afsAdLoadedCallback, afsConfigured, basePageOptions, runCsa } from '../../_afs/csa';
 import styles from './article.module.css';
 
 /**
@@ -24,12 +24,20 @@ export function RelatedSearchUnit({
 
   useEffect(() => {
     if (!live) return;
-    const pageOptions = basePageOptions({ relatedSearchTargeting: 'content' });
+    const pageOptions = basePageOptions({
+      relatedSearchTargeting: 'content',
+      // On a content page the query params aren't the search query — ignore them too.
+      ignoredPageParams: `${AFS_TRACKING_PARAMS},q,query`,
+    });
     // Required (since 2025-11-01) when traffic comes from a source you control (our FB ads).
     if (referrerAdCreative) pageOptions.referrerAdCreative = referrerAdCreative;
     // Publisher-provided terms are only valid alongside referrerAdCreative (Google's rule).
     if (terms && referrerAdCreative) pageOptions.terms = terms;
-    runCsa('relatedsearch', pageOptions, { container: 'relatedsearches1', relatedSearches: 10 });
+    runCsa('relatedsearch', pageOptions, {
+      container: 'relatedsearches1',
+      relatedSearches: 10,
+      adLoadedCallback: afsAdLoadedCallback,
+    });
   }, [live, referrerAdCreative, terms]);
 
   return (
