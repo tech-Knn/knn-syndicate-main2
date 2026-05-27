@@ -207,8 +207,11 @@ model PlatformSetting {
 
 // ---------------------------------------------------------------------------
 // Phase 3 — Ad launcher. Campaign = the "offer" (D5/D6/D7): keywords, RAC, the
-// single article, and the AdSense channel live at CAMPAIGN level; ads are
-// creative variations. Per-ad redirect_id (D9) + selectable pxe (D10).
+// single article, and the AdSense channel live at CAMPAIGN level. FB structure:
+// Campaign → Ad Set (audience/placements/budget + pixel & conversion event) → Ad
+// (creative). Per-ad redirect_id (D9); pixel + conversion event (pxe) live at the
+// AD-SET level matching Facebook (D10 revised); FB still reports conversions per
+// ad, so conversion-weighted revenue (D8) is unaffected.
 // ---------------------------------------------------------------------------
 
 enum CampaignStatus {
@@ -240,6 +243,12 @@ enum AdCreativeType {
   VIDEO
 }
 
+/// Budget optimization: per-ad-set (ABO) or campaign-level (CBO).
+enum BudgetMode {
+  AD_SET
+  CAMPAIGN
+}
+
 model Campaign {
   id               String            @id @default(uuid()) @db.Uuid
   orgId            String            @map("org_id") @db.Uuid
@@ -249,9 +258,16 @@ model Campaign {
   objective        CampaignObjective @default(OUTCOME_SALES)
   optimizationGoal String            @default("OFFSITE_CONVERSIONS") @map("optimization_goal")
 
-  /// Campaign-level offer config (D5): keywords array + Related Ad Category + fallback.
+  /// Budget optimization. CAMPAIGN (CBO) uses `dailyBudgetCents` here; AD_SET (ABO)
+  /// uses each ad set's own budget.
+  budgetMode       BudgetMode @default(AD_SET) @map("budget_mode")
+  dailyBudgetCents Int?       @map("daily_budget_cents")
+
+  /// Campaign-level offer config (D5): keywords + Related Ad Category + the
+  /// landing-page query/angle that drives article generation (Phase 5) + fallback.
   keywords    Json    @default("[]")
   racValue    String? @map("rac_value")
+  query       String?
   fallbackUrl String? @map("fallback_url")
 
   /// Selected Facebook assets — scalar refs to fb_* rows, validated in the service
@@ -280,21 +296,40 @@ model Campaign {
 }
 
 model AdSet {
-  id               String    @id @default(uuid()) @db.Uuid
-  orgId            String    @map("org_id") @db.Uuid
-  campaignId       String    @map("campaign_id") @db.Uuid
-  name             String
-  /// Daily budget in minor units (cents) of the ad-account currency. Money = integer cents.
-  dailyBudgetCents Int       @map("daily_budget_cents")
-  billingEvent     String    @default("IMPRESSIONS") @map("billing_event")
-  optimizationGoal String    @default("OFFSITE_CONVERSIONS") @map("optimization_goal")
-  /// FB targeting spec (geo / age / gender / interests).
-  targeting        Json      @default("{}")
-  startTime        DateTime? @map("start_time")
-  endTime          DateTime? @map("end_time")
-  fbAdSetId        String?   @map("fb_ad_set_id")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
+  id         String @id @default(uuid()) @db.Uuid
+  orgId      String @map("org_id") @db.Uuid
+  campaignId String @map("campaign_id") @db.Uuid
+  name       String
+
+  /// Daily budget in minor units (cents). Null under campaign budget optimization
+  /// (CBO); set per ad set under ABO. Money = integer cents.
+  dailyBudgetCents Int?    @map("daily_budget_cents")
+  billingEvent     String @default("IMPRESSIONS") @map("billing_event")
+  optimizationGoal String @default("OFFSITE_CONVERSIONS") @map("optimization_goal")
+  bidStrategy      String? @map("bid_strategy")
+
+  /// Audience targeting (core): geo, age, gender. ISO-3166 alpha-2 country codes;
+  /// genders empty = all. `targeting` keeps any advanced/raw FB spec.
+  countries String[] @default([])
+  ageMin    Int      @default(18) @map("age_min")
+  ageMax    Int      @default(65) @map("age_max")
+  genders   String[] @default([])
+  targeting Json     @default("{}")
+
+  /// Placements: "automatic" or "manual" (then `placements` lists the platforms).
+  placementMode String   @default("automatic") @map("placement_mode")
+  placements    String[] @default([])
+
+  /// Conversion tracking lives at the ad-set level (FB model; D10 revised): the
+  /// pixel + the conversion event (pxe) the whole ad set optimizes/attributes on.
+  pixelId  String? @map("pixel_id") @db.Uuid
+  pxeEvent String  @default("search") @map("pxe_event")
+
+  startTime DateTime? @map("start_time")
+  endTime   DateTime? @map("end_time")
+  fbAdSetId String?   @map("fb_ad_set_id")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
 
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   ads      Ad[]
@@ -318,11 +353,8 @@ model Ad {
   uploadId     String?        @map("upload_id") @db.Uuid
 
   /// Per-ad cloaked redirect (D9) — unique link FB targets; resolves ad -> campaign.
+  /// (Pixel + conversion event are on the ad set, not here — D10 revised.)
   redirectId  String  @unique @map("redirect_id")
-  /// Per-ad pixel conversion event (D10), default 'search'.
-  pxeEvent    String  @default("search") @map("pxe_event")
-  /// Selected pixel — scalar ref to fb_pixels, validated in the service layer.
-  pixelId     String? @map("pixel_id") @db.Uuid
   fallbackUrl String? @map("fallback_url")
   beneficiary String?
 

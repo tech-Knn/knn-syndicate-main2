@@ -75,8 +75,6 @@ export interface CampaignAd {
   creativeType: 'IMAGE' | 'VIDEO';
   uploadId: string | null;
   redirectId: string;
-  pxeEvent: string;
-  pixelId: string | null;
   fallbackUrl: string | null;
   beneficiary: string | null;
 }
@@ -84,9 +82,18 @@ export interface CampaignAd {
 export interface CampaignAdSet {
   id: string;
   name: string;
-  dailyBudgetCents: number;
+  dailyBudgetCents: number | null;
   billingEvent: string;
   optimizationGoal: string;
+  bidStrategy: string | null;
+  countries: string[];
+  ageMin: number;
+  ageMax: number;
+  genders: string[];
+  placementMode: string;
+  placements: string[];
+  pixelId: string | null;
+  pxeEvent: string;
   targeting: Record<string, unknown>;
   startTime: string | null;
   endTime: string | null;
@@ -99,8 +106,11 @@ export interface Campaign {
   status: CampaignStatus;
   objective: string;
   optimizationGoal: string;
+  budgetMode: 'AD_SET' | 'CAMPAIGN';
+  dailyBudgetCents: number | null;
   keywords: string[];
   racValue: string | null;
+  query: string | null;
   fallbackUrl: string | null;
   adAccountId: string | null;
   pageId: string | null;

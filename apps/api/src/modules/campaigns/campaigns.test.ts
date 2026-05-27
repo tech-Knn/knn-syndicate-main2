@@ -189,9 +189,13 @@ describe('campaigns + uploads', () => {
           {
             name: 'US - 25-54',
             dailyBudgetCents: 5000,
+            countries: ['US'],
+            ageMin: 25,
+            ageMax: 54,
+            pixelId,
             ads: [
-              { name: 'Ad A', headline: 'Save on Health', primaryText: 'Compare plans now.', uploadId, pixelId },
-              { name: 'Ad B', headline: 'Best Rates 2026', primaryText: 'See your options.', uploadId, pixelId },
+              { name: 'Ad A', headline: 'Save on Health', primaryText: 'Compare plans now.', uploadId },
+              { name: 'Ad B', headline: 'Best Rates 2026', primaryText: 'See your options.', uploadId },
             ],
           },
         ],

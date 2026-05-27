@@ -35,8 +35,13 @@ the approved plan.
 - **D9 — Redirect URL is per-ad** (`redirect_id` unique per ad), resolving to its campaign for the
   shared `ch`/`q`/`rac`/article. _Why:_ FB needs a distinct destination per ad to track per-ad
   clicks/conversions (the D8 signal).
-- **D10 — `pxe` (pixel conversion event) is user-selectable per ad**, default `search`. _Why:_
-  user note; it's the per-ad conversion signal that drives D8.
+- **D10 — `pxe` (pixel conversion event) is user-selectable, default `search`.** _Why:_ it's the
+  conversion signal that drives D8.
+  _Revised 2026-05-27:_ the **pixel + conversion event live at the AD-SET level**, matching
+  Facebook's real structure (one ad set optimizes for one pixel/event; the whole ad set targets one
+  audience). Facebook still reports conversions **per ad**, so the conversion-weighted revenue split
+  (D8) is unaffected. Ad-set also owns audience (countries/age/gender), placements, and budget
+  (ABO per-ad-set or CBO campaign-level); the ad keeps only creative + its unique `redirect_id` (D9).
 - **D11 — Channel race condition** solved with `SELECT … FOR UPDATE SKIP LOCKED` in a txn
   (single-writer worker). Ship a 100-concurrent-approval stress test. _Why:_ spec was silent.
 - **D12 — FB rate limits = BUC per ad account** (`ads_management` ≈ `300 + 40×active_ads`/hr

@@ -2,6 +2,9 @@ import { type Prisma, type TxClient } from '@knn/db';
 import {
   type CampaignDraft,
   type CtaOption,
+  type Gender,
+  type PlacementMode,
+  type PlacementPlatform,
   type PxeEvent,
   ROLES,
   campaignSubmitIssues,
@@ -48,10 +51,8 @@ async function assertAssetsOwned(tx: TxClient, userId: string, input: CampaignDr
     throw new AppError(400, 'Selected page is not connected to your account');
   }
   for (const set of input.adSets) {
-    for (const ad of set.ads) {
-      if (ad.pixelId && !owned.pixels.has(ad.pixelId)) {
-        throw new AppError(400, `Pixel for ad "${ad.name}" is not connected to your account`);
-      }
+    if (set.pixelId && !owned.pixels.has(set.pixelId)) {
+      throw new AppError(400, `Pixel for ad set "${set.name}" is not connected to your account`);
     }
   }
 }
@@ -60,10 +61,18 @@ function adSetCreateInputs(orgId: string, input: CampaignDraft): Prisma.AdSetCre
   return input.adSets.map((set) => ({
     orgId,
     name: set.name,
-    dailyBudgetCents: set.dailyBudgetCents,
+    dailyBudgetCents: set.dailyBudgetCents ?? null,
     billingEvent: set.billingEvent,
     optimizationGoal: set.optimizationGoal,
-    targeting: set.targeting as Prisma.InputJsonValue,
+    bidStrategy: set.bidStrategy ?? null,
+    countries: set.countries,
+    ageMin: set.ageMin,
+    ageMax: set.ageMax,
+    genders: set.genders,
+    placementMode: set.placementMode,
+    placements: set.placements,
+    pixelId: set.pixelId ?? null,
+    pxeEvent: set.pxeEvent,
     startTime: set.startTime ? new Date(set.startTime) : null,
     endTime: set.endTime ? new Date(set.endTime) : null,
     ads: {
@@ -76,8 +85,6 @@ function adSetCreateInputs(orgId: string, input: CampaignDraft): Prisma.AdSetCre
         cta: ad.cta,
         creativeType: ad.creativeType,
         uploadId: ad.uploadId,
-        pxeEvent: ad.pxeEvent,
-        pixelId: ad.pixelId,
         fallbackUrl: ad.fallbackUrl,
         beneficiary: ad.beneficiary,
         redirectId: generateRedirectId(),
@@ -92,8 +99,11 @@ function campaignScalars(_orgId: string, input: CampaignDraft) {
     name: input.name,
     objective: input.objective,
     optimizationGoal: input.optimizationGoal,
+    budgetMode: input.budgetMode,
+    dailyBudgetCents: input.dailyBudgetCents ?? null,
     keywords: input.keywords as Prisma.InputJsonValue,
     racValue: input.racValue ?? null,
+    query: input.query ?? null,
     fallbackUrl: input.fallbackUrl ?? null,
     adAccountId: input.adAccountId ?? null,
     pageId: input.pageId ?? null,
@@ -178,17 +188,28 @@ function toDraft(campaign: CampaignWithChildren): CampaignDraft {
     name: campaign.name,
     objective: campaign.objective,
     optimizationGoal: campaign.optimizationGoal,
+    budgetMode: campaign.budgetMode,
+    dailyBudgetCents: campaign.dailyBudgetCents ?? undefined,
     keywords: Array.isArray(campaign.keywords) ? (campaign.keywords as string[]) : [],
     racValue: campaign.racValue ?? undefined,
+    query: campaign.query ?? undefined,
     fallbackUrl: campaign.fallbackUrl ?? undefined,
     adAccountId: campaign.adAccountId ?? undefined,
     pageId: campaign.pageId ?? undefined,
     adSets: campaign.adSets.map((set) => ({
       name: set.name,
-      dailyBudgetCents: set.dailyBudgetCents,
+      dailyBudgetCents: set.dailyBudgetCents ?? undefined,
       billingEvent: set.billingEvent,
       optimizationGoal: set.optimizationGoal,
-      targeting: (set.targeting as Record<string, unknown>) ?? {},
+      bidStrategy: set.bidStrategy ?? undefined,
+      countries: set.countries,
+      ageMin: set.ageMin,
+      ageMax: set.ageMax,
+      genders: set.genders as Gender[],
+      placementMode: set.placementMode as PlacementMode,
+      placements: set.placements as PlacementPlatform[],
+      pixelId: set.pixelId ?? undefined,
+      pxeEvent: set.pxeEvent as PxeEvent,
       startTime: set.startTime?.toISOString(),
       endTime: set.endTime?.toISOString(),
       ads: set.ads.map((ad) => ({
@@ -199,8 +220,6 @@ function toDraft(campaign: CampaignWithChildren): CampaignDraft {
         cta: ad.cta as CtaOption,
         creativeType: ad.creativeType,
         uploadId: ad.uploadId ?? undefined,
-        pxeEvent: ad.pxeEvent as PxeEvent,
-        pixelId: ad.pixelId ?? undefined,
         fallbackUrl: ad.fallbackUrl ?? undefined,
         beneficiary: ad.beneficiary ?? undefined,
       })),

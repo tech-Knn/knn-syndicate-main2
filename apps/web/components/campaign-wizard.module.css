@@ -310,3 +310,60 @@
   padding: 3rem;
   color: var(--muted);
 }
+
+/* Segmented toggle / pill buttons (budget mode, gender, placements) */
+.toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.toggleBtn {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.5rem 0.8rem;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
+}
+.toggleBtn:hover {
+  color: var(--cream);
+  border-color: var(--muted-2);
+}
+.toggleOn {
+  background: rgba(var(--rust-rgb), 0.12);
+  border-color: var(--rust);
+  color: var(--cream);
+}
+
+/* Country picker */
+.countryList {
+  margin-top: 0.5rem;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  padding: 0.4rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.1rem 0.5rem;
+}
+.countryItem {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--cream);
+  padding: 0.3rem 0.4rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.countryItem:hover {
+  background: var(--surface-2);
+}
