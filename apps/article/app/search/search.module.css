@@ -1,0 +1,45 @@
+/* RSOC results page — light, search-results look (AdSense-friendly). */
+.page {
+  min-height: 100vh;
+  background: #ffffff;
+  color: #1a1a1a;
+  padding: 1.5rem 1.25rem 4rem;
+}
+.header {
+  max-width: 720px;
+  margin: 0 auto 1.25rem;
+  border-bottom: 1px solid #ececec;
+  padding-bottom: 1rem;
+}
+.brand {
+  font-family: Georgia, serif;
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: #111;
+}
+.query {
+  font-size: 1.1rem;
+  font-weight: 400;
+  color: #555;
+  margin: 0.6rem 0 0;
+}
+.query strong {
+  color: #111;
+}
+.ads {
+  max-width: 720px;
+  margin: 0 auto;
+  min-height: 120px;
+}
+.related {
+  max-width: 720px;
+  margin: 1.5rem auto 0;
+}
+.placeholder {
+  color: #9a9a9a;
+  font-size: 0.95rem;
+  border: 1px dashed #d6d6d6;
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
+}

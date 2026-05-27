@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { articleParagraphs, articleTeaser } from '@knn/shared';
-import { AfsWidget } from './afs-widget';
+import { RelatedSearchUnit } from './related-search-unit';
 import styles from './article.module.css';
 
 // Server-side base for the public article API. articles.<domain> is a different
@@ -62,14 +62,9 @@ export default async function ArticlePage({
 
   const teaser = articleTeaser(article.compliantContent);
   const paragraphs = articleParagraphs(article.compliantContent);
-  // The redirect passes the search query/channel/style; fall back to the article's
-  // own query when arriving without them.
-  const query = str(sp.q) || article.query || '';
-  const channel = str(sp.ch);
-  // AFS account is configured via env; the URL styleId (per-campaign) overrides
-  // the account default. pubId only ever comes from env (account-level).
-  const pubId = process.env.NEXT_PUBLIC_AFS_PUB_ID ?? '';
-  const styleId = str(sp.styleId) || (process.env.NEXT_PUBLIC_AFS_STYLE_ID ?? '');
+  // Required (since 2025-11-01) when traffic comes from a source you control (our
+  // FB ads); the redirect will pass the originating ad creative as `rc`.
+  const referrerAdCreative = str(sp.rc) || undefined;
 
   return (
     <main className={styles.page}>
@@ -77,7 +72,8 @@ export default async function ArticlePage({
         <h1 className={styles.title}>{article.title}</h1>
         {teaser && <p className={styles.lead}>{teaser}</p>}
 
-        <AfsWidget pubId={pubId} query={query} channel={channel} styleId={styleId} />
+        {/* RSOC related-search unit (content-targeted). Clicks → /search results page. */}
+        <RelatedSearchUnit referrerAdCreative={referrerAdCreative} />
 
         <div className={styles.body}>
           {paragraphs.map((paragraph, i) => (

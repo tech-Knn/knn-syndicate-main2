@@ -22,8 +22,10 @@ RUN pnpm --filter @knn/db generate
 # Empty by default (placeholder slot); set on approved-domain deploys.
 ARG NEXT_PUBLIC_AFS_PUB_ID=""
 ARG NEXT_PUBLIC_AFS_STYLE_ID=""
+ARG NEXT_PUBLIC_AFS_ADTEST=""
 ENV NEXT_PUBLIC_AFS_PUB_ID=${NEXT_PUBLIC_AFS_PUB_ID}
 ENV NEXT_PUBLIC_AFS_STYLE_ID=${NEXT_PUBLIC_AFS_STYLE_ID}
+ENV NEXT_PUBLIC_AFS_ADTEST=${NEXT_PUBLIC_AFS_ADTEST}
 RUN pnpm build
 
 FROM build AS runtime

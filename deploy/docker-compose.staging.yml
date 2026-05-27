@@ -55,6 +55,7 @@ services:
         # Baked into the article (Next) build — AFS only serves on approved domains.
         NEXT_PUBLIC_AFS_PUB_ID: ${NEXT_PUBLIC_AFS_PUB_ID:-}
         NEXT_PUBLIC_AFS_STYLE_ID: ${NEXT_PUBLIC_AFS_STYLE_ID:-}
+        NEXT_PUBLIC_AFS_ADTEST: ${NEXT_PUBLIC_AFS_ADTEST:-}
     restart: 'no'
     command: ['sh', '-lc', 'pnpm db:deploy && pnpm db:bootstrap && pnpm db:seed']
     depends_on:

@@ -132,5 +132,24 @@ the approved plan.
   Next build (build-safe) and matches the web app's "talk to the API" pattern. SSR needs `ARTICLE_API_BASE`
   (the API origin) since `articles.<domain>` is a different origin than `app.<domain>`.
 - **First-paragraph teaser rule** (`@knn/shared#articleTeaser`): first paragraph, capped at ≤100 words
-  AND ≤300 chars on a word boundary (spec §5.5). The AFS slot (`#afs-ads`) carries `q`/`ch`/`styleId`
-  from the redirect; the live Google CSA script is wired in Phase 9 (needs AFS access, OPEN_QUESTIONS #4).
+  AND ≤300 chars on a word boundary (spec §5.5).
+
+### 2026-05-28 — AFS/RSOC is the two-page model (matched to the AdSense-generated code)
+
+- The monetization is **RSOC (Related Search on Content)** via Google CSA, and it is a **two-page
+  flow** (confirmed against the account's generated code, style "Ajeet" `7465600436`):
+  1. **Content page** = our article (`articles.<approved-domain>/a/<slug>`) renders a
+     `_googCsa('relatedsearch', { relatedSearchTargeting:'content', resultsPageBaseUrl, … }, {container:'relatedsearches1', relatedSearches:10})`
+     unit — *search terms*, not ads. Terms appear only after Google crawls the URL (~1h).
+  2. **Results page** = `/search?query=<term>` renders
+     `_googCsa('ads', { pubId, query, styleId, adsafe:'high', … }, {container:'afscontainer1'}, {container:'relatedsearches1', …})`
+     — this is where the **ads + revenue** are. Both pages live on the Google-approved domain.
+- **`pubId` is `partner-pub-…`** (the AdSense **generated code** is authoritative; the help-center
+  wording "the part after partner-" is misleading). Always use the account's generated snippet.
+- **`referrerAdCreative` is mandatory** (since 2025-11-01) because our traffic comes from a source we
+  control (FB ads) — plumbed via the `rc` URL param (redirect will pass the originating ad creative).
+- AFS only serves on Google-**approved** domains; `pubId`/`styleId`/`adtest` are `NEXT_PUBLIC_*` →
+  baked into the article build (deploy build args). `adtest=on` for safe validation (no impressions/
+  clicks/revenue, avoids self-click policy issues); **never** `on` in production. Loader +
+  page-options live in `apps/article/app/_afs/csa.ts`. AdSense access is account-manager-gated and
+  has a usage floor (>20 search-ad impressions in ≥2 of 6 months) — OPEN_QUESTIONS #4.
