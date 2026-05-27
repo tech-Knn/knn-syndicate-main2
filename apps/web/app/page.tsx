@@ -36,6 +36,21 @@ export default function HomePage() {
         Dashboard, ad launcher, and admin console. The full experience lands in the dashboard
         phase.
       </p>
+      <a
+        href="/login"
+        style={{
+          marginTop: '0.5rem',
+          background: 'var(--rust)',
+          color: '#fff',
+          fontWeight: 600,
+          fontSize: '0.9rem',
+          padding: '0.62rem 1.4rem',
+          borderRadius: '9px',
+          boxShadow: '0 8px 22px -12px rgba(217, 81, 44, 0.9)',
+        }}
+      >
+        Sign in
+      </a>
       <code style={{ color: 'var(--gold)', fontSize: '0.85rem' }}>v0.1.0 · scaffolding</code>
     </main>
   );

@@ -2,11 +2,28 @@
   /* KNN Syndicate brand tokens (from the product doc) */
   --bg: #0e0e10;
   --surface: #16161a;
+  --surface-2: #1c1c22;
   --border: #26262c;
+  --border-strong: #34343c;
   --rust: #d9512c;
+  --rust-rgb: 217, 81, 44;
   --gold: #c89b3c;
+  --gold-rgb: 200, 155, 60;
   --cream: #f4ede0;
   --muted: #8a857a;
+  --muted-2: #6a665e;
+  --green: #3fb27f;
+  --amber: #d8a13a;
+  --red: #d9483b;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  --radius: 14px;
+  --radius-sm: 9px;
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 12px 32px -16px rgba(0, 0, 0, 0.7);
+  --shadow-lg: 0 24px 64px -24px rgba(0, 0, 0, 0.8);
 }
 
 * {
@@ -19,11 +36,88 @@ html,
 body {
   background: var(--bg);
   color: var(--cream);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Ambient brand glow behind everything. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(60rem 40rem at 12% -10%, rgba(var(--rust-rgb), 0.1), transparent 60%),
+    radial-gradient(50rem 40rem at 100% 0%, rgba(var(--gold-rgb), 0.07), transparent 55%);
+  pointer-events: none;
 }
 
 a {
   color: var(--rust);
   text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+}
+
+::selection {
+  background: rgba(var(--rust-rgb), 0.3);
+  color: var(--cream);
+}
+
+:focus-visible {
+  outline: 2px solid rgba(var(--rust-rgb), 0.7);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 3px solid var(--bg);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-2);
+}
+
+/* Display heading helper. */
+.serif {
+  font-family: var(--font-serif);
+  font-style: italic;
+  letter-spacing: -0.01em;
+}
+
+/* Wordmark / eyebrow label. */
+.eyebrow {
+  font-family: var(--font-mono);
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+@keyframes knn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes knn-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }

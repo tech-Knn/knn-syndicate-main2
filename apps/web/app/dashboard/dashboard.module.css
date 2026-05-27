@@ -1,0 +1,99 @@
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 1.75rem;
+  padding: 0.9rem 1.5rem;
+  background: rgba(14, 14, 16, 0.8);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+  color: var(--cream);
+}
+.brandMark {
+  font-family: var(--font-mono);
+  letter-spacing: 0.32em;
+  font-size: 0.62rem;
+  color: var(--muted);
+}
+.brandName {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 1.05rem;
+}
+
+.nav {
+  display: flex;
+  gap: 0.25rem;
+}
+.navLink {
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 500;
+  padding: 0.4rem 0.7rem;
+  border-radius: var(--radius-sm);
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+.navLink:hover {
+  color: var(--cream);
+  background: var(--surface-2);
+}
+.navActive {
+  color: var(--cream);
+  background: var(--surface-2);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.user {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.userMeta {
+  text-align: right;
+  line-height: 1.2;
+}
+.userName {
+  font-size: 0.85rem;
+  color: var(--cream);
+}
+.userEmail {
+  font-size: 0.72rem;
+  color: var(--muted-2);
+}
+
+.main {
+  flex: 1;
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 2.25rem 1.5rem 4rem;
+  animation: knn-rise 0.35s ease both;
+}
+
+.center {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 1.5rem;
+}
