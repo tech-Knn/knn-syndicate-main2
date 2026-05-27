@@ -1,0 +1,25 @@
+# Keep the build context small and never bake host artifacts or secrets in.
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+.turbo
+.git
+.github
+coverage
+**/*.log
+
+# Secrets / local env
+.env
+.env.*
+deploy/.env.staging
+
+# Source docs (not needed at runtime)
+*.pdf
+*.html
+
+# Editor / OS
+.DS_Store
+.idea
+.vscode
+**/*.tsbuildinfo

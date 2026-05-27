@@ -1,0 +1,25 @@
+# Caddy auto-provisions TLS (Let's Encrypt) for each domain. Requires public DNS
+# pointing the domains at this box and ports 80/443 reachable. Domains come from
+# .env.staging (APP_DOMAIN / ARTICLE_DOMAIN / REDIRECT_DOMAIN — hostnames only,
+# no scheme). If Cloudflare proxying is on, use "Full (strict)" SSL mode.
+
+{$APP_HOST} {
+	# API + admin (incl. Bull-Board at /admin/queues) → Fastify; everything else → dashboard.
+	@api path /api/* /admin/*
+	handle @api {
+		reverse_proxy api:3000
+	}
+	handle {
+		reverse_proxy web:3003
+	}
+	encode gzip zstd
+}
+
+{$ARTICLE_HOST} {
+	reverse_proxy article:3001
+	encode gzip zstd
+}
+
+{$REDIRECT_HOST} {
+	reverse_proxy redirect:3002
+}

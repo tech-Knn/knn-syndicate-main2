@@ -67,3 +67,18 @@ the approved plan.
 - **Internal packages export TS source** (`exports → ./src/index.ts`); apps bundle them (tsup
   `noExternal:[/^@knn\//]`, Next `transpilePackages`). No build step for libraries.
 - **pgvector confirmed 0.8.2** available in the pg16 image.
+
+### 2026-05-27 — Staging/prod deploy on Hetzner (Docker Compose + Caddy)
+
+- **Deploy = one Docker image for the whole monorepo**, run as separate service
+  containers (api/redirect/worker/web/article) via `deploy/docker-compose.staging.yml`,
+  fronted by **Caddy** (automatic Let's Encrypt TLS) for the three domains, with
+  Postgres + Redis on the box and **Cloudflare** in front. _Why:_ extends our local
+  docker-compose, far less error-prone than hand-rolled Nginx+PM2+certbot for a pnpm
+  monorepo, and reproducible. Supersedes the spec's §11 Nginx+PM2 sketch. Runbook in
+  `docs/DEPLOY.md`. Staging is provisioned ~Phase 2 (Facebook needs public HTTPS URLs);
+  see memory `deploy-workflow`.
+- A one-shot `migrate` container runs `db:deploy` + `db:bootstrap` (creates the RLS
+  `knn_app` role) + `db:seed` before apps start. Only Caddy is exposed (80/443).
+- Image is staging-grade (full monorepo + deps for reliability); prod slimming
+  (multi-stage prune, Next standalone, non-root) is a Phase 11 TODO.
