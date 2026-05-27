@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Turbo
+.turbo/
+
+# Env files (never commit secrets)
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+!.env.*.example
+
+# Prisma
+packages/db/prisma/*.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Test / coverage
+coverage/
+playwright-report/
+test-results/
+.vitest/
+
+# Uploads (local creative storage)
+var/uploads/
+uploads/
+
+# Misc
+tmp/
+*.pid

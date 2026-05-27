@@ -1,0 +1,50 @@
+{
+  "name": "knn-search-arb-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KNN Syndicate — self-hosted search arbitrage platform (Facebook ads -> monetized AFS article pages -> revenue attribution).",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.11.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint -- --fix",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:watch": "turbo run test -- --watch",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yaml,yml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yaml,yml}\"",
+    "clean": "turbo run clean && rm -rf node_modules .turbo",
+    "infra:up": "docker-compose -f infra/docker-compose.yml up -d",
+    "infra:down": "docker-compose -f infra/docker-compose.yml down",
+    "infra:logs": "docker-compose -f infra/docker-compose.yml logs -f",
+    "infra:reset": "docker-compose -f infra/docker-compose.yml down -v && docker-compose -f infra/docker-compose.yml up -d",
+    "db:generate": "pnpm --filter @knn/db generate",
+    "db:migrate": "pnpm --filter @knn/db migrate:dev",
+    "db:deploy": "pnpm --filter @knn/db migrate:deploy",
+    "db:studio": "pnpm --filter @knn/db studio",
+    "db:seed": "pnpm --filter @knn/db seed"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.5",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.19.1",
+    "vitest": "^2.1.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "prisma", "@prisma/client", "@prisma/engines"],
+    "overrides": {
+      "ioredis": "5.11.0"
+    }
+  }
+}

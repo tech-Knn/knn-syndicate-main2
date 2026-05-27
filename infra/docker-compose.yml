@@ -1,0 +1,44 @@
+# Local development infrastructure for the KNN Search Arbitrage Platform.
+# Mirrors staging/prod stores: PostgreSQL 16 (+pgvector) and Redis 7.
+# Named volumes only (no bind mounts) so a project path containing spaces is fine.
+name: knn-search-arb
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: knn-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-knn}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-knn_local_dev_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-knn}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - knn_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-knn} -d ${POSTGRES_DB:-knn}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: knn-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - knn_redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  knn_pgdata:
+  knn_redisdata:

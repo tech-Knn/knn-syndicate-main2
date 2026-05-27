@@ -1,0 +1,21 @@
+{
+  "name": "@knn/queue",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@knn/config": "workspace:*",
+    "@knn/shared": "workspace:*",
+    "bullmq": "^5.34.6",
+    "ioredis": "^5.4.2"
+  }
+}

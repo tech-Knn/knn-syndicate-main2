@@ -1,0 +1,25 @@
+// KNN Search Arbitrage Platform — Prisma schema.
+// Phase 0 establishes the datasource (PostgreSQL 16 + pgvector) and a first
+// table to prove migrations. Phase 1+ adds organizations, users, campaigns,
+// channels, articles, revenue, etc.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+/// Global key/value platform settings (compliance prompt, feature toggles, ...).
+model PlatformSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  @@map("platform_settings")
+}

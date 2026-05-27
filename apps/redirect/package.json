@@ -1,0 +1,24 @@
+{
+  "name": "@knn/redirect",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@knn/config": "workspace:*",
+    "@knn/shared": "workspace:*",
+    "hono": "^4.6.14",
+    "ioredis": "^5.11.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5"
+  }
+}
