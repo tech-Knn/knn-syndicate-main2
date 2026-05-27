@@ -2,7 +2,35 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-27 — Phase 4 (Approval system) COMPLETE + DEPLOYED (local gate green + in-browser verified; shipped to staging, migration applied, endpoints live)._
+_Last updated: 2026-05-27 — Phase 5 (Article engine + frontend) COMPLETE (gate green + in-browser verified, mocked AI). NOT yet on staging. Phase 4 deployed._
+
+## Phase 5 — Article engine + article frontend (complete; gate green; verified in-browser)
+
+Built against **mocked AI** per the gate; live generation needs `ANTHROPIC_API_KEY` + `OPENAI_API_KEY`
+wired (external dep, like FB live-connect) — the clients throw `AiNotConfiguredError` until then.
+
+- **`@knn/ai`** (new package): fetch-based clients (not vendor SDKs, mirroring `@knn/fb`) — `embedText`
+  (OpenAI `text-embedding-3-small`, 1536-d), `generateArticle` + `complianceRewrite` (Claude Messages).
+  Keys optional → `AiNotConfiguredError`. 8 unit tests (fetch-stub + mocked config).
+- **Schema** (migration `20260527175343_article_engine`): `articles` (raw + compliant content,
+  `embedding vector(1536)`, ivfflat cosine index, status, slug) + RLS `tenant_isolation`. Campaign
+  links via the existing scalar `articleId`.
+- **Engine** `apps/api/src/modules/articles/articles.service.ts`: `generateArticleForCampaign` embeds
+  the campaign keywords/angle → **reuses** an existing org article when cosine ≥ 0.70 (raw-SQL `<=>`,
+  scoped via `withTenant(campaign.orgId)` so reuse never crosses tenants) else **generates** (Claude) →
+  **compliance rewrite** → stores both versions + the embedding → attaches to the campaign. Idempotent;
+  audits `article.generated` / `article.reused`. Route `POST /api/campaigns/:id/article` (owner/admin).
+- **Public read** `GET /api/public/articles/:slug` (no auth, `withSystem`, compliant content only) —
+  backs the article frontend without a DB import in the Next app (build-safe).
+- **Frontend** `apps/article/app/a/[slug]`: SSR page — title, the ≤100-word/≤300-char first-paragraph
+  teaser (`@knn/shared#articleTeaser`), the **AFS slot** (`#afs-ads`, wired with `q`/`ch`/`styleId`
+  from the redirect; live Google CSA script lands in Phase 9), full body, and SEO `generateMetadata`.
+  Light editorial theme (AdSense-friendly), not the dark dashboard.
+- **Gate green:** typecheck 11/11, lint 11/11, build 5/5, **128 tests** (shared 38 incl. teaser, ai 8,
+  api 53 incl. 8 article-engine [generate / reuse / no-reuse / idempotency / authz / public]).
+- **In-browser verified** (Preview MCP): seeded one article → `/a/<slug>?q=…&ch=…` rendered title +
+  teaser + AFS slot (data-query/channel from the URL) + body, with the SEO title set. Demo data +
+  scaffolding cleaned up.
 
 ## Phase 4 — Approval system (complete; gate green; verified in-browser; deployed)
 
@@ -163,19 +191,19 @@ via the worker's daily token-refresh job.
 
 ## In progress
 
-- Nothing — Phase 4 code-complete, gate green, verified in-browser, **committed (`7bef2ca`) and
-  deployed to staging**. Shipped via `git archive HEAD` → `/opt/rsoc` → image rebuild →
-  `--profile edge up -d`; the one-shot `migrate` applied `campaign_approval` (exit 0). Verified live:
-  `GET /api/campaigns/pending` + `/api/admin/organization` → 401 (auth-gated, routes live),
-  `/dashboard/approvals` → 200, `/api/auth/login` → 400 (healthy); all 8 services up, API healthy.
+- Nothing — Phase 5 code-complete, gate green, verified in-browser. **Not yet committed or shipped to
+  staging** (pending go-ahead). When deploying, the article service needs `ARTICLE_API_BASE` set to the
+  API origin (e.g. `https://app.staging.rsoc.app`) so its SSR fetch reaches the public article API
+  across subdomains; live article generation also needs `ANTHROPIC_API_KEY` + `OPENAI_API_KEY`.
+- Phase 4 is committed (`7bef2ca`) + deployed to staging; the FB-pagination audit fix is `b942263`.
 
 ## Next
 
-- **Phase 5 (Article engine + article frontend)** — embed campaign keywords (OpenAI
-  `text-embedding-3-small`, 1536-dim) → pgvector cosine ≥0.70 reuse else generate (Claude) →
-  compliance rewrite (admin `compliance_prompt`, store raw + compliant) → deploy. Next.js SSR article
-  page (title, ≤100-word/≤300-char first paragraph, AFS widget slot, SEO meta). **External deps:**
-  Anthropic + OpenAI keys, and AdSense AFS eligibility (OPEN_QUESTIONS #4) for the live widget.
+- **Phase 6 (Channel pool & attribution-assignment)** — per-campaign channel assignment via
+  `SELECT … FOR UPDATE SKIP LOCKED` in a single-writer worker (D11); FIFO queue; IST lock-for-day,
+  release/resume rules, auto-pause → `QUEUED_NO_CHANNEL`; midnight cleanup cron (00:05 IST); history.
+  **Gate:** 100-concurrent-approval stress test → zero double-assignment; queue FIFO; release/resume/
+  rollover tests. This is where the approved → article → channel pipeline starts wiring together.
 
 ## Staging now runs Phase 2 with Facebook configured (2026-05-27)
 

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { ROLES, campaignDraftSchema } from '@knn/shared';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate, requireRole } from '../../middleware/authenticate.js';
+import { generateArticleForCampaign } from '../articles/articles.service.js';
 import { approveCampaign, listPendingApprovals, rejectCampaign } from './approval.service.js';
 import { rejectCampaignSchema } from './approval.schemas.js';
 import {
@@ -125,6 +126,22 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
       try {
         await deleteCampaign(req.auth, req.params.id);
         return reply.code(204).send();
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Generate (or reuse) + attach the campaign's monetized article (Phase 5, D16).
+  // Owner/admin scoped in the service. Normally driven by the post-approval pipeline
+  // (Phase 6/8); exposed here for manual trigger + regeneration.
+  app.post<{ Params: { id: string } }>(
+    '/:id/article',
+    { preHandler: [authenticate] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.send({ article: await generateArticleForCampaign(req.auth, req.params.id) });
       } catch (err) {
         return handleRouteError(err, reply);
       }

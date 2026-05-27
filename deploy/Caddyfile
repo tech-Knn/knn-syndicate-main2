@@ -20,6 +20,14 @@
 	encode gzip zstd
 }
 
+# Extra article host on a Google-approved domain for live AFS testing. Defaults to
+# an internal localhost address when AFS_TEST_HOST is unset, so deploys that don't
+# use it aren't affected (Caddy won't try to issue a public cert for it).
+{$AFS_TEST_HOST:localhost:8081} {
+	reverse_proxy article:3001
+	encode gzip zstd
+}
+
 {$REDIRECT_HOST} {
 	reverse_proxy redirect:3002
 }

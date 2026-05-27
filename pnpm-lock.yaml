@@ -62,6 +62,9 @@ importers:
       '@fastify/sensible':
         specifier: ^6.0.2
         version: 6.0.4
+      '@knn/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       '@knn/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -211,6 +214,15 @@ importers:
       tsup:
         specifier: ^8.3.5
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.15)(tsx@4.22.3)(typescript@5.9.3)
+
+  packages/ai:
+    dependencies:
+      '@knn/config':
+        specifier: workspace:*
+        version: link:../config
+      '@knn/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/config:
     dependencies:

@@ -1,3 +1,4 @@
+export * from './article.js';
 export * from './campaigns.js';
 export * from './campaign-status.js';
 export * from './countries.js';

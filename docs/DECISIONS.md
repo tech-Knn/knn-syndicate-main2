@@ -111,3 +111,26 @@ the approved plan.
   `org.{created,auto_approve.enabled,auto_approve.disabled}`, `user.{approve,reject,suspend,
   reactivate}`. Reject entries carry `{reason}` in `details`. RLS applies — under `withTenant` the
   audit row's `org_id` must equal the active org; super-admin writes via `withSystem`.
+
+### 2026-05-27 — Phase 5 (Article engine + frontend)
+
+- **`@knn/ai` uses `fetch`, not the vendor SDKs** (same call as `@knn/fb`): light deps + trivially
+  mockable via `vi.stubGlobal('fetch')`. Embeddings = OpenAI `text-embedding-3-small` (1536-d);
+  articles + compliance = Claude Messages. Keys are **optional** — missing → `AiNotConfiguredError`
+  so the app degrades instead of crashing; live generation is an external dep (like FB connect).
+- **Article reuse is tenant-scoped.** The cosine search + create run in `withTenant(campaign.orgId)`
+  (not `runScoped`/`withSystem`), so an org never reuses another tenant's generated article, even for
+  a SUPER_ADMIN-triggered generation. Reuse threshold = cosine ≥ 0.70 (`ARTICLE_SIMILARITY_THRESHOLD`).
+- **pgvector via raw SQL.** The `embedding vector(1536)` column is `Unsupported(...)` in Prisma, so the
+  embedding is written with `$executeRawUnsafe (… = $1::vector)` and the nearest-neighbour search uses
+  `embedding <=> $1::vector` (cosine distance; similarity = 1 − distance) — both inside the tenant txn
+  (RLS-scoped). Vector literals are built from finite-validated numbers (no injection). ivfflat index.
+- **Store raw + compliant; serve compliant only.** Both versions persist for audit (D16); the public
+  read (`getPublicArticleBySlug`) and the frontend expose only `compliantContent`.
+- **The article frontend is API-backed, not DB-backed.** `apps/article` fetches `GET /api/public/
+  articles/:slug` instead of importing `@knn/db` — keeps `@knn/config`'s eager env validation out of the
+  Next build (build-safe) and matches the web app's "talk to the API" pattern. SSR needs `ARTICLE_API_BASE`
+  (the API origin) since `articles.<domain>` is a different origin than `app.<domain>`.
+- **First-paragraph teaser rule** (`@knn/shared#articleTeaser`): first paragraph, capped at ≤100 words
+  AND ≤300 chars on a word boundary (spec §5.5). The AFS slot (`#afs-ads`) carries `q`/`ch`/`styleId`
+  from the redirect; the live Google CSA script is wired in Phase 9 (needs AFS access, OPEN_QUESTIONS #4).

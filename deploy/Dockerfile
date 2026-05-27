@@ -17,6 +17,13 @@ FROM base AS build
 COPY . .
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @knn/db generate
+# AFS pubId/styleId are NEXT_PUBLIC_* → Next inlines them into the article build,
+# so they must be present at build time (passed as build args from deploy config).
+# Empty by default (placeholder slot); set on approved-domain deploys.
+ARG NEXT_PUBLIC_AFS_PUB_ID=""
+ARG NEXT_PUBLIC_AFS_STYLE_ID=""
+ENV NEXT_PUBLIC_AFS_PUB_ID=${NEXT_PUBLIC_AFS_PUB_ID}
+ENV NEXT_PUBLIC_AFS_STYLE_ID=${NEXT_PUBLIC_AFS_STYLE_ID}
 RUN pnpm build
 
 FROM build AS runtime

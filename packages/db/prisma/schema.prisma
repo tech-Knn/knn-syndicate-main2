@@ -422,6 +422,49 @@ model Upload {
   @@map("uploads")
 }
 
+// ---------------------------------------------------------------------------
+// Phase 5 — Article engine (D16). One article per campaign by reference
+// (Campaign.articleId), but reusable across a tenant's campaigns when the
+// keyword embedding is similar enough (cosine >= ARTICLE_SIMILARITY_THRESHOLD).
+// Both the raw Claude output and the compliance-rewritten version are stored
+// (audit); the compliant version is what the article frontend serves.
+// ---------------------------------------------------------------------------
+
+enum ArticleStatus {
+  GENERATING
+  READY
+  FAILED
+}
+
+model Article {
+  id    String @id @default(uuid()) @db.Uuid
+  orgId String @map("org_id") @db.Uuid
+
+  /// Public URL slug (articles.<domain>/<slug>).
+  slug     String @unique
+  title    String
+  keywords Json   @default("[]")
+  /// The query/angle that drove generation (D6).
+  query    String?
+
+  rawContent       String @map("raw_content")
+  compliantContent String @map("compliant_content")
+
+  /// 1536-dim OpenAI embedding (text-embedding-3-small) of the keywords/query.
+  /// pgvector type — Prisma can't read/write it through the client, so the
+  /// embedding is set + queried via raw SQL (cosine `<=>`, ivfflat index).
+  embedding Unsupported("vector(1536)")?
+
+  status ArticleStatus @default(READY)
+  /// The Claude model that generated it (audit).
+  model     String?
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+
+  @@index([orgId])
+  @@map("articles")
+}
+
 /// A saved ad-launcher configuration (a reusable campaign draft, minus creatives).
 /// `config` holds the serialized draft so a buyer can spin up similar campaigns fast.
 model LauncherPreset {
