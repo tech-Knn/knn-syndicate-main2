@@ -10,6 +10,7 @@ import {
   fetchAdAccounts,
   fetchPages,
   fetchPixels,
+  fetchPromotePages,
   getMe,
   isFbConfigured,
 } from '@knn/fb';
@@ -242,6 +243,56 @@ export async function listPages(auth: AuthContext) {
   return runScoped(auth, (tx) =>
     tx.fbPage.findMany({ where: { connectionId: conn.id }, orderBy: { name: 'asc' } }),
   );
+}
+
+/**
+ * Pages promotable by a specific ad account (live from FB via `promote_pages`),
+ * upserted into fb_pages so a campaign can reference them. This scopes the page
+ * picker to the chosen ad account instead of the whole connection.
+ */
+export async function listAccountPages(auth: AuthContext, adAccountId: string) {
+  const account = await runScoped(auth, (tx) =>
+    tx.fbAdAccount.findFirst({
+      where: { id: adAccountId },
+      select: {
+        fbAccountId: true,
+        connection: { select: { id: true, userId: true, accessTokenEnc: true, status: true } },
+      },
+    }),
+  );
+  if (!account || account.connection.userId !== auth.userId) {
+    throw new AppError(404, 'Ad account not found');
+  }
+  if (account.connection.status === FbConnectionStatus.CONNECTION_BROKEN) {
+    throw new AppError(409, 'Facebook connection is broken — reconnect first');
+  }
+
+  let pages;
+  try {
+    pages = await fetchPromotePages(account.fbAccountId, decryptToken(account.connection.accessTokenEnc));
+  } catch (err) {
+    if (err instanceof FbConnectionBrokenError) {
+      await markConnectionBroken(auth.userId, err.message);
+      throw new AppError(409, 'Facebook connection is broken — reconnect');
+    }
+    throw err;
+  }
+
+  const connectionId = account.connection.id;
+  return runScoped(auth, async (tx) => {
+    const rows = [];
+    for (const p of pages) {
+      rows.push(
+        await tx.fbPage.upsert({
+          where: { connectionId_fbPageId: { connectionId, fbPageId: p.fbPageId } },
+          create: { orgId: auth.orgId, connectionId, fbPageId: p.fbPageId, name: p.name, instagramId: p.instagramId },
+          update: { name: p.name },
+          select: { id: true, fbPageId: true, name: true, instagramId: true },
+        }),
+      );
+    }
+    return rows;
+  });
 }
 
 export async function listPixels(auth: AuthContext, adAccountId: string) {

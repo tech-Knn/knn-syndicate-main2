@@ -7,6 +7,7 @@ import {
   getAuthUrl,
   getConnectionStatus,
   handleCallback,
+  listAccountPages,
   listAccounts,
   listPages,
   listPixels,
@@ -79,6 +80,20 @@ export async function facebookRoutes(app: FastifyInstance): Promise<void> {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
         return reply.send({ pixels: await listPixels(req.auth, req.params.id) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Pages promotable by a specific ad account (scopes the wizard's page picker).
+  app.get<{ Params: { id: string } }>(
+    '/accounts/:id/pages',
+    { preHandler: [authenticate] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.send({ pages: await listAccountPages(req.auth, req.params.id) });
       } catch (err) {
         return handleRouteError(err, reply);
       }

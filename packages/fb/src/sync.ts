@@ -68,3 +68,18 @@ export async function fetchPixels(fbAccountId: string, accessToken: string): Pro
   });
   return r.data.map((p) => ({ fbPixelId: p.id, name: p.name ?? p.id }));
 }
+
+/** Pages that a specific ad account can promote (owned + client pages). Scopes the
+ *  page picker to the chosen ad account rather than the whole connection. */
+export async function fetchPromotePages(
+  fbAccountId: string,
+  accessToken: string,
+): Promise<PageDTO[]> {
+  const r = await graphRequest<Paged<{ id: string; name?: string }>>({
+    path: `/act_${fbAccountId}/promote_pages`,
+    params: { fields: 'id,name', limit: '200' },
+    accessToken,
+    accountId: fbAccountId,
+  });
+  return r.data.map((p) => ({ fbPageId: p.id, name: p.name ?? p.id, instagramId: null }));
+}

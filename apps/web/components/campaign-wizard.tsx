@@ -190,12 +190,9 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
 
   useEffect(() => {
     let active = true;
-    void Promise.all([facebook.accounts(), facebook.pages()])
-      .then(([acc, pg]) => {
-        if (!active) return;
-        setAccounts(acc);
-        setPages(pg);
-      })
+    void facebook
+      .accounts()
+      .then((acc) => active && setAccounts(acc))
       .catch(() => undefined)
       .finally(() => active && setAssetsLoading(false));
     return () => {
@@ -203,9 +200,11 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
     };
   }, []);
 
+  // Pixels and pages are scoped to the selected ad account (pages via promote_pages).
   useEffect(() => {
     if (!form.adAccountId) {
       setPixels([]);
+      setPages([]);
       return;
     }
     let active = true;
@@ -213,6 +212,10 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
       .pixels(form.adAccountId)
       .then((px) => active && setPixels(px))
       .catch(() => active && setPixels([]));
+    void facebook
+      .accountPages(form.adAccountId)
+      .then((pg) => active && setPages(pg))
+      .catch(() => active && setPages([]));
     return () => {
       active = false;
     };
@@ -474,7 +477,7 @@ function OfferStep({
           <select
             className={styles.select}
             value={form.adAccountId}
-            onChange={(e) => patch({ adAccountId: e.target.value })}
+            onChange={(e) => patch({ adAccountId: e.target.value, pageId: '' })}
           >
             <option value="">Select an ad account…</option>
             {accounts.map((a) => (
@@ -486,14 +489,22 @@ function OfferStep({
         </div>
         <div className={styles.field}>
           <label className={styles.label}>Page</label>
-          <select className={styles.select} value={form.pageId} onChange={(e) => patch({ pageId: e.target.value })}>
-            <option value="">Select a page…</option>
+          <select
+            className={styles.select}
+            value={form.pageId}
+            onChange={(e) => patch({ pageId: e.target.value })}
+            disabled={!form.adAccountId}
+          >
+            <option value="">{form.adAccountId ? 'Select a page…' : 'Pick an ad account first'}</option>
             {pages.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
             ))}
           </select>
+          {form.adAccountId && pages.length === 0 && (
+            <span className={styles.hint}>No pages available for this ad account.</span>
+          )}
         </div>
         <div className={`${styles.field} ${styles.full}`}>
           <label className={styles.label}>Keywords</label>

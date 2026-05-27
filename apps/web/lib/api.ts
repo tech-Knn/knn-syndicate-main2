@@ -191,6 +191,10 @@ export const facebook = {
     (await parse<{ accounts: FbAccount[] }>(await authedFetch('/api/facebook/accounts'))).accounts,
   pages: async (): Promise<FbPage[]> =>
     (await parse<{ pages: FbPage[] }>(await authedFetch('/api/facebook/pages'))).pages,
+  accountPages: async (accountId: string): Promise<FbPage[]> =>
+    (
+      await parse<{ pages: FbPage[] }>(await authedFetch(`/api/facebook/accounts/${accountId}/pages`))
+    ).pages,
   pixels: async (accountId: string): Promise<FbPixel[]> =>
     (
       await parse<{ pixels: FbPixel[] }>(

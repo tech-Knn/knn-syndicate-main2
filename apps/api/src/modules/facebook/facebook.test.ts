@@ -34,6 +34,8 @@ function goodFbFetch(): typeof fetch {
     if (url.includes('/me/accounts'))
       return json({ data: [{ id: 'page_1', name: 'My Page', instagram_business_account: { id: 'ig_1' } }] });
     if (url.includes('/adspixels')) return json({ data: [{ id: 'px_1', name: 'Main Pixel' }] });
+    if (url.includes('/promote_pages'))
+      return json({ data: [{ id: 'pg_promote', name: 'Promotable Page' }] });
     if (url.includes('/me')) return json({ id: 'fbuser_1', name: 'Test User' });
     return json({ error: { message: 'unexpected', code: 1 } }, 400);
   }) as unknown as typeof fetch;
@@ -172,6 +174,26 @@ describe('facebook integration', () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(pixels.json<{ pixels: { fbPixelId: string }[] }>().pixels[0]?.fbPixelId).toBe('px_1');
+  });
+
+  it('lists pages promotable by an ad account (scoped page picker)', async () => {
+    vi.stubGlobal('fetch', goodFbFetch());
+    const token = await bearer();
+    const accounts = await app.inject({
+      method: 'GET',
+      url: '/api/facebook/accounts',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const accountId = accounts.json<{ accounts: { id: string }[] }>().accounts[0]?.id ?? '';
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/facebook/accounts/${accountId}/pages`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json<{ pages: { fbPageId: string }[] }>().pages.some((p) => p.fbPageId === 'pg_promote')).toBe(
+      true,
+    );
   });
 
   it('marks the connection broken when a resync hits an expired token (D13)', async () => {
