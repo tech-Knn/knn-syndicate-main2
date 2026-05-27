@@ -43,9 +43,10 @@ playwright-report/
 test-results/
 .vitest/
 
-# Uploads (local creative storage). Root-anchored so it can't swallow source
-# directories named "uploads" (e.g. apps/api/src/modules/uploads).
-var/uploads/
+# Uploads (local creative storage). Match the runtime dir at any depth (the API
+# test writes to apps/api/var/uploads when cwd is the package). NOT a bare
+# `uploads/`, which would swallow source dirs like apps/api/src/modules/uploads.
+**/var/uploads/
 /uploads/
 
 # Misc
