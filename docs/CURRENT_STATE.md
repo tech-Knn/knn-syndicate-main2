@@ -2,7 +2,20 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-28 — Phase 6 (Channel pool & assignment) COMPLETE (gate green; 100-concurrent stress test passes). Phase 5 + AFS/RSOC funnel VALIDATED LIVE on `articles.10linesabout.com`. Next: Phase 7 (redirect engine). NOTE: Phase 6 + the AFS/Phase-5 trailing commits not yet shipped to staging — commit + deploy + run `seed-channels` on the box._
+_Last updated: 2026-05-28 — Phase 7 (Redirect engine) COMPLETE + LIVE on the EDGE: Hono Cloudflare Worker on **`go.10linesabout.com`**, ~20–25ms steady-state (gate met), correct paid/organic/fallback routing + txid. Phases 0–6 done; AFS/RSOC funnel validated live. Next: Phase 8 (FB launch pipeline) — which produces the per-ad `redirect_id` configs that the origin→KV sync writes for the Worker._
+
+## Phase 7 — Redirect engine (complete; deployed to the edge)
+
+Decided on EDGE over single-origin (research: a single region can't hit <50ms globally). **Hono
+Cloudflare Worker** (`apps/redirect/src/worker.ts` + `wrangler.toml`, KV namespace `REDIRECTS`
+`0480a994…`) live on **`go.10linesabout.com`** (custom domain — scoped to `go`, main site untouched;
+resolves to CF Worker IPs, not the origin). `/go/:id` → KV read (`redirect:{id}`) → pure
+`resolveRedirect` (`src/resolve.ts`, 11 tests): paid (`fbclid`/`utm_source`) → 302 to the content page
+with `rc`/`ch`/`rac`/`styleId` + minted `txid`; organic/paused/unknown → fallback; weighted split
+supported. **Benchmarked ~20–25ms steady-state from EU** (Worker compute sub-1ms + KV 1–5ms; gate met).
+`workers_dev=false`. Legacy Node redirect on the box is now superseded (retire from compose later).
+**Remaining (Phase 8):** the origin→KV write-through sync (`redirect:{id}` config per ad) on launch +
+a CF API token (Workers KV Edit) on the origin. One test KV key `redirect:test` exists (benchmark).
 
 ## Phase 6 — Channel pool & assignment (complete; gate green)
 

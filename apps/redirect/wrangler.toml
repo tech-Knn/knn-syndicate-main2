@@ -13,12 +13,13 @@ workers_dev = false
 # KV holding redirect:{redirectId} configs, write-through-synced from the origin.
 [[kv_namespaces]]
 binding = "REDIRECTS"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "0480a994b3e1469cb3d9fc966139ad41"
 
 [vars]
 ARTICLE_FALLBACK = "https://articles.10linesabout.com/"
 
-# Route the worker to the redirect domain (the zone must be on this Cloudflare account):
-# [[routes]]
-# pattern = "go.10linesabout.com/*"
-# zone_name = "10linesabout.com"
+# Custom domain for the redirect host. `custom_domain = true` provisions ONLY this
+# hostname's DNS + cert on Cloudflare (scoped to `go` — root/www/articles untouched).
+[[routes]]
+pattern = "go.10linesabout.com"
+custom_domain = true
