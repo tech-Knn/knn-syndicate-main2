@@ -238,6 +238,8 @@ export const campaigns = {
     ).campaign,
   remove: async (id: string): Promise<void> =>
     parse(await authedFetch(`/api/campaigns/${id}`, { method: 'DELETE' })),
+  testLaunch: async (id: string): Promise<{ fbCampaignId: string; adSets: { fbAdSetId: string; ads: { fbAdId: string }[] }[] }> =>
+    parse(await authedFetch(`/api/campaigns/${id}/test-launch`, { method: 'POST' })),
 };
 
 export const uploads = {

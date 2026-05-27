@@ -334,6 +334,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
 
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [launching, setLaunching] = useState(false);
   const [uploadingKey, setUploadingKey] = useState<string | null>(null);
   const [bannerError, setBannerError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -445,6 +446,24 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
     }
   }
 
+  async function onTestLaunch() {
+    const saved = await saveDraft();
+    if (!saved) return;
+    setLaunching(true);
+    setBannerError(null);
+    setServerIssues([]);
+    try {
+      const res = await campaignsApi.testLaunch(saved.id);
+      const ads = res.adSets.reduce((n, s) => n + s.ads.length, 0);
+      setSuccess(`Launched to Facebook (PAUSED): campaign ${res.fbCampaignId} · ${res.adSets.length} ad set(s) · ${ads} ad(s).`);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 422 && Array.isArray(err.details)) setServerIssues(err.details as string[]);
+      else setBannerError(err instanceof ApiError ? err.message : 'Test-launch failed.');
+    } finally {
+      setLaunching(false);
+    }
+  }
+
   return (
     <div className={styles.wrap}>
       <div className={styles.head}>
@@ -501,9 +520,14 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
             {step < STEPS.length - 1 ? (
               <Button onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}>Next</Button>
             ) : (
-              <Button onClick={() => void onSubmit()} loading={submitting} disabled={issues.length > 0}>
-                Submit for approval
-              </Button>
+              <>
+                <Button variant="ghost" onClick={() => void onTestLaunch()} loading={launching} disabled={issues.length > 0}>
+                  Test-launch (PAUSED)
+                </Button>
+                <Button onClick={() => void onSubmit()} loading={submitting} disabled={issues.length > 0}>
+                  Submit for approval
+                </Button>
+              </>
             )}
           </div>
         </div>

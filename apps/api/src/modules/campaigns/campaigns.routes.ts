@@ -10,6 +10,7 @@ import {
   submitCampaign,
   updateCampaign,
 } from './campaigns.service.js';
+import { testLaunchCampaign } from './launch.service.js';
 
 export async function campaignRoutes(app: FastifyInstance): Promise<void> {
   app.get('/', { preHandler: [authenticate] }, async (req, reply) => {
@@ -71,6 +72,21 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
       try {
         await deleteCampaign(req.auth, req.params.id);
         return reply.code(204).send();
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Stopgap (B): push a built campaign to Facebook in PAUSED state to validate the
+  // write-path. The real launch pipeline is Phase 8 (after approval/article/channel/redirect).
+  app.post<{ Params: { id: string } }>(
+    '/:id/test-launch',
+    { preHandler: [authenticate] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.send(await testLaunchCampaign(req.auth, req.params.id));
       } catch (err) {
         return handleRouteError(err, reply);
       }

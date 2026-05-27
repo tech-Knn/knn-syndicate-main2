@@ -18,7 +18,7 @@ import { generateRedirectId } from '../../lib/ids.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 
-const campaignInclude = {
+export const campaignInclude = {
   adSets: { orderBy: { createdAt: 'asc' }, include: { ads: { orderBy: { createdAt: 'asc' } } } },
 } satisfies Prisma.CampaignInclude;
 
@@ -200,7 +200,7 @@ export async function updateCampaign(
 }
 
 /** Map a stored campaign back to the draft shape for the submit-completeness check. */
-function toDraft(campaign: CampaignWithChildren): CampaignDraft {
+export function toDraft(campaign: CampaignWithChildren): CampaignDraft {
   return {
     name: campaign.name,
     objective: campaign.objective,
