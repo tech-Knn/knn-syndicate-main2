@@ -10,6 +10,7 @@ import styles from './dashboard.module.css';
 
 const NAV = [
   { href: '/dashboard', label: 'Overview' },
+  { href: '/dashboard/campaigns', label: 'Campaigns' },
   { href: '/dashboard/facebook', label: 'Facebook' },
 ];
 

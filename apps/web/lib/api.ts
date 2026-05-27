@@ -1,11 +1,14 @@
 import {
+  type Campaign,
   type ConnectionStatus,
   type FbAccount,
   type FbPage,
   type FbPixel,
   type SessionUser,
   type SyncResult,
+  type UploadResult,
 } from './types';
+import { type CampaignDraftInput } from '@knn/shared';
 
 // Empty base = same-origin (staging: Caddy routes /api/* to the API). For local
 // dev against the API on :3000, set NEXT_PUBLIC_API_BASE=http://localhost:3000.
@@ -17,10 +20,13 @@ const USER_KEY = 'knn.user';
 
 export class ApiError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** Structured payload (e.g. the submit-validation issues list). */
+  readonly details?: unknown;
+  constructor(status: number, message: string, details?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -90,13 +96,15 @@ async function parse<T>(res: Response): Promise<T> {
   if (res.status === 204) return undefined as T;
   if (!res.ok) {
     let message = res.statusText;
+    let details: unknown;
     try {
-      const body = (await res.json()) as { error?: string };
+      const body = (await res.json()) as { error?: string; details?: unknown };
       if (body.error) message = body.error;
+      details = body.details;
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, details);
   }
   return res.json() as Promise<T>;
 }
@@ -191,4 +199,48 @@ export const facebook = {
     ).pixels,
   sync: async (): Promise<SyncResult> => parse(await authedFetch('/api/facebook/sync', { method: 'POST' })),
   disconnect: async (): Promise<void> => parse(await authedFetch('/api/facebook/connection', { method: 'DELETE' })),
+};
+
+export const campaigns = {
+  list: async (): Promise<Campaign[]> =>
+    (await parse<{ campaigns: Campaign[] }>(await authedFetch('/api/campaigns'))).campaigns,
+  get: async (id: string): Promise<Campaign> =>
+    (await parse<{ campaign: Campaign }>(await authedFetch(`/api/campaigns/${id}`))).campaign,
+  create: async (draft: CampaignDraftInput): Promise<Campaign> =>
+    (
+      await parse<{ campaign: Campaign }>(
+        await authedFetch('/api/campaigns', {
+          method: 'POST',
+          headers: jsonHeaders(),
+          body: JSON.stringify(draft),
+        }),
+      )
+    ).campaign,
+  update: async (id: string, draft: CampaignDraftInput): Promise<Campaign> =>
+    (
+      await parse<{ campaign: Campaign }>(
+        await authedFetch(`/api/campaigns/${id}`, {
+          method: 'PATCH',
+          headers: jsonHeaders(),
+          body: JSON.stringify(draft),
+        }),
+      )
+    ).campaign,
+  submit: async (id: string): Promise<Campaign> =>
+    (
+      await parse<{ campaign: Campaign }>(
+        await authedFetch(`/api/campaigns/${id}/submit`, { method: 'POST' }),
+      )
+    ).campaign,
+  remove: async (id: string): Promise<void> =>
+    parse(await authedFetch(`/api/campaigns/${id}`, { method: 'DELETE' })),
+};
+
+export const uploads = {
+  create: async (file: File): Promise<UploadResult> => {
+    const form = new FormData();
+    form.append('file', file);
+    // No content-type header — the browser sets the multipart boundary.
+    return (await parse<{ upload: UploadResult }>(await authedFetch('/api/uploads', { method: 'POST', body: form }))).upload;
+  },
 };

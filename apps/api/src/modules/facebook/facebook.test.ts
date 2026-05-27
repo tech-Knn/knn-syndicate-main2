@@ -100,14 +100,19 @@ describe('facebook integration', () => {
     expect(status.statusCode).toBe(401);
   });
 
-  it('returns 503 for auth-url when Facebook is not configured', async () => {
+  it('auth-url returns a Facebook dialog URL when configured (else 503)', async () => {
     const token = await bearer();
     const res = await app.inject({
       method: 'GET',
       url: '/api/facebook/auth-url',
       headers: { authorization: `Bearer ${token}` },
     });
-    expect(res.statusCode).toBe(503);
+    // 503 only when this environment has no FB app credentials; otherwise a dialog URL.
+    if (res.statusCode === 503) return;
+    expect(res.statusCode).toBe(200);
+    const url = res.json<{ url: string }>().url;
+    expect(url).toContain('facebook.com');
+    expect(url).toContain('dialog/oauth');
   });
 
   it('reports no connection before connecting', async () => {

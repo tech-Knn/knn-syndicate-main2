@@ -50,3 +50,73 @@ export interface SyncResult {
   pages: number;
   pixels: number;
 }
+
+export type CampaignStatus =
+  | 'DRAFT'
+  | 'PENDING_APPROVAL'
+  | 'APPROVED'
+  | 'PROCESSING'
+  | 'LAUNCHING'
+  | 'ACTIVE'
+  | 'PAUSED'
+  | 'REJECTED'
+  | 'BATCHED'
+  | 'QUEUED_NO_CHANNEL'
+  | 'META_REJECTED'
+  | 'ARCHIVED';
+
+export interface CampaignAd {
+  id: string;
+  name: string;
+  headline: string;
+  primaryText: string;
+  description: string | null;
+  cta: string;
+  creativeType: 'IMAGE' | 'VIDEO';
+  uploadId: string | null;
+  redirectId: string;
+  pxeEvent: string;
+  pixelId: string | null;
+  fallbackUrl: string | null;
+  beneficiary: string | null;
+}
+
+export interface CampaignAdSet {
+  id: string;
+  name: string;
+  dailyBudgetCents: number;
+  billingEvent: string;
+  optimizationGoal: string;
+  targeting: Record<string, unknown>;
+  startTime: string | null;
+  endTime: string | null;
+  ads: CampaignAd[];
+}
+
+export interface Campaign {
+  id: string;
+  name: string;
+  status: CampaignStatus;
+  objective: string;
+  optimizationGoal: string;
+  keywords: string[];
+  racValue: string | null;
+  fallbackUrl: string | null;
+  adAccountId: string | null;
+  pageId: string | null;
+  articleId: string | null;
+  channelId: string | null;
+  fbCampaignId: string | null;
+  submittedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  adSets: CampaignAdSet[];
+}
+
+export interface UploadResult {
+  id: string;
+  filename: string;
+  kind: 'IMAGE' | 'VIDEO';
+  mimeType: string;
+  sizeBytes: number;
+}
