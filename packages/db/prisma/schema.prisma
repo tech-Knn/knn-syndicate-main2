@@ -258,6 +258,13 @@ model Campaign {
   objective        CampaignObjective @default(OUTCOME_SALES)
   optimizationGoal String            @default("OFFSITE_CONVERSIONS") @map("optimization_goal")
 
+  /// FB Special Ad Categories (empty = none). Required for credit / employment /
+  /// housing / social-issue verticals or Facebook rejects the ads.
+  specialAdCategories String[] @default([]) @map("special_ad_categories")
+  /// Optional name templates with tokens: {country} {query} {language} {id}.
+  nameTemplate        String?  @map("name_template")
+  adsetNameTemplate   String?  @map("adset_name_template")
+
   /// Budget optimization. CAMPAIGN (CBO) uses `dailyBudgetCents` here; AD_SET (ABO)
   /// uses each ad set's own budget.
   budgetMode       BudgetMode @default(AD_SET) @map("budget_mode")
@@ -324,9 +331,24 @@ model AdSet {
   /// pixel + the conversion event (pxe) the whole ad set optimizes/attributes on.
   pixelId  String? @map("pixel_id") @db.Uuid
   pxeEvent String  @default("search") @map("pxe_event")
+  /// Conversion reporting: "instant" (no revenue) or "estimates" (for ROAS).
+  conversionType String @default("instant") @map("conversion_type")
+
+  /// Additional targeting (parity): exclusions, language, device/OS, Advantage+.
+  excludeCountries  String[] @default([]) @map("exclude_countries")
+  languages         String[] @default([])
+  devicePlatforms   String[] @default([]) @map("device_platforms")
+  mobileOs          String[] @default([]) @map("mobile_os")
+  advantageAudience Boolean  @default(false) @map("advantage_audience")
+
+  /// Optimization knobs.
+  costCapCents      Int?     @map("cost_cap_cents")
+  roasFactor        Decimal? @map("roas_factor") @db.Decimal(8, 2)
+  attributionWindow String?  @map("attribution_window")
 
   startTime DateTime? @map("start_time")
   endTime   DateTime? @map("end_time")
+  timezone  String?
   fbAdSetId String?   @map("fb_ad_set_id")
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -388,4 +410,19 @@ model Upload {
 
   @@index([orgId])
   @@map("uploads")
+}
+
+/// A saved ad-launcher configuration (a reusable campaign draft, minus creatives).
+/// `config` holds the serialized draft so a buyer can spin up similar campaigns fast.
+model LauncherPreset {
+  id        String   @id @default(uuid()) @db.Uuid
+  orgId     String   @map("org_id") @db.Uuid
+  buyerId   String   @map("buyer_id") @db.Uuid
+  name      String
+  config    Json
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([orgId])
+  @@map("launcher_presets")
 }
