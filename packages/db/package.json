@@ -25,7 +25,9 @@
     "@prisma/client": "^6.2.1"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/pg": "^8.11.10",
+    "bcryptjs": "^2.4.3",
     "dotenv-cli": "^8.0.0",
     "pg": "^8.13.1",
     "prisma": "^6.2.1"

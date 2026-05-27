@@ -3,6 +3,8 @@ import helmet from '@fastify/helmet';
 import sensible from '@fastify/sensible';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import { env, rootVersion } from '@knn/config';
+import { adminRoutes } from './modules/admin/admin.routes.js';
+import { authRoutes } from './modules/auth/auth.routes.js';
 import { registerBullBoard } from './plugins/bull-board.js';
 import { registerHealth } from './plugins/health.js';
 
@@ -38,6 +40,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await registerHealth(app);
   await registerBullBoard(app);
+
+  await app.register(authRoutes, { prefix: '/api/auth' });
+  await app.register(adminRoutes, { prefix: '/api/admin' });
 
   return app;
 }

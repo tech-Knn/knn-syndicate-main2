@@ -29,17 +29,24 @@ _Last updated: 2026-05-27 — Phase 0 COMPLETE._
   nothing, `WITH CHECK` blocks cross-org writes, `withSystem` sees all). App now connects via
   `APP_DATABASE_URL`; migrations use `DATABASE_URL` (owner).
 
+- **Phase 1 — auth layer DONE (verified).** bcrypt(12) hashing, JWT access (15m, via `jose`) +
+  DB-backed rotating refresh tokens (7d); routes `signup`/`login`/`refresh`/`logout`/`me`;
+  signup→PENDING→admin approve/reject; `authenticate` + `requireRole` middleware; `runScoped`
+  tenant guard; admin endpoints (create org + first company-admin, list/approve users). Seed
+  creates the platform org + a SUPER_ADMIN (`super@knn.local`). **Phase 1 COMPLETE** — 35 tests
+  pass (9 auth lifecycle + 6 RLS + …), plus an HTTP smoke on the built bundle (login → /me →
+  admin all 200; unauth/bad-password 401); lint/typecheck/build all green.
+
 ## In progress
 
-- **Phase 1 — auth layer (next chunk):** password hashing (bcrypt 12), JWT access (15m) + DB-backed
-  rotating refresh tokens (7d), routes `signup`/`login`/`refresh`/`logout`/`me`,
-  signup→PENDING→admin approve/reject, an `authenticate` middleware + tenant guard that wires the
-  request's org into `withTenant`/`withSystem`, and auth/authz integration tests.
+- Nothing — Phase 1 closed. Ready for Phase 2.
 
 ## Next
 
-- Finish Phase 1 auth layer (above), then **Phase 2 (Facebook integration)** — and stand up the
-  Hetzner staging box (FB needs public HTTPS URLs); see memory `deploy-workflow`.
+- **Phase 2 (Facebook integration)** — OAuth connect, AES-256 token encryption, account/page/pixel
+  sync, the per-ad-account rate-limit queue + backoff + circuit breaker (the `BATCHED` state), and
+  `CONNECTION_BROKEN` handling. Stand up the Hetzner staging box (FB needs public HTTPS URLs); see
+  memory `deploy-workflow`.
 
 ## New setup step
 

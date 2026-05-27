@@ -1,3 +1,4 @@
+import bcrypt from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -20,8 +21,34 @@ async function main(): Promise<void> {
       create: setting,
     });
   }
+
+  // The platform organization (KNN) that SUPER_ADMINs belong to.
+  const platformOrg = await prisma.organization.upsert({
+    where: { slug: 'knn-platform' },
+    update: {},
+    create: { name: 'KNN Syndicate', slug: 'knn-platform', isPlatform: true },
+  });
+
+  const email = process.env.SEED_SUPERADMIN_EMAIL ?? 'super@knn.local';
+  const password = process.env.SEED_SUPERADMIN_PASSWORD ?? 'super-admin-dev-pw';
+  await prisma.user.upsert({
+    where: { email },
+    update: {},
+    create: {
+      orgId: platformOrg.id,
+      email,
+      name: 'Super Admin',
+      passwordHash: await bcrypt.hash(password, 12),
+      role: 'SUPER_ADMIN',
+      status: 'ACTIVE',
+      approvedAt: new Date(),
+    },
+  });
+
   // eslint-disable-next-line no-console
-  console.log(`Seeded ${DEFAULT_SETTINGS.length} platform settings.`);
+  console.log(
+    `Seeded ${DEFAULT_SETTINGS.length} settings, platform org, and super admin (${email}).`,
+  );
 }
 
 main()
