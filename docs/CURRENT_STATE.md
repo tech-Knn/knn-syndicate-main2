@@ -2,7 +2,27 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-27 — Phase 2 (Facebook integration) COMPLETE + DEPLOYED to staging with FB app configured. Only a human OAuth consent (connect a FB **test** ad account) remains to exercise a live round-trip._
+_Last updated: 2026-05-27 — Phase 2 (Facebook integration) COMPLETE, DEPLOYED, and **VERIFIED LIVE**: a real Business Manager connected via Facebook Login for Business and synced 8 ad accounts + pages + pixels end-to-end._
+
+## Facebook connect — verified live (2026-05-27)
+
+A real BM completed the self-serve flow on staging: dashboard login → **Connect Facebook** → FLB
+consent → callback → token exchange → 60-day long-lived token → synced **8 ad accounts** (USD,
+Asia/Kolkata), pages, and per-account pixels; status **Connected**, all five scopes granted. Two
+gotchas resolved on the way, worth remembering:
+
+- **Facebook Login for Business needs `config_id`, not `scope`.** The app uses FLB (not classic
+  login), so `buildAuthUrl` emits `config_id` (+ `override_default_response_type`) — set via
+  `FB_LOGIN_CONFIG_ID` (staging value `26693255093680532`, the "Rsoc.app" login configuration).
+  Classic scope-based login is the fallback when that env is empty.
+- **`Error validating client secret` = wrong `FB_APP_SECRET`.** The dialog only needs App ID +
+  config, so it succeeded while the server-side code→token exchange failed; fixing the secret fixed
+  the connect. (Diagnose via `docker compose logs api` on the box — the callback logs the FB error.)
+
+Self-serve connect works **now for app role-holders** (admin/testers); opening it to arbitrary
+buyers is the App Review path (deferred — D-OQ: advanced access + Business Verification [done] +
+Data Protection Assessment + privacy policy + data-deletion callback). Token renewal is automatic
+via the worker's daily token-refresh job.
 
 ## Done
 
