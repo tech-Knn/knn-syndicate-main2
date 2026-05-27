@@ -13,17 +13,21 @@
     "migrate:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
     "migrate:reset": "dotenv -e ../../.env -- prisma migrate reset --force",
     "db:push": "dotenv -e ../../.env -- prisma db push",
+    "bootstrap": "dotenv -e ../../.env -- tsx scripts/bootstrap-roles.ts",
     "studio": "dotenv -e ../../.env -- prisma studio",
     "seed": "dotenv -e ../../.env -- tsx prisma/seed.ts",
-    "lint": "eslint src",
-    "typecheck": "tsc --noEmit"
+    "lint": "eslint src scripts",
+    "typecheck": "tsc --noEmit",
+    "test": "dotenv -e ../../.env -- vitest run --passWithNoTests"
   },
   "dependencies": {
     "@knn/config": "workspace:*",
     "@prisma/client": "^6.2.1"
   },
   "devDependencies": {
+    "@types/pg": "^8.11.10",
     "dotenv-cli": "^8.0.0",
+    "pg": "^8.13.1",
     "prisma": "^6.2.1"
   }
 }

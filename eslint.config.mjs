@@ -12,6 +12,7 @@ export default tseslint.config(
       '**/coverage/**',
       '**/node_modules/**',
       '**/*.config.{js,mjs,cjs,ts}',
+      '**/next-env.d.ts',
       'packages/db/prisma/migrations/**',
     ],
   },

@@ -20,16 +20,32 @@ _Last updated: 2026-05-27 — Phase 0 COMPLETE._
     Next builds), and **runtime of the built bundles**: api `/health` → `{db:up,redis:up}`,
     Bull-Board 401→200 with auth, redirect `/go/:id` → 302, worker boots on `Asia/Kolkata`.
 
+- **Phase 1 — multi-tenancy + RLS foundation DONE (verified).** Schema: `organizations`,
+  `users` (Role / UserStatus / OrgStatus enums), `refresh_tokens`, `audit_log` (migration
+  `20260527075938_auth_multitenancy`). Real RLS: a NON-superuser app role (`knn_app`, created by
+  `pnpm db:bootstrap`) so policies actually apply; per-transaction GUCs `app.current_org` /
+  `app.bypass_rls` drive `tenant_isolation` policies on all four tables; `@knn/db` exposes
+  `withTenant(orgId, fn)` and `withSystem(fn)`. **6 isolation tests pass** (cross-org reads return
+  nothing, `WITH CHECK` blocks cross-org writes, `withSystem` sees all). App now connects via
+  `APP_DATABASE_URL`; migrations use `DATABASE_URL` (owner).
+
 ## In progress
 
-- Nothing — Phase 0 closed. Ready to start Phase 1.
+- **Phase 1 — auth layer (next chunk):** password hashing (bcrypt 12), JWT access (15m) + DB-backed
+  rotating refresh tokens (7d), routes `signup`/`login`/`refresh`/`logout`/`me`,
+  signup→PENDING→admin approve/reject, an `authenticate` middleware + tenant guard that wires the
+  request's org into `withTenant`/`withSystem`, and auth/authz integration tests.
 
 ## Next
 
-- **Phase 1 (auth & multi-tenancy / RLS)**: `organizations`, `users` (3 roles + states), JWT
-  (15m access / 7d refresh), bcrypt 12, signup→PENDING→approve/reject, Postgres RLS + a
-  service-layer tenant guard (`SET app.current_org`), and integration tests proving cross-org
-  reads are impossible. See `packages/db/CLAUDE.md` for the RLS invariant.
+- Finish Phase 1 auth layer (above), then **Phase 2 (Facebook integration)** — and stand up the
+  Hetzner staging box (FB needs public HTTPS URLs); see memory `deploy-workflow`.
+
+## New setup step
+
+- After `pnpm db:migrate`, run **`pnpm db:bootstrap`** once per environment to create the
+  non-superuser `knn_app` role that RLS depends on. (CI must run it before tests — TODO when we
+  touch CI next.)
 
 ## Notes / gotchas for the next session
 

@@ -1,7 +1,6 @@
 // KNN Search Arbitrage Platform — Prisma schema.
-// Phase 0 establishes the datasource (PostgreSQL 16 + pgvector) and a first
-// table to prove migrations. Phase 1+ adds organizations, users, campaigns,
-// channels, articles, revenue, etc.
+// Phase 1 adds multi-tenancy (organizations + users + auth) with Postgres RLS.
+// Later phases add campaigns, adsets, ads, channels, articles, revenue, etc.
 
 generator client {
   provider        = "prisma-client-js"
@@ -14,7 +13,103 @@ datasource db {
   extensions = [vector]
 }
 
+enum Role {
+  SUPER_ADMIN
+  COMPANY_ADMIN
+  MEDIA_BUYER
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  REJECTED
+}
+
+enum OrgStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+/// A tenant company. The platform operator (KNN) is the single `isPlatform` org
+/// that SUPER_ADMINs belong to; every other org is a client company.
+model Organization {
+  id                   String    @id @default(uuid()) @db.Uuid
+  name                 String
+  slug                 String    @unique
+  status               OrgStatus @default(ACTIVE)
+  isPlatform           Boolean   @default(false) @map("is_platform")
+  /// Platform's default revenue cut for this org's buyers (0..1).
+  defaultRevenueCutPct Decimal   @default(0.30) @map("default_revenue_cut_pct") @db.Decimal(5, 4)
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  users User[]
+
+  @@map("organizations")
+}
+
+model User {
+  id            String      @id @default(uuid()) @db.Uuid
+  orgId         String      @map("org_id") @db.Uuid
+  email         String      @unique
+  passwordHash  String      @map("password_hash")
+  name          String
+  role          Role        @default(MEDIA_BUYER)
+  status        UserStatus  @default(PENDING)
+  /// Optional per-buyer override of the org's default revenue cut (0..1).
+  revenueCutPct Decimal?    @map("revenue_cut_pct") @db.Decimal(5, 4)
+  /// Account-level fallback URL for non-ad traffic (spec §5.7.5).
+  fallbackUrl   String?     @map("fallback_url")
+  approvedById  String?     @map("approved_by_id") @db.Uuid
+  approvedAt    DateTime?   @map("approved_at")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  refreshTokens RefreshToken[]
+
+  @@index([orgId, status])
+  @@map("users")
+}
+
+/// Hashed refresh tokens for JWT rotation (access 15m / refresh 7d).
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  orgId     String    @map("org_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  userAgent String?   @map("user_agent")
+  ip        String?
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+/// Append-only audit trail of privileged actions.
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  orgId      String?  @map("org_id") @db.Uuid
+  actorId    String?  @map("actor_id") @db.Uuid
+  action     String
+  entityType String?  @map("entity_type")
+  entityId   String?  @map("entity_id")
+  details    Json?
+  ip         String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([orgId, createdAt])
+  @@map("audit_log")
+}
+
 /// Global key/value platform settings (compliance prompt, feature toggles, ...).
+/// Column names kept as originally migrated (camelCase) to avoid a destructive
+/// rename of already-seeded rows.
 model PlatformSetting {
   key       String   @id
   value     String

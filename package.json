@@ -26,6 +26,7 @@
     "db:generate": "pnpm --filter @knn/db generate",
     "db:migrate": "pnpm --filter @knn/db migrate:dev",
     "db:deploy": "pnpm --filter @knn/db migrate:deploy",
+    "db:bootstrap": "pnpm --filter @knn/db bootstrap",
     "db:studio": "pnpm --filter @knn/db studio",
     "db:seed": "pnpm --filter @knn/db seed"
   },

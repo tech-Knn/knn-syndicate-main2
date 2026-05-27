@@ -60,6 +60,9 @@ jobs:
       - name: Apply migrations
         run: pnpm db:deploy
 
+      - name: Bootstrap app DB role (required for RLS)
+        run: pnpm db:bootstrap
+
       - name: Lint
         run: pnpm lint
 

@@ -50,7 +50,11 @@ const EnvSchema = z.object({
   REDIRECT_DOMAIN: z.string().url().default('http://localhost:3002'),
 
   // Data stores
+  // Owner/superuser connection — used for migrations and the role bootstrap.
   DATABASE_URL: z.string().min(1),
+  // App runtime connection — a NON-superuser role so RLS is enforced. Falls back
+  // to DATABASE_URL if unset (e.g. before the app role is bootstrapped).
+  APP_DATABASE_URL: z.string().min(1).optional(),
   SHADOW_DATABASE_URL: optionalString,
   REDIS_URL: z.string().min(1),
 
