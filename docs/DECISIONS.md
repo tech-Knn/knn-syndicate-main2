@@ -187,5 +187,22 @@ the approved plan.
 - **Code:** `apps/redirect/src/resolve.ts` (pure, runtime-agnostic: paid-vs-organic detection via
   `fbclid`/`utm_source`, AFS param build `rc`/`ch`/`rac`/`styleId`/`txid`, weighted traffic split,
   fallback) + `worker.ts`/`wrangler.toml`. The legacy Node service is transitional (retire once the
-  Worker is live on `go.*`). Needs CF provisioning (Workers, KV namespace, `go.*` route, API token
-  for the origin→KV sync) — then deploy + the p95<50ms latency benchmark.
+  Worker is live on `go.*`). LIVE on `go.10linesabout.com` (~20–25ms; benchmarked).
+
+### 2026-05-28 — Phase 8 (FB launch pipeline + meta-rejection, D12/D14)
+
+- **`launchCampaign` (`apps/api/.../launch.service.ts`)** orchestrates an approved+channel'd campaign
+  live: ensure article (Phase 5) → write each ad's redirect config to edge KV (Phase 7, `lib/kv-sync.ts`)
+  → create Campaign→AdSet→Ad on FB **ACTIVE** via the rate-limited client (D12) → ACTIVE + notify +
+  audit `campaign.launched`. FB rate-limit → **BATCHED** (retry); idempotent (already-launched → ACTIVE);
+  refuses launch without a channel. The proven write-path is refactored into `resolveLaunchPlan` /
+  `createFbStructure(status)` / `persistFbIds`, shared by `testLaunchCampaign` (PAUSED) — folds in the
+  task-#14 stopgap. Route `POST /api/campaigns/:id/launch` (admin).
+- **KV sync** is best-effort on unconfigured CF (`KvNotConfiguredError` → warn + continue; the redirect
+  falls back until synced); real KV errors fail the launch (clicks would otherwise miss the funnel).
+- **Meta-rejection (D14):** no reliable FB webhook → `checkMetaRejections` polls `effective_status`
+  every 30 min (worker cron + `META_REJECTION_CHECK` queue); a DISAPPROVED ad → META_REJECTED +
+  release the channel back to the pool + notify.
+- **Gate met (mocked FB):** launch ACTIVE/BATCHED/idempotent + rejection→status+notify+channel-release.
+  **Live validation pending external deps:** a CF API token (Workers KV Edit) for the live KV sync,
+  an FB **test** ad account (D18), and AI keys for live article generation.

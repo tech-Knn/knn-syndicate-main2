@@ -2,7 +2,20 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-28 — Phase 7 (Redirect engine) COMPLETE + LIVE on the EDGE: Hono Cloudflare Worker on **`go.10linesabout.com`**, ~20–25ms steady-state (gate met), correct paid/organic/fallback routing + txid. Phases 0–6 done; AFS/RSOC funnel validated live. Next: Phase 8 (FB launch pipeline) — which produces the per-ad `redirect_id` configs that the origin→KV sync writes for the Worker._
+_Last updated: 2026-05-28 — Phase 8 (FB launch pipeline + meta-rejection) CODE COMPLETE (gate met vs mocked FB; 155 tests). Phases 0–7 done; AFS/RSOC funnel + edge redirect (`go.10linesabout.com`) LIVE. Next: Phase 9 (stats & revenue attribution). **Live launch needs external deps:** a Cloudflare API token (Workers KV Edit) for the live redirect-config sync, an FB **test** ad account (D18), and Anthropic/OpenAI keys for live article generation._
+
+## Phase 8 — FB launch pipeline + meta-rejection (code complete; gate met vs mocked FB)
+
+`launchCampaign` (`apps/api/src/modules/campaigns/launch.service.ts`): approved+channel'd campaign →
+ensure article → write each ad's redirect config to edge KV (`lib/kv-sync.ts`) → create Campaign→AdSet→Ad
+on FB **ACTIVE** (rate-limited, D12) → ACTIVE + notify + audit; FB rate-limit → **BATCHED**; idempotent;
+no-channel → 409. Refactored the proven write-path into `resolveLaunchPlan`/`createFbStructure(status)`/
+`persistFbIds` (shared with `testLaunchCampaign` PAUSED — folds in task #14). Route `POST /api/campaigns/:id/launch`
+(admin). **Meta-rejection (D14):** `checkMetaRejections` (worker, `META_REJECTION_CHECK` queue + 30-min
+cron) polls FB `effective_status`; DISAPPROVED → META_REJECTED + release channel + notify. KV env in
+`@knn/config` (`CLOUDFLARE_*`/`CF_KV_NAMESPACE_ID`). **Gate met (mocked FB):** launch ACTIVE/BATCHED/
+idempotent + rejection→status+notify+release (api 62, worker 12). **Live = external deps** (CF token,
+FB test account, AI keys). Auto-trigger (approve→assign→auto-launch chain) is a small follow-up.
 
 ## Phase 7 — Redirect engine (complete; deployed to the edge)
 
