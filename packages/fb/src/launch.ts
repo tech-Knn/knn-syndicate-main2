@@ -45,8 +45,13 @@ export function createFbCampaign(
     special_ad_categories: JSON.stringify(p.specialAdCategories ?? []),
     buying_type: 'AUCTION',
   };
-  if (p.dailyBudgetCents != null) params.daily_budget = String(p.dailyBudgetCents);
-  if (p.bidStrategy) params.bid_strategy = p.bidStrategy;
+  if (p.dailyBudgetCents != null) {
+    params.daily_budget = String(p.dailyBudgetCents);
+    if (p.bidStrategy) params.bid_strategy = p.bidStrategy;
+  } else {
+    // ABO (no campaign budget): Facebook requires this flag to be set explicitly.
+    params.is_adset_budget_sharing_enabled = 'false';
+  }
   return postEdge<CreatedId>(fbAccountId, accessToken, 'campaigns', params);
 }
 

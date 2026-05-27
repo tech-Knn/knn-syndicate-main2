@@ -42,6 +42,8 @@ function buildTargeting(set: StoredAdSet): Record<string, unknown> {
   if (genders.length > 0) t.genders = genders;
   if (set.devicePlatforms.length > 0) t.device_platforms = set.devicePlatforms;
   if (set.mobileOs.length > 0) t.user_os = set.mobileOs.map((o) => (o === 'ios' ? 'iOS' : 'Android'));
+  // Facebook requires an explicit Advantage+ audience decision in the targeting spec.
+  t.targeting_automation = { advantage_audience: set.advantageAudience ? 1 : 0 };
   return t;
 }
 

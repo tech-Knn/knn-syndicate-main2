@@ -5,6 +5,8 @@ export interface FbErrorBody {
   type?: string;
   code?: number;
   error_subcode?: number;
+  error_user_title?: string;
+  error_user_msg?: string;
   fbtrace_id?: string;
 }
 
@@ -13,6 +15,8 @@ interface FbErrorOpts {
   subcode?: number;
   httpStatus?: number;
   fbtraceId?: string;
+  userTitle?: string;
+  userMessage?: string;
 }
 
 export class FbApiError extends Error {
@@ -20,6 +24,9 @@ export class FbApiError extends Error {
   readonly subcode?: number;
   readonly httpStatus?: number;
   readonly fbtraceId?: string;
+  /** Facebook's human-facing error_user_title / error_user_msg, when present. */
+  readonly userTitle?: string;
+  readonly userMessage?: string;
 
   constructor(message: string, opts: FbErrorOpts = {}) {
     super(message);
@@ -28,6 +35,8 @@ export class FbApiError extends Error {
     this.subcode = opts.subcode;
     this.httpStatus = opts.httpStatus;
     this.fbtraceId = opts.fbtraceId;
+    this.userTitle = opts.userTitle;
+    this.userMessage = opts.userMessage;
   }
 }
 
@@ -61,7 +70,14 @@ export function classifyFbError(
   const code = body.code;
   const subcode = body.error_subcode;
   const message = body.message ?? 'Facebook API error';
-  const opts: FbErrorOpts = { code, subcode, httpStatus, fbtraceId: body.fbtrace_id };
+  const opts: FbErrorOpts = {
+    code,
+    subcode,
+    httpStatus,
+    fbtraceId: body.fbtrace_id,
+    userTitle: body.error_user_title,
+    userMessage: body.error_user_msg,
+  };
 
   if (code === 190 || (subcode !== undefined && tokenSubcodes.includes(subcode))) {
     return new FbConnectionBrokenError(message, opts);
