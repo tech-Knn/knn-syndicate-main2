@@ -102,6 +102,12 @@ const EnvSchema = z.object({
   CLOUDFLARE_API_TOKEN: optionalString,
   CF_KV_NAMESPACE_ID: optionalString,
 
+  // Internal worker→API trigger (Phase 8 auto-launch): the worker calls the API's
+  // internal launch endpoint. Token is a shared secret; URL is the API's address
+  // (internal docker hostname in staging, e.g. http://api:3000).
+  INTERNAL_API_TOKEN: optionalString,
+  INTERNAL_API_URL: z.string().default('http://localhost:3000'),
+
   // Storage
   UPLOAD_DIR: z.string().default('./var/uploads'),
 

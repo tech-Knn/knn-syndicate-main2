@@ -273,6 +273,7 @@ export async function submitCampaign(
   auth: AuthContext,
   id: string,
 ): Promise<CampaignWithChildren> {
+  let autoLaunch = false;
   const { campaign, autoApproved } = await runScoped(auth, async (tx) => {
     const existing = await loadOwnedCampaign(tx, auth, id);
     if (!canTransitionCampaign(existing.status, CAMPAIGN_STATUS.PENDING_APPROVAL)) {
@@ -285,9 +286,10 @@ export async function submitCampaign(
 
     const org = await tx.organization.findUnique({
       where: { id: existing.orgId },
-      select: { autoApprove: true },
+      select: { autoApprove: true, autoLaunch: true },
     });
     const auto = org?.autoApprove ?? false;
+    autoLaunch = org?.autoLaunch ?? false;
     const now = new Date();
     const updated = await tx.campaign.update({
       where: { id },
@@ -318,7 +320,9 @@ export async function submitCampaign(
       userId: campaign.buyerId,
       type: 'campaign.approved',
       title: 'Campaign approved',
-      body: `"${campaign.name}" was auto-approved and is queued to launch.`,
+      body: autoLaunch
+        ? `"${campaign.name}" was auto-approved and will launch automatically once a channel is assigned.`
+        : `"${campaign.name}" was auto-approved and is ready to launch once a channel is assigned.`,
     });
     await enqueueChannelAssign(campaign.id);
   }

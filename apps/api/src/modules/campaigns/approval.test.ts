@@ -215,6 +215,20 @@ describe('campaign approval system', () => {
     expect(own.json<{ organization: { autoApprove: boolean } }>().organization.autoApprove).toBe(true);
   });
 
+  it('a company-admin cannot toggle another org auto-launch, but can toggle their own', async () => {
+    const adminA = await bearer(adminAEmail);
+    const cross = await app.inject({ method: 'PATCH', url: `/api/admin/organizations/${orgBId}/auto-launch`, headers: h(adminA), payload: { autoLaunch: true } });
+    expect(cross.statusCode).toBe(403);
+
+    const own = await app.inject({ method: 'PATCH', url: `/api/admin/organizations/${orgAId}/auto-launch`, headers: h(adminA), payload: { autoLaunch: true } });
+    expect(own.statusCode).toBe(200);
+    expect(own.json<{ organization: { autoLaunch: boolean } }>().organization.autoLaunch).toBe(true);
+
+    // The settings endpoint reflects both modes.
+    const settings = await app.inject({ method: 'GET', url: '/api/admin/organization', headers: h(adminA) });
+    expect(settings.json<{ organization: { autoLaunch: boolean } }>().organization.autoLaunch).toBe(true);
+  });
+
   it('auto-approve mode skips review (DRAFT → APPROVED on submit)', async () => {
     const buyer = await bearer(buyerAEmail);
     ids.c4 = await buildSubmittable(buyer, 'Campaign Four');
@@ -231,6 +245,7 @@ describe('campaign approval system', () => {
     expect(actions).toContain('campaign.rejected'); // c2
     expect(actions).toContain('campaign.auto_approved'); // c4
     expect(actions).toContain('org.auto_approve.enabled'); // toggle
+    expect(actions).toContain('org.auto_launch.enabled'); // auto-launch toggle
 
     // The reject entry carries the reason in its details.
     const reject = logs.find((l) => l.action === 'campaign.rejected');

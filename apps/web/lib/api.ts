@@ -280,6 +280,16 @@ export const admin = {
         }),
       )
     ).organization,
+  setAutoLaunch: async (orgId: string, autoLaunch: boolean): Promise<AdminOrg> =>
+    (
+      await parse<{ organization: AdminOrg }>(
+        await authedFetch(`/api/admin/organizations/${orgId}/auto-launch`, {
+          method: 'PATCH',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ autoLaunch }),
+        }),
+      )
+    ).organization,
 };
 
 export const uploads = {

@@ -47,6 +47,9 @@ model Organization {
   /// Approval mode (D-Phase4): when true, submitted campaigns skip manual review
   /// and go straight to APPROVED. Default is manual review.
   autoApprove          Boolean   @default(false) @map("auto_approve")
+  /// Launch mode (D-Phase8): when true, a campaign auto-launches to Facebook as
+  /// soon as it has a channel; default is a manual launch gate (admin triggers).
+  autoLaunch           Boolean   @default(false) @map("auto_launch")
   /// Platform's default revenue cut for this org's buyers (0..1).
   defaultRevenueCutPct Decimal   @default(0.30) @map("default_revenue_cut_pct") @db.Decimal(5, 4)
   createdAt            DateTime  @default(now()) @map("created_at")

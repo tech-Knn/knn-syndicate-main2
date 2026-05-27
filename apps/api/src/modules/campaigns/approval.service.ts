@@ -39,11 +39,17 @@ export async function approveCampaign(
   auth: AuthContext,
   id: string,
 ): Promise<CampaignWithChildren> {
+  let autoLaunch = false;
   const updated = await runScoped(auth, async (tx) => {
     const campaign = await loadForReview(tx, id);
     if (!canTransitionCampaign(campaign.status, CAMPAIGN_STATUS.APPROVED)) {
       throw new AppError(409, `Cannot approve a campaign in ${campaign.status} state`);
     }
+    const org = await tx.organization.findUnique({
+      where: { id: campaign.orgId },
+      select: { autoLaunch: true },
+    });
+    autoLaunch = org?.autoLaunch ?? false;
     const result = await tx.campaign.update({
       where: { id },
       data: {
@@ -68,7 +74,11 @@ export async function approveCampaign(
     userId: updated.buyerId,
     type: 'campaign.approved',
     title: 'Campaign approved',
-    body: `"${updated.name}" was approved and is queued to launch.`,
+    // Auto-launch orgs go live as soon as a channel is assigned; manual-gate orgs
+    // wait for an admin to launch (the campaign holds a channel in the meantime).
+    body: autoLaunch
+      ? `"${updated.name}" was approved and will launch automatically once a channel is assigned.`
+      : `"${updated.name}" was approved and is ready to launch once a channel is assigned.`,
   });
   await enqueueChannelAssign(updated.id);
   return updated;

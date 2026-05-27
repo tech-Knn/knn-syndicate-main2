@@ -6,6 +6,7 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastif
 import { env, rootVersion } from '@knn/config';
 import { adminRoutes } from './modules/admin/admin.routes.js';
 import { publicArticleRoutes } from './modules/articles/articles.routes.js';
+import { internalRoutes } from './modules/internal/internal.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { campaignRoutes } from './modules/campaigns/campaigns.routes.js';
 import { facebookRoutes } from './modules/facebook/facebook.routes.js';
@@ -53,6 +54,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(campaignRoutes, { prefix: '/api/campaigns' });
   await app.register(uploadRoutes, { prefix: '/api/uploads' });
   await app.register(publicArticleRoutes, { prefix: '/api/public/articles' });
+  await app.register(internalRoutes, { prefix: '/api/internal' });
 
   return app;
 }

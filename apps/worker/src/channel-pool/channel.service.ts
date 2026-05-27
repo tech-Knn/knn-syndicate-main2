@@ -27,6 +27,16 @@ export interface AssignResult {
 }
 
 /**
+ * Optional hook fired (best-effort) right after a campaign acquires a channel —
+ * the auto-launch trigger (Phase 8) wires `triggerAutoLaunch` here so a freshly
+ * assigned campaign in an auto-launch org goes live without a manual step. Runs
+ * for queue-drained and rollover assignments; the direct `assignChannel` caller
+ * (the worker's `assign` handler) fires it itself. Fire-and-forget — the return
+ * value is awaited but ignored, and a throw is caught (never blocks draining).
+ */
+export type OnAssigned = (campaignId: string) => unknown;
+
+/**
  * Assign a free channel to a campaign, atomically. Returns `{assigned:true}` with
  * the channel row id, or `{assigned:false}` after enqueuing the campaign
  * (QUEUED_NO_CHANNEL) when the pool is exhausted. Idempotent: a campaign that
@@ -103,17 +113,22 @@ async function releaseInTx(tx: TxClient, campaignId: string): Promise<boolean> {
 }
 
 /** Release a campaign's channel, then hand the freed channel to the next waiter. */
-export async function releaseChannelForCampaign(campaignId: string): Promise<{ released: boolean }> {
+export async function releaseChannelForCampaign(
+  campaignId: string,
+  onAssigned?: OnAssigned,
+): Promise<{ released: boolean }> {
   const released = await withSystem((tx) => releaseInTx(tx, campaignId));
-  if (released) await processQueue();
+  if (released) await processQueue(onAssigned);
   return { released };
 }
 
 /**
  * Drain the FIFO wait queue: assign freed channels to the oldest WAITING campaigns
- * until the pool is empty or the queue is. Returns how many were assigned.
+ * until the pool is empty or the queue is. Returns how many were assigned. Each
+ * newly-assigned campaign fires `onAssigned` (best-effort — a hook failure never
+ * blocks draining the rest of the queue).
  */
-export async function processQueue(): Promise<number> {
+export async function processQueue(onAssigned?: OnAssigned): Promise<number> {
   let assigned = 0;
   // Hard cap to avoid an unexpected infinite loop.
   for (let i = 0; i < 100_000; i++) {
@@ -124,6 +139,13 @@ export async function processQueue(): Promise<number> {
     const result = await assignChannel(next.campaignId);
     if (!result.assigned) break; // pool exhausted — leave the rest queued
     assigned += 1;
+    if (onAssigned) {
+      try {
+        await onAssigned(next.campaignId);
+      } catch (err) {
+        console.error('[channel-pool] onAssigned hook failed for', next.campaignId, err);
+      }
+    }
   }
   return assigned;
 }
@@ -134,7 +156,10 @@ export async function processQueue(): Promise<number> {
  * prior assignment span and open a new one for today (per-day attribution); then
  * drain the queue into any freed channels.
  */
-export async function rolloverChannels(today: string = currentBusinessDay()): Promise<{ released: number; renewed: number }> {
+export async function rolloverChannels(
+  today: string = currentBusinessDay(),
+  onAssigned?: OnAssigned,
+): Promise<{ released: number; renewed: number }> {
   const { released, renewed } = await withSystem(async (tx) => {
     const channels = await tx.channel.findMany({
       where: { status: 'ASSIGNED' },
@@ -167,7 +192,7 @@ export async function rolloverChannels(today: string = currentBusinessDay()): Pr
     }
     return { released, renewed };
   });
-  await processQueue();
+  await processQueue(onAssigned);
   return { released, renewed };
 }
 

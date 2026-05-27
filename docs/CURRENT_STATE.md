@@ -2,7 +2,7 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-28 — Phase 8 (FB launch pipeline + meta-rejection) CODE COMPLETE (gate met vs mocked FB; 155 tests). Phases 0–7 done; AFS/RSOC funnel + edge redirect (`go.10linesabout.com`) LIVE. Next: Phase 9 (stats & revenue attribution). **Live launch needs external deps:** a Cloudflare API token (Workers KV Edit) for the live redirect-config sync, an FB **test** ad account (D18), and Anthropic/OpenAI keys for live article generation._
+_Last updated: 2026-05-28 — Phase 8 COMPLETE incl. the **auto-launch toggle (D19)**: approve → channel → (if `org.autoLaunch`) auto-create on FB via the worker→API internal endpoint; default = manual gate. Gate green (api 63, worker 20; full monorepo typecheck+lint+test+build clean). Phases 0–7 done; AFS/RSOC funnel + edge redirect (`go.10linesabout.com`) LIVE. Next: Phase 9 (stats & revenue attribution). **Live launch needs external deps:** a Cloudflare API token (Workers KV Edit) for the live redirect-config sync, an FB **test** ad account (D18), Anthropic/OpenAI keys for article generation, and `INTERNAL_API_TOKEN`/`INTERNAL_API_URL` set in the deployed env for auto-launch._
 
 ## Phase 8 — FB launch pipeline + meta-rejection (code complete; gate met vs mocked FB)
 
@@ -14,8 +14,17 @@ no-channel → 409. Refactored the proven write-path into `resolveLaunchPlan`/`c
 (admin). **Meta-rejection (D14):** `checkMetaRejections` (worker, `META_REJECTION_CHECK` queue + 30-min
 cron) polls FB `effective_status`; DISAPPROVED → META_REJECTED + release channel + notify. KV env in
 `@knn/config` (`CLOUDFLARE_*`/`CF_KV_NAMESPACE_ID`). **Gate met (mocked FB):** launch ACTIVE/BATCHED/
-idempotent + rejection→status+notify+release (api 62, worker 12). **Live = external deps** (CF token,
-FB test account, AI keys). Auto-trigger (approve→assign→auto-launch chain) is a small follow-up.
+idempotent + rejection→status+notify+release. **Live = external deps** (CF token, FB test account, AI keys).
+
+**Auto-launch (D19, done):** per-company `Organization.autoLaunch` toggle (default OFF = manual gate,
+beside auto-approve on the Approvals page). When ON, `triggerAutoLaunch` (worker, `launch-trigger.ts`)
+fires the instant a campaign acquires a channel — direct `assign` handler + queue-drain/rollover via an
+`onAssigned` callback threaded through `processQueue`/`releaseChannelForCampaign`/`rolloverChannels`. It
+gates on `autoLaunch && channelId && !fbCampaignId` → enqueues `FB_LAUNCH` (`attempts:1`, so a partial FB
+failure can't double-create) → the worker POSTs the token-guarded `POST /api/internal/launch/:id`
+(`x-internal-token`), which runs the same `launchCampaign` on the API (it owns the FB client + on-disk
+creatives). Needs `INTERNAL_API_TOKEN`/`INTERNAL_API_URL` in the env. Tests: `launch-trigger.test.ts`
+(gating + the HTTP call), an Approvals auto-launch toggle test, and launch-mode-aware notify wording.
 
 ## Phase 7 — Redirect engine (complete; deployed to the edge)
 

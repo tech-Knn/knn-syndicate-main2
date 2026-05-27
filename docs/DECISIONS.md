@@ -206,3 +206,25 @@ the approved plan.
 - **Gate met (mocked FB):** launch ACTIVE/BATCHED/idempotent + rejection→status+notify+channel-release.
   **Live validation pending external deps:** a CF API token (Workers KV Edit) for the live KV sync,
   an FB **test** ad account (D18), and AI keys for live article generation.
+
+### 2026-05-28 — D19: Auto-launch is a per-company toggle (default manual gate)
+
+- **Decision:** approval and *launch* are separate gates. `Organization.autoLaunch` (default **false**)
+  mirrors `autoApprove`. With it OFF (the safe default for an ad-spend platform), an approved campaign
+  acquires a channel and sits at **PROCESSING** until an admin clicks launch (`POST /api/campaigns/:id/launch`).
+  With it ON, launch fires automatically the instant a channel is assigned — no human in the loop.
+- **Trigger wiring (worker):** `triggerAutoLaunch(campaignId)` runs on **every** path that hands a campaign
+  a channel — the direct `assign` handler, plus queue-drain and midnight-rollover via an `onAssigned`
+  callback threaded through `processQueue`/`releaseChannelForCampaign`/`rolloverChannels`. It gates on
+  `org.autoLaunch && channelId && !fbCampaignId` and enqueues `FB_LAUNCH`.
+- **Why HTTP, not a direct call:** the launch must run on the **API** process (it owns the FB client and
+  the creative files on local disk), so the `FB_LAUNCH` worker POSTs the token-guarded
+  `POST /api/internal/launch/:id` (`x-internal-token` === `INTERNAL_API_TOKEN`); the endpoint loads the
+  campaign as its buyer and calls the same `launchCampaign`. Needs `INTERNAL_API_TOKEN` +
+  `INTERNAL_API_URL` in deployed envs.
+- **Safety:** `FB_LAUNCH` is **`attempts:1`** — `launchCampaign` is only idempotent on *full* success
+  (`fbCampaignId`), so a partial FB failure must not auto-retry (would double-create). Rate-limits aren't
+  job failures (the API parks the campaign in BATCHED, a 200). A truly failed launch lands in Bull-Board
+  for a manual retry. Resumable partial-failure launch is a Phase 11 hardening follow-up (OPEN_QUESTIONS #10).
+- **UX:** the auto-launch switch sits beside auto-approve on the Approvals page (company-admin only);
+  approval/auto-approval notifications now say "will launch automatically" vs "ready to launch" per the mode.

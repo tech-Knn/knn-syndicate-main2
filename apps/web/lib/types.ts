@@ -143,6 +143,7 @@ export interface AdminOrg {
   id: string;
   name: string;
   autoApprove: boolean;
+  autoLaunch: boolean;
 }
 
 export interface UploadResult {

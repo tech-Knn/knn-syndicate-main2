@@ -57,6 +57,7 @@ export default function ApprovalsPage() {
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [reason, setReason] = useState('');
   const [togglingAuto, setTogglingAuto] = useState(false);
+  const [togglingLaunch, setTogglingLaunch] = useState(false);
 
   const load = useCallback(() => {
     void campaignsApi
@@ -118,6 +119,19 @@ export default function ApprovalsPage() {
     }
   }
 
+  async function toggleLaunch() {
+    if (!org) return;
+    setTogglingLaunch(true);
+    try {
+      const updated = await adminApi.setAutoLaunch(org.id, !org.autoLaunch);
+      setOrg(updated);
+    } catch {
+      window.alert('Could not change the launch mode.');
+    } finally {
+      setTogglingLaunch(false);
+    }
+  }
+
   return (
     <div>
       <div className={styles.header}>
@@ -127,24 +141,48 @@ export default function ApprovalsPage() {
         </div>
 
         {isCompanyAdmin && org && (
-          <div className={styles.mode}>
-            <div className={styles.modeText}>
-              <span className={styles.modeLabel}>Auto-approve</span>
-              <span className={styles.modeHint}>
-                {org.autoApprove ? 'Submissions launch without review' : 'Submissions wait for manual review'}
-              </span>
+          <div className={styles.modes}>
+            <div className={styles.mode}>
+              <div className={styles.modeText}>
+                <span className={styles.modeLabel}>Auto-approve</span>
+                <span className={styles.modeHint}>
+                  {org.autoApprove ? 'Submissions skip manual review' : 'Submissions wait for manual review'}
+                </span>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={org.autoApprove}
+                aria-label="Toggle auto-approve"
+                className={`${styles.toggle} ${org.autoApprove ? styles.toggleOn : ''}`}
+                disabled={togglingAuto}
+                onClick={() => void toggleAuto()}
+              >
+                <span className={styles.knob} />
+              </button>
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={org.autoApprove}
-              aria-label="Toggle auto-approve"
-              className={`${styles.toggle} ${org.autoApprove ? styles.toggleOn : ''}`}
-              disabled={togglingAuto}
-              onClick={() => void toggleAuto()}
-            >
-              <span className={styles.knob} />
-            </button>
+
+            <div className={styles.mode}>
+              <div className={styles.modeText}>
+                <span className={styles.modeLabel}>Auto-launch</span>
+                <span className={styles.modeHint}>
+                  {org.autoLaunch
+                    ? 'Approved campaigns launch to Facebook automatically'
+                    : 'Approved campaigns wait for a manual launch'}
+                </span>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={org.autoLaunch}
+                aria-label="Toggle auto-launch"
+                className={`${styles.toggle} ${org.autoLaunch ? styles.toggleOn : ''}`}
+                disabled={togglingLaunch}
+                onClick={() => void toggleLaunch()}
+              >
+                <span className={styles.knob} />
+              </button>
+            </div>
           </div>
         )}
       </div>

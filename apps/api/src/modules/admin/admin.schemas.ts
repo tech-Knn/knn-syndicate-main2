@@ -23,3 +23,8 @@ export const autoApproveSchema = z.object({
   autoApprove: z.boolean(),
 });
 export type AutoApproveInput = z.infer<typeof autoApproveSchema>;
+
+export const autoLaunchSchema = z.object({
+  autoLaunch: z.boolean(),
+});
+export type AutoLaunchInput = z.infer<typeof autoLaunchSchema>;

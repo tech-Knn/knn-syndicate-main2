@@ -2,12 +2,13 @@ import type { FastifyInstance } from 'fastify';
 import { ROLES } from '@knn/shared';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate, requireRole } from '../../middleware/authenticate.js';
-import { autoApproveSchema, createOrgSchema, userActionSchema } from './admin.schemas.js';
+import { autoApproveSchema, autoLaunchSchema, createOrgSchema, userActionSchema } from './admin.schemas.js';
 import {
   createOrganization,
   getActingOrg,
   listUsers,
   setOrgAutoApprove,
+  setOrgAutoLaunch,
   setUserStatus,
 } from './admin.service.js';
 
@@ -47,6 +48,21 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       try {
         const { autoApprove } = autoApproveSchema.parse(req.body);
         const org = await setOrgAutoApprove(req.auth, req.params.id, autoApprove);
+        return reply.send({ organization: org });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  app.patch<{ Params: { id: string } }>(
+    '/organizations/:id/auto-launch',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const { autoLaunch } = autoLaunchSchema.parse(req.body);
+        const org = await setOrgAutoLaunch(req.auth, req.params.id, autoLaunch);
         return reply.send({ organization: org });
       } catch (err) {
         return handleRouteError(err, reply);

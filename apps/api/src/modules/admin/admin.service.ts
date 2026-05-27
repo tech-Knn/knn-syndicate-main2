@@ -69,14 +69,21 @@ export async function createOrganization(
   });
 }
 
-/** The acting admin's own company (id, name, approval mode) — for the settings UI. */
-export async function getActingOrg(
-  actor: AuthContext,
-): Promise<{ id: string; name: string; autoApprove: boolean }> {
+/** Company settings exposed to the admin UI (approval + launch modes). */
+export interface OrgSettings {
+  id: string;
+  name: string;
+  autoApprove: boolean;
+  autoLaunch: boolean;
+}
+const orgSettingsSelect = { id: true, name: true, autoApprove: true, autoLaunch: true } as const;
+
+/** The acting admin's own company (id, name, approval + launch modes) — for the settings UI. */
+export async function getActingOrg(actor: AuthContext): Promise<OrgSettings> {
   return runScoped(actor, async (tx) => {
     const org = await tx.organization.findUnique({
       where: { id: actor.orgId },
-      select: { id: true, name: true, autoApprove: true },
+      select: orgSettingsSelect,
     });
     if (!org) throw new AppError(404, 'Company not found');
     return org;
@@ -88,7 +95,7 @@ export async function setOrgAutoApprove(
   actor: AuthContext,
   orgId: string,
   autoApprove: boolean,
-): Promise<{ id: string; autoApprove: boolean }> {
+): Promise<OrgSettings> {
   if (actor.role === ROLES.COMPANY_ADMIN && orgId !== actor.orgId) {
     throw new AppError(403, 'You can only change your own company');
   }
@@ -98,12 +105,45 @@ export async function setOrgAutoApprove(
     const updated = await tx.organization.update({
       where: { id: orgId },
       data: { autoApprove },
-      select: { id: true, autoApprove: true },
+      select: orgSettingsSelect,
     });
     await writeAudit(tx, {
       orgId,
       actorId: actor.userId,
       action: autoApprove ? 'org.auto_approve.enabled' : 'org.auto_approve.disabled',
+      entityType: 'organization',
+      entityId: orgId,
+    });
+    return updated;
+  });
+}
+
+/**
+ * Toggle a company's launch mode. When `autoLaunch` is on, an approved campaign
+ * that acquires a channel is launched to Facebook automatically (the worker fires
+ * the internal launch endpoint); when off, the campaign waits at PROCESSING for an
+ * admin to launch it manually (the default "manual gate").
+ */
+export async function setOrgAutoLaunch(
+  actor: AuthContext,
+  orgId: string,
+  autoLaunch: boolean,
+): Promise<OrgSettings> {
+  if (actor.role === ROLES.COMPANY_ADMIN && orgId !== actor.orgId) {
+    throw new AppError(403, 'You can only change your own company');
+  }
+  return runScoped(actor, async (tx) => {
+    const org = await tx.organization.findUnique({ where: { id: orgId }, select: { id: true } });
+    if (!org) throw new AppError(404, 'Company not found');
+    const updated = await tx.organization.update({
+      where: { id: orgId },
+      data: { autoLaunch },
+      select: orgSettingsSelect,
+    });
+    await writeAudit(tx, {
+      orgId,
+      actorId: actor.userId,
+      action: autoLaunch ? 'org.auto_launch.enabled' : 'org.auto_launch.disabled',
       entityType: 'organization',
       entityId: orgId,
     });

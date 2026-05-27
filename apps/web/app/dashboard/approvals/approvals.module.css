@@ -15,10 +15,17 @@
   font-size: 0.92rem;
 }
 
-/* auto-approve mode switch */
+/* auto-approve / auto-launch mode switches (stacked on the right) */
+.modes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  flex: none;
+}
 .mode {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.75rem;
   background: var(--surface);
   border: 1px solid var(--border);
