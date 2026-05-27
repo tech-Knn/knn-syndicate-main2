@@ -43,9 +43,10 @@ playwright-report/
 test-results/
 .vitest/
 
-# Uploads (local creative storage)
+# Uploads (local creative storage). Root-anchored so it can't swallow source
+# directories named "uploads" (e.g. apps/api/src/modules/uploads).
 var/uploads/
-uploads/
+/uploads/
 
 # Misc
 tmp/
