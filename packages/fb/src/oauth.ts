@@ -20,13 +20,25 @@ export function isFbConfigured(): boolean {
   return Boolean(env.FB_APP_ID && env.FB_APP_SECRET && env.FB_OAUTH_REDIRECT_URI);
 }
 
-export function buildAuthUrl(state: string): string {
+/**
+ * Build the OAuth dialog URL. Two flows:
+ * - Facebook Login for Business (when a `configId` is set): permissions come from
+ *   the saved login configuration, so we pass `config_id` (and force a `code`
+ *   response) instead of a `scope` list. This is the modern path for ads access.
+ * - Classic Facebook Login (no `configId`): request permissions via `scope`.
+ */
+export function buildAuthUrl(state: string, configId: string = env.FB_LOGIN_CONFIG_ID): string {
   const url = new URL(`https://www.facebook.com/${env.FB_API_VERSION}/dialog/oauth`);
   url.searchParams.set('client_id', env.FB_APP_ID);
   url.searchParams.set('redirect_uri', env.FB_OAUTH_REDIRECT_URI);
-  url.searchParams.set('scope', FB_SCOPES.join(','));
   url.searchParams.set('state', state);
   url.searchParams.set('response_type', 'code');
+  if (configId) {
+    url.searchParams.set('config_id', configId);
+    url.searchParams.set('override_default_response_type', 'true');
+  } else {
+    url.searchParams.set('scope', FB_SCOPES.join(','));
+  }
   return url.toString();
 }
 

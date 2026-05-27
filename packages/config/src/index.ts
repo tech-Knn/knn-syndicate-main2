@@ -76,6 +76,9 @@ const EnvSchema = z.object({
   FB_APP_SECRET: optionalString,
   FB_API_VERSION: z.string().default('v21.0'),
   FB_OAUTH_REDIRECT_URI: optionalString,
+  // Facebook Login for Business: the saved login-configuration id. When set, the
+  // OAuth dialog requests permissions from that config instead of a `scope` list.
+  FB_LOGIN_CONFIG_ID: optionalString,
   FB_WEBHOOK_VERIFY_TOKEN: optionalString,
 
   // Google / AdSense
