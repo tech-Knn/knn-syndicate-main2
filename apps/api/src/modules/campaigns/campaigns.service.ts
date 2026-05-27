@@ -16,6 +16,7 @@ import {
   canTransitionCampaign,
 } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
+import { enqueueChannelAssign } from '../../lib/channel-queue.js';
 import { AppError } from '../../lib/errors.js';
 import { generateRedirectId } from '../../lib/ids.js';
 import { notify } from '../../lib/notify.js';
@@ -319,6 +320,7 @@ export async function submitCampaign(
       title: 'Campaign approved',
       body: `"${campaign.name}" was auto-approved and is queued to launch.`,
     });
+    await enqueueChannelAssign(campaign.id);
   }
   return campaign;
 }

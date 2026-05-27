@@ -479,3 +479,74 @@ model LauncherPreset {
   @@index([orgId])
   @@map("launcher_presets")
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6 — Channel pool & assignment (D7/D11). A global pool of AdSense AFS
+// custom channels (the `ch` value passed to CSA). One channel ↔ one campaign at a
+// time; assigned at approval via `SELECT … FOR UPDATE SKIP LOCKED` (zero double-
+// assignment under concurrency). Channels are a PLATFORM resource (no org_id / no
+// RLS — like platform_settings); the per-campaign attribution + the FIFO wait
+// queue are org-scoped (RLS). Time is the IST business day (D4).
+// ---------------------------------------------------------------------------
+
+enum ChannelStatus {
+  AVAILABLE
+  ASSIGNED
+  RESERVED
+}
+
+enum QueueStatus {
+  WAITING
+  ASSIGNED
+  CANCELLED
+}
+
+model Channel {
+  id String @id @default(uuid()) @db.Uuid
+  /// The AdSense custom-channel id (the `ch` value); unique across the pool.
+  channelId         String        @unique @map("channel_id")
+  label             String?
+  status            ChannelStatus @default(AVAILABLE)
+  /// The campaign currently holding this channel (null when AVAILABLE).
+  currentCampaignId String?       @map("current_campaign_id") @db.Uuid
+  /// IST business day (YYYY-MM-DD) the current assignment is locked for.
+  lockedForDay      String?       @map("locked_for_day")
+  assignedAt        DateTime?     @map("assigned_at")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("channels")
+}
+
+/// Assignment record (also the per-campaign revenue-attribution span for Phase 9):
+/// active while `releasedAt` is null, history once released.
+model ChannelAssignment {
+  id         String    @id @default(uuid()) @db.Uuid
+  orgId      String    @map("org_id") @db.Uuid
+  channelRef String    @map("channel_ref") @db.Uuid
+  campaignId String    @map("campaign_id") @db.Uuid
+  /// IST business day the assignment started.
+  forDay     String    @map("for_day")
+  assignedAt DateTime  @default(now()) @map("assigned_at")
+  releasedAt DateTime? @map("released_at")
+
+  @@index([campaignId])
+  @@index([channelRef, releasedAt])
+  @@index([orgId, forDay])
+  @@map("channel_assignments")
+}
+
+/// FIFO queue of approved campaigns waiting for a free channel (QUEUED_NO_CHANNEL).
+/// Global FIFO order is by `enqueuedAt` across all orgs (single shared pool).
+model CampaignQueue {
+  id         String      @id @default(uuid()) @db.Uuid
+  orgId      String      @map("org_id") @db.Uuid
+  campaignId String      @unique @map("campaign_id") @db.Uuid
+  status     QueueStatus @default(WAITING)
+  enqueuedAt DateTime    @default(now()) @map("enqueued_at")
+  assignedAt DateTime?   @map("assigned_at")
+
+  @@index([status, enqueuedAt])
+  @@map("campaign_queue")
+}

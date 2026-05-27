@@ -2,7 +2,18 @@ import { Worker, type Job } from 'bullmq';
 import cron from 'node-cron';
 import { env } from '@knn/config';
 import { QUEUES, closeQueues, createConnection, getQueue } from '@knn/queue';
+import {
+  assignChannel,
+  processQueue,
+  releaseChannelForCampaign,
+  rolloverChannels,
+} from './channel-pool/channel.service.js';
 import { refreshFbTokens } from './jobs/token-refresh.js';
+
+interface ChannelJob {
+  action: 'assign' | 'release' | 'rollover' | 'process-queue';
+  campaignId?: string;
+}
 
 /**
  * Background worker. Phase 0 runs a heartbeat on the HEALTH queue (so Bull-Board
@@ -40,6 +51,32 @@ async function main(): Promise<void> {
     console.error(`[worker] ${QUEUES.TOKEN_REFRESH} job ${job?.id} failed:`, err.message);
   });
 
+  // Channel pool maintenance (D7/D11): assign on approval, release on stop, drain
+  // the FIFO queue, and the IST midnight rollover. Single-writer (concurrency 1);
+  // assignChannel is also concurrency-safe via FOR UPDATE SKIP LOCKED.
+  const channelWorker = new Worker(
+    QUEUES.CHANNEL_MAINTENANCE,
+    async (job: Job<ChannelJob>) => {
+      const { action, campaignId } = job.data;
+      switch (action) {
+        case 'assign':
+          return campaignId ? assignChannel(campaignId) : { skipped: true };
+        case 'release':
+          return campaignId ? releaseChannelForCampaign(campaignId) : { skipped: true };
+        case 'rollover':
+          return rolloverChannels();
+        case 'process-queue':
+          return processQueue();
+        default:
+          return { skipped: true };
+      }
+    },
+    { connection, concurrency: 1 },
+  );
+  channelWorker.on('failed', (job, err) => {
+    console.error(`[worker] ${QUEUES.CHANNEL_MAINTENANCE} job ${job?.id} failed:`, err.message);
+  });
+
   // Repeatable heartbeat — visible in Bull-Board, proves the queue round-trips.
   await getQueue(QUEUES.HEALTH).add(
     'heartbeat',
@@ -47,11 +84,16 @@ async function main(): Promise<void> {
     { repeat: { every: 60_000 }, removeOnComplete: 50, removeOnFail: 50 },
   );
 
-  // Stub: IST-anchored midnight cleanup (Phase 6/9 will fill in the logic).
+  // IST midnight channel rollover (00:05 IST, D4): release channels from ended
+  // campaigns, renew active locks for the new day, and drain the wait queue.
   const midnightCleanup = cron.schedule(
     '5 0 * * *',
     () => {
-      console.log('[worker] (stub) midnight cleanup tick');
+      void getQueue(QUEUES.CHANNEL_MAINTENANCE).add(
+        'rollover',
+        { action: 'rollover' },
+        { removeOnComplete: 50, removeOnFail: 50 },
+      );
     },
     { timezone: env.BUSINESS_TIMEZONE },
   );
@@ -80,6 +122,7 @@ async function main(): Promise<void> {
     tokenRefreshCron.stop();
     await healthWorker.close();
     await tokenRefreshWorker.close();
+    await channelWorker.close();
     await closeQueues();
     await connection.quit();
     process.exit(0);

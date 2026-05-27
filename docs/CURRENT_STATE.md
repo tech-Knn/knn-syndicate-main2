@@ -2,9 +2,34 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-27 — Phase 5 (Article engine + frontend) COMPLETE (gate green + in-browser verified, mocked AI). NOT yet on staging. Phase 4 deployed._
+_Last updated: 2026-05-28 — Phase 6 (Channel pool & assignment) COMPLETE (gate green; 100-concurrent stress test passes). Phase 5 + AFS/RSOC funnel VALIDATED LIVE on `articles.10linesabout.com`. Next: Phase 7 (redirect engine). NOTE: Phase 6 + the AFS/Phase-5 trailing commits not yet shipped to staging — commit + deploy + run `seed-channels` on the box._
 
-## Phase 5 — Article engine + article frontend (complete; gate green; verified in-browser)
+## Phase 6 — Channel pool & assignment (complete; gate green)
+
+Global AdSense channel pool (`channels`, no RLS) assigned 1:1 to campaigns; per-campaign attribution
+span (`channel_assignments`) + FIFO wait queue (`campaign_queue`) are org-scoped (RLS). Migration
+`20260527211044_channel_pool` (the auto-generated `DROP INDEX articles_embedding_idx` was removed to
+preserve the pgvector index). Service `apps/worker/src/channel-pool/channel.service.ts`:
+`assignChannel` (FOR UPDATE SKIP LOCKED → PROCESSING, else enqueue + QUEUED_NO_CHANNEL),
+`releaseChannelForCampaign`, `processQueue` (FIFO drain), `rolloverChannels` (IST midnight),
+`seedChannels`. Worker runs the `CHANNEL_MAINTENANCE` queue (single writer) + the 00:05 IST rollover
+cron; the API enqueues `assign` on approve/auto-approve. **Gate green:** the 100-concurrent stress
+test asserts zero double-assignment; FIFO/release/resume/rollover covered (worker 9 tests). Pool via
+`packages/db/scripts/seed-channels.ts` (placeholder ids; real AdSense channel ids = OPEN_QUESTIONS #4).
+
+## AFS/RSOC funnel — VALIDATED LIVE (2026-05-28)
+
+The monetization core is proven on a Google-approved domain (`articles.10linesabout.com`, AFS style
+"Ajeet" `7465600436`, `partner-pub-6567805284657549`): the **content page** renders related-search
+terms (after Google crawls it — the crawl is the hard gate, no bypass), clicking a term → **`/search?q=…`**
+renders Google ads. Two-page RSOC via `_googCsa('relatedsearch'|'ads', …)` in `apps/article/app/_afs/csa.ts`.
+Config matched to a live arbitrage funnel: `relatedSearchTargeting:'content'`, `referrerAdCreative` (←`rc`),
+`ignoredPageParams`, `q` results param, `adsafe` (`NEXT_PUBLIC_AFS_ADSAFE`, default medium), `linkTarget:'_blank'`,
+load callbacks. Running `adtest=on` (test mode) — flip off (rebuild) for real revenue. **Pre-warm/crawl an
+article before driving FB traffic** (Phase 8). The competitor's `txid`→`/api/events` funnel = the Phase 7
+(redirect click id) + Phase 9 (attribution, D8) blueprint. See `docs/DECISIONS.md` + memory `staging-deployment`.
+
+## Phase 5 — Article engine + article frontend (complete; deployed; AFS validated live)
 
 Built against **mocked AI** per the gate; live generation needs `ANTHROPIC_API_KEY` + `OPENAI_API_KEY`
 wired (external dep, like FB live-connect) — the clients throw `AiNotConfiguredError` until then.
@@ -22,10 +47,10 @@ wired (external dep, like FB live-connect) — the clients throw `AiNotConfigure
   audits `article.generated` / `article.reused`. Route `POST /api/campaigns/:id/article` (owner/admin).
 - **Public read** `GET /api/public/articles/:slug` (no auth, `withSystem`, compliant content only) —
   backs the article frontend without a DB import in the Next app (build-safe).
-- **Frontend** `apps/article/app/a/[slug]`: SSR page — title, the ≤100-word/≤300-char first-paragraph
-  teaser (`@knn/shared#articleTeaser`), the **AFS slot** (`#afs-ads`, wired with `q`/`ch`/`styleId`
-  from the redirect; live Google CSA script lands in Phase 9), full body, and SEO `generateMetadata`.
-  Light editorial theme (AdSense-friendly), not the dark dashboard.
+- **Frontend** `apps/article`: SSR content page `app/a/[slug]` (title, ≤100-word/≤300-char teaser via
+  `@knn/shared#articleTeaser`, **RSOC related-search unit**, full body, SEO `generateMetadata`) + results
+  page `app/search` (the **ads unit**). Real Google CSA wired (see the AFS section above) — NOT a
+  placeholder. Light editorial theme (AdSense-friendly). `robots.txt` allows content, disallows `/search`.
 - **Gate green:** typecheck 11/11, lint 11/11, build 5/5, **128 tests** (shared 38 incl. teaser, ai 8,
   api 53 incl. 8 article-engine [generate / reuse / no-reuse / idempotency / authz / public]).
 - **In-browser verified** (Preview MCP): seeded one article → `/a/<slug>?q=…&ch=…` rendered title +

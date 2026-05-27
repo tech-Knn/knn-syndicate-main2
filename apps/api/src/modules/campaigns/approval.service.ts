@@ -1,6 +1,7 @@
 import type { TxClient } from '@knn/db';
 import { CAMPAIGN_STATUS, canTransitionCampaign } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
+import { enqueueChannelAssign } from '../../lib/channel-queue.js';
 import { AppError } from '../../lib/errors.js';
 import { notify } from '../../lib/notify.js';
 import { runScoped } from '../../lib/scope.js';
@@ -69,6 +70,7 @@ export async function approveCampaign(
     title: 'Campaign approved',
     body: `"${updated.name}" was approved and is queued to launch.`,
   });
+  await enqueueChannelAssign(updated.id);
   return updated;
 }
 

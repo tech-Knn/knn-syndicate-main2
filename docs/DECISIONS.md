@@ -153,3 +153,22 @@ the approved plan.
   clicks/revenue, avoids self-click policy issues); **never** `on` in production. Loader +
   page-options live in `apps/article/app/_afs/csa.ts`. AdSense access is account-manager-gated and
   has a usage floor (>20 search-ad impressions in ≥2 of 6 months) — OPEN_QUESTIONS #4.
+
+### 2026-05-28 — Phase 6 (Channel pool & assignment, D7/D11)
+
+- **Channels are a GLOBAL platform pool** (`channels` table, no `org_id`, no RLS — like
+  `platform_settings`); one channel ↔ one campaign while assigned. The per-campaign attribution span
+  (`channel_assignments`) + the FIFO wait queue (`campaign_queue`) ARE org-scoped (RLS). The
+  assignment worker runs under `withSystem`. `campaign.channelId` = the Channel **row id** (uuid),
+  not the AdSense channel string (join for the `ch` value).
+- **Assignment = `FOR UPDATE SKIP LOCKED`** (`apps/worker/src/channel-pool/channel.service.ts#assignChannel`):
+  claims one `AVAILABLE` channel per txn; concurrent claims skip each other → **zero double-assignment**
+  (proven by a 100-concurrent stress test). Pool exhausted → enqueue + `QUEUED_NO_CHANNEL`.
+- **Single-writer worker** processes `CHANNEL_MAINTENANCE` jobs (`assign`/`release`/`rollover`/
+  `process-queue`, concurrency 1); the API enqueues `assign` on approve / auto-approve (best-effort).
+  `processQueue` drains the FIFO queue into freed channels; `releaseChannelForCampaign` frees + re-drives.
+- **IST midnight rollover** (00:05 IST cron → `rollover` job, D4): release channels from non-holding
+  campaigns (holding = PROCESSING/LAUNCHING/ACTIVE/BATCHED), renew still-active locks (close the prior
+  `channel_assignment` span, open today's — per-day attribution for Phase 9), then drain the queue.
+- **Pool provisioning**: `packages/db/scripts/seed-channels.ts` (`CHANNEL_POOL_SEED`, target 2000).
+  Placeholder ids today; real AdSense **custom-channel** ids are the operational input (OPEN_QUESTIONS #4).
