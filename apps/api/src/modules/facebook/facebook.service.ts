@@ -8,6 +8,7 @@ import {
   exchangeCodeForToken,
   exchangeForLongLivedToken,
   fetchAdAccounts,
+  fetchBusinessPixels,
   fetchPages,
   fetchPixels,
   fetchPromotePages,
@@ -79,11 +80,19 @@ async function syncFromFacebook(args: {
     fetchAdAccounts(accessToken),
     fetchPages(accessToken),
   ]);
+  // Pixels usable by each account = the account's own pixels PLUS the Business
+  // Manager's pixels (a fresh ad account has none of its own, but the BM usually
+  // owns pixels that can be assigned to it). Merge + dedupe by FB pixel id.
   const pixelsByAccount = await Promise.all(
-    accounts.map(async (account) => ({
-      fbAccountId: account.fbAccountId,
-      pixels: await fetchPixels(account.fbAccountId, accessToken),
-    })),
+    accounts.map(async (account) => {
+      const [own, biz] = await Promise.all([
+        fetchPixels(account.fbAccountId, accessToken),
+        fetchBusinessPixels(account.fbAccountId, accessToken),
+      ]);
+      const byId = new Map<string, (typeof own)[number]>();
+      for (const p of [...own, ...biz]) byId.set(p.fbPixelId, p);
+      return { fbAccountId: account.fbAccountId, pixels: [...byId.values()] };
+    }),
   );
 
   let pixelCount = 0;
@@ -394,6 +403,16 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
           select: { id: true, fbPageId: true, name: true, instagramId: true },
         }),
       );
+    }
+    // Fresh ad accounts often expose no `promote_pages` even though the profile
+    // manages pages — fall back to the connection's synced pages so the buyer can
+    // still pick one (Facebook validates the page↔account pairing at launch).
+    if (rows.length === 0) {
+      return tx.fbPage.findMany({
+        where: { connectionId },
+        orderBy: { name: 'asc' },
+        select: { id: true, fbPageId: true, name: true, instagramId: true },
+      });
     }
     return rows;
   });

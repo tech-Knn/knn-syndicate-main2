@@ -92,6 +92,40 @@ export async function fetchPixels(fbAccountId: string, accessToken: string): Pro
   return data.map((p) => ({ fbPixelId: p.id, name: p.name ?? p.id }));
 }
 
+/**
+ * Pixels owned by the ad account's Business Manager (not just those already on the
+ * account). A fresh ad account has no `adspixels` of its own, but the BM usually
+ * owns pixels that can be assigned to it — surfacing them lets the buyer pick one.
+ * Best-effort: returns [] if the account has no business or the BM read isn't
+ * permitted, so callers can merge it with the account-scoped pixels safely.
+ */
+export async function fetchBusinessPixels(fbAccountId: string, accessToken: string): Promise<PixelDTO[]> {
+  let businessId: string | undefined;
+  try {
+    const acc = await graphRequest<{ business?: { id?: string } }>({
+      path: `/act_${fbAccountId}`,
+      params: { fields: 'business' },
+      accessToken,
+      accountId: fbAccountId,
+    });
+    businessId = acc.business?.id;
+  } catch {
+    return [];
+  }
+  if (!businessId) return [];
+  try {
+    const data = await fetchAllPages<{ id: string; name?: string }>({
+      path: `/${businessId}/adspixels`,
+      params: { fields: 'id,name', limit: '100' },
+      accessToken,
+      accountId: fbAccountId,
+    });
+    return data.map((p) => ({ fbPixelId: p.id, name: p.name ?? p.id }));
+  } catch {
+    return [];
+  }
+}
+
 export interface AdStatusDTO {
   fbAdId: string;
   /** FB effective_status: ACTIVE | PAUSED | DISAPPROVED | WITH_ISSUES | PENDING_REVIEW | … */

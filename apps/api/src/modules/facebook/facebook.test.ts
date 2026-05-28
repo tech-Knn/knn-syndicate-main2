@@ -187,6 +187,24 @@ describe('facebook integration', () => {
     expect(res.json<{ pages: { fbPageId: string }[] }>().pages.some((p) => p.fbPageId === 'pg_promote')).toBe(true);
   });
 
+  it('falls back to the connection pages when an ad account can promote none (fresh account)', async () => {
+    const emptyPromote = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      const json = (b: unknown): Response => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (url.includes('/promote_pages')) return json({ data: [] }); // fresh account: nothing promotable
+      return json({ data: [] });
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', emptyPromote);
+    const token = await bearer();
+    const accounts = await app.inject({ method: 'GET', url: '/api/facebook/accounts', headers: h(token) });
+    const accountId = accounts.json<{ accounts: { id: string }[] }>().accounts[0]?.id ?? '';
+    const res = await app.inject({ method: 'GET', url: `/api/facebook/accounts/${accountId}/pages`, headers: h(token) });
+    expect(res.statusCode).toBe(200);
+    // promote_pages empty → fell back to the synced connection page so the buyer isn't stuck.
+    expect(res.json<{ pages: { fbPageId: string }[] }>().pages.some((p) => p.fbPageId === 'page_1')).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
   it('marks a profile broken when a resync hits an expired token (D13)', async () => {
     vi.stubGlobal('fetch', brokenTokenFetch());
     const token = await bearer();
