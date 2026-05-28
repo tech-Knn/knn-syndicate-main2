@@ -7,3 +7,4 @@ export * from './constants.js';
 export * from './conversions.js';
 export * from './datetime.js';
 export * from './money.js';
+export * from './stats.js';

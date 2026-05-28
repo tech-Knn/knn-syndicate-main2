@@ -57,6 +57,28 @@ export function zonedStartOfDayUtc(day: string, tz: string = DEFAULT_BUSINESS_TZ
   return new Date(baseUtcMs - offset);
 }
 
+/**
+ * Add `delta` calendar days to a business-day string ("YYYY-MM-DD"), returning a
+ * new "YYYY-MM-DD". Operates in the pure calendar-day domain (the day strings),
+ * independent of any tz — correct for stepping the daily bucket keys (D4).
+ */
+export function addBusinessDays(day: string, delta: number): string {
+  const ms = Date.parse(`${day}T00:00:00Z`);
+  if (Number.isNaN(ms)) throw new Error(`Invalid business day: ${day}`);
+  return new Date(ms + delta * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** Inclusive list of business-day strings from `from`..`to` (bounded by `max`). */
+export function businessDaysInRange(from: string, to: string, max = 366): string[] {
+  const out: string[] = [];
+  let cur = from;
+  for (let i = 0; i < max && cur <= to; i++) {
+    out.push(cur);
+    cur = addBusinessDays(cur, 1);
+  }
+  return out;
+}
+
 /** UTC [start, end) bounds for a business day in tz (end = next day's start). */
 export function businessDayBoundsUtc(
   day: string,

@@ -11,6 +11,7 @@ import { authRoutes } from './modules/auth/auth.routes.js';
 import { campaignRoutes } from './modules/campaigns/campaigns.routes.js';
 import { eventsRoutes } from './modules/events/events.routes.js';
 import { facebookRoutes } from './modules/facebook/facebook.routes.js';
+import { statsRoutes } from './modules/stats/stats.routes.js';
 import { uploadRoutes } from './modules/uploads/uploads.routes.js';
 import { registerBullBoard } from './plugins/bull-board.js';
 import { registerHealth } from './plugins/health.js';
@@ -53,6 +54,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(adminRoutes, { prefix: '/api/admin' });
   await app.register(facebookRoutes, { prefix: '/api/facebook' });
   await app.register(campaignRoutes, { prefix: '/api/campaigns' });
+  await app.register(statsRoutes, { prefix: '/api/stats' });
   await app.register(uploadRoutes, { prefix: '/api/uploads' });
   await app.register(publicArticleRoutes, { prefix: '/api/public/articles' });
   await app.register(internalRoutes, { prefix: '/api/internal' });
