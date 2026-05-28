@@ -107,6 +107,21 @@ export interface BuyerRollup {
 /** Per-offer revenue for a campaign (Phase F). Cost is campaign-level FB spend; revenue
  *  is per offer (its AFS channel). `revenueUsd` is buyer-visible (the platform cut applied);
  *  hidden (0 + `suppressed`) when AFS clicks are below the §5.8.2 threshold. */
+/** A breakdown dimension for the campaign drill-down. */
+export type StatDim = 'country' | 'hour';
+
+/** One bucket of a dimension breakdown (country code or hour). Revenue is allocated. */
+export interface DimStat {
+  dimValue: string;
+  spendUsd: number;
+  revenueUsd: number; // allocated from campaign revenue by conversion share (approximation)
+  profitUsd: number;
+  roi: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+}
+
 export interface OfferStat {
   offerId: string;
   host: string;

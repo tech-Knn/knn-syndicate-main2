@@ -5,6 +5,7 @@ import { authenticate, requireRole } from '../../middleware/authenticate.js';
 import {
   getBuyerRollup,
   getCampaignBreakdown,
+  getCampaignDimBreakdown,
   getCampaignOfferStats,
   getCampaignPerformance,
   getCompanyRollup,
@@ -66,6 +67,21 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
         return reply.send({ offers: await getCampaignOfferStats(req.auth, req.params.id, parseRange(req.query)) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Per-dimension (country / hour) breakdown for one campaign — owner/admin scoped.
+  app.get<{ Params: { id: string }; Querystring: { from?: string; to?: string; dim?: string } }>(
+    '/campaigns/:id/dim',
+    { preHandler: [authenticate] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const dim = req.query.dim === 'hour' ? 'hour' : 'country';
+        return reply.send({ rows: await getCampaignDimBreakdown(req.auth, req.params.id, parseRange(req.query), dim) });
       } catch (err) {
         return handleRouteError(err, reply);
       }

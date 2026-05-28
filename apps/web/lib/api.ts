@@ -31,6 +31,7 @@ import {
   type ChannelRow,
   type ChannelSummary,
   type CompanyRollup,
+  type DimStat,
   type OfferStat,
   type PlatformSettings,
   type StatsSummary,
@@ -422,6 +423,10 @@ export const stats = {
       .companies,
   campaignOffers: async (id: string, range?: RangeArg): Promise<OfferStat[]> =>
     (await parse<{ offers: OfferStat[] }>(await authedFetch(`/api/stats/campaigns/${id}/offers${rangeQs(range)}`))).offers,
+  campaignDim: async (id: string, dim: 'country' | 'hour', range?: RangeArg): Promise<DimStat[]> => {
+    const q = rangeQs(range);
+    return (await parse<{ rows: DimStat[] }>(await authedFetch(`/api/stats/campaigns/${id}/dim${q ? `${q}&` : '?'}dim=${dim}`))).rows;
+  },
 };
 
 export const adsense = {

@@ -129,6 +129,41 @@
   background: var(--surface-2);
   border-radius: var(--radius-sm);
 }
+.detailTabs {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+.detailTab {
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted-2);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.detailTab:hover {
+  color: var(--cream);
+}
+.detailTabActive {
+  background: rgba(var(--rust-rgb), 0.18);
+  border-color: var(--rust);
+  color: var(--cream);
+}
+.setRow td {
+  font-weight: 600;
+  color: var(--cream);
+  background: rgba(255, 255, 255, 0.02);
+}
+.adIndent {
+  padding-left: 1.6rem !important;
+  color: var(--muted-2);
+}
+.suppressed {
+  color: var(--muted);
+  font-style: italic;
+}
 .adSet {
   margin-bottom: 0.5rem;
 }

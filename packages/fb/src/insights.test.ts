@@ -65,6 +65,31 @@ describe('fetchAdInsights', () => {
     expect(url).toContain('time_increment=1');
   });
 
+  it('requests a country breakdown and returns dimValue per row', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      res({
+        data: [
+          { ad_id: 'a1', date_start: '2026-05-27', impressions: '100', clicks: '5', spend: '2.00', country: 'US' },
+          { ad_id: 'a1', date_start: '2026-05-27', impressions: '40', clicks: '1', spend: '0.50', country: 'CA' },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const rows = await fetchAdInsights({ fbCampaignId: 'c', accountId: 'act_1', accessToken: 'tok', since: '2026-05-27', until: '2026-05-27', breakdown: 'country' });
+    expect(rows.map((r) => r.dimValue)).toEqual(['US', 'CA']);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('breakdowns=country');
+  });
+
+  it('requests an hourly breakdown via the advertiser-timezone field', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      res({ data: [{ ad_id: 'a1', date_start: '2026-05-27', impressions: '10', clicks: '1', spend: '1.00', hourly_stats_aggregated_by_advertiser_time_zone: '06:00:00 - 06:59:59' }] }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const rows = await fetchAdInsights({ fbCampaignId: 'c', accountId: 'act_1', accessToken: 'tok', since: '2026-05-27', until: '2026-05-27', breakdown: 'hour' });
+    expect(rows[0]?.dimValue).toBe('06:00:00 - 06:59:59');
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('breakdowns=hourly_stats_aggregated_by_advertiser_time_zone');
+  });
+
   it('follows pagination across pages', async () => {
     const fetchMock = vi
       .fn()

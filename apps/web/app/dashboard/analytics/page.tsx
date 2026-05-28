@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   type CampaignBreakdown,
   type CampaignPerf,
+  type DimStat,
   type OfferStat,
   addBusinessDays,
   currentBusinessDay,
@@ -430,16 +431,24 @@ const dCtr = (r: Metricable): string => `${(r.impressions ? (r.clicks / r.impres
 
 /** The expandable campaign panel: a Campaign→AdSet→Ad tree + a per-offer/domain view. */
 function CampaignDetail({ campaignId, bd, range }: { campaignId: string; bd: CampaignBreakdown | undefined; range: DateRange }): React.ReactNode {
-  const [tab, setTab] = useState<'structure' | 'offers'>('structure');
+  const [tab, setTab] = useState<'structure' | 'offers' | 'country' | 'hour'>('structure');
   const [offers, setOffers] = useState<OfferStat[] | null>(null);
+  const [dim, setDim] = useState<{ country: DimStat[] | null; hour: DimStat[] | null }>({ country: null, hour: null });
 
   useEffect(() => {
     if (tab === 'offers' && offers === null) {
       void stats.campaignOffers(campaignId, range).then(setOffers).catch(() => setOffers([]));
     }
-  }, [tab, offers, campaignId, range]);
+    if ((tab === 'country' || tab === 'hour') && dim[tab] === null) {
+      void stats
+        .campaignDim(campaignId, tab, range)
+        .then((rows) => setDim((d) => ({ ...d, [tab]: rows })))
+        .catch(() => setDim((d) => ({ ...d, [tab]: [] })));
+    }
+  }, [tab, offers, dim, campaignId, range]);
 
   const money = (n: number): string => formatUsd(n);
+  const dimRows = tab === 'country' ? dim.country : tab === 'hour' ? dim.hour : null;
 
   return (
     <div className={styles.detail}>
@@ -450,9 +459,57 @@ function CampaignDetail({ campaignId, bd, range }: { campaignId: string; bd: Cam
         <button type="button" className={`${styles.detailTab} ${tab === 'offers' ? styles.detailTabActive : ''}`} onClick={() => setTab('offers')}>
           By offer / domain
         </button>
+        <button type="button" className={`${styles.detailTab} ${tab === 'country' ? styles.detailTabActive : ''}`} onClick={() => setTab('country')}>
+          By country
+        </button>
+        <button type="button" className={`${styles.detailTab} ${tab === 'hour' ? styles.detailTabActive : ''}`} onClick={() => setTab('hour')}>
+          By hour
+        </button>
       </div>
 
-      {tab === 'structure' ? (
+      {tab === 'country' || tab === 'hour' ? (
+        dimRows === null ? (
+          <Skeleton className={admin.rowSkel} />
+        ) : dimRows.length === 0 ? (
+          <p className={admin.subtle}>No {tab} data yet — populates once the campaign is delivering on Facebook.</p>
+        ) : (
+          <table className={admin.table}>
+            <thead>
+              <tr>
+                <th className={admin.thLeft}>{tab === 'country' ? 'Country' : 'Hour'}</th>
+                <th className={admin.thLeft}>Spend</th>
+                <th className={admin.thLeft}>Revenue*</th>
+                <th className={admin.thLeft}>Profit</th>
+                <th className={admin.thLeft}>ROAS</th>
+                <th className={admin.thLeft}>Conv</th>
+                <th className={admin.thLeft}>CPA</th>
+                <th className={admin.thLeft}>CPC</th>
+                <th className={admin.thLeft}>CTR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dimRows.map((d) => (
+                <tr key={d.dimValue}>
+                  <td className={admin.name}>{d.dimValue}</td>
+                  <td>{money(d.spendUsd)}</td>
+                  <td>{money(d.revenueUsd)}</td>
+                  <td className={d.profitUsd >= 0 ? styles.pos : styles.neg}>{money(d.profitUsd)}</td>
+                  <td>{d.roi.toFixed(2)}×</td>
+                  <td>{d.conversions.toLocaleString()}</td>
+                  <td>{dCpa(d)}</td>
+                  <td>{dCpc(d)}</td>
+                  <td>{dCtr(d)}</td>
+                </tr>
+              ))}
+              <tr>
+                <td colSpan={9} className={admin.subtle}>
+                  * Revenue is allocated across {tab === 'country' ? 'countries' : 'hours'} by conversion share — AFS revenue isn&apos;t geo/hour-tagged, so this is an estimate (spend &amp; conversions are exact).
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        )
+      ) : tab === 'structure' ? (
         !bd ? (
           <Skeleton className={admin.rowSkel} />
         ) : bd.adSets.length === 0 ? (

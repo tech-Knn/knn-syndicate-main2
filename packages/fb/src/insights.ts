@@ -29,7 +29,16 @@ export interface FbAdInsightRow {
   clicks: number;
   spendMinor: number;
   conversions: number;
+  /** Present only when a breakdown was requested: the country code or hour bucket. */
+  dimValue?: string;
 }
+
+/** A FB insights breakdown dimension we support. */
+export type FbBreakdown = 'country' | 'hour';
+const BREAKDOWN_FIELD: Record<FbBreakdown, string> = {
+  country: 'country',
+  hour: 'hourly_stats_aggregated_by_advertiser_time_zone',
+};
 
 interface RawInsight {
   ad_id?: string;
@@ -38,6 +47,8 @@ interface RawInsight {
   clicks?: string;
   spend?: string;
   actions?: FbAction[];
+  country?: string;
+  hourly_stats_aggregated_by_advertiser_time_zone?: string;
 }
 
 interface PagedInsights {
@@ -69,6 +80,8 @@ export interface FetchAdInsightsParams {
   /** Inclusive date range (YYYY-MM-DD), in the ad account's reporting timezone. */
   since: string;
   until: string;
+  /** Optional FB breakdown: each row then carries `dimValue` (country code / hour bucket). */
+  breakdown?: FbBreakdown;
 }
 
 /**
@@ -94,6 +107,7 @@ export async function fetchAdInsights(
           time_increment: '1',
           time_range: JSON.stringify({ since: params.since, until: params.until }),
           limit: '500',
+          ...(params.breakdown ? { breakdowns: BREAKDOWN_FIELD[params.breakdown] } : {}),
           ...(after ? { after } : {}),
         },
       },
@@ -109,6 +123,9 @@ export async function fetchAdInsights(
         // Native minor units (account currency, 2-decimal assumption); USD via caller.
         spendMinor: Math.round((Number(r.spend) || 0) * 100),
         conversions: extractConversions(r.actions),
+        ...(params.breakdown
+          ? { dimValue: (params.breakdown === 'country' ? r.country : r.hourly_stats_aggregated_by_advertiser_time_zone) ?? 'unknown' }
+          : {}),
       });
     }
     const next = res.paging?.next;

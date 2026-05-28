@@ -6,7 +6,7 @@ import { ROLES, USER_STATUS, addBusinessDays, currentBusinessDay } from '@knn/sh
 import type { CampaignBreakdown, CampaignPerf, StatsSummary } from '@knn/shared';
 import { hashPassword } from '../../lib/password.js';
 import { buildApp } from '../../app.js';
-import { getCampaignOfferStats } from './stats.service.js';
+import { getCampaignDimBreakdown, getCampaignOfferStats } from './stats.service.js';
 
 const suffix = Date.now().toString(36);
 const PW = 'stats-pw-123456';
@@ -320,6 +320,44 @@ describe('getCampaignOfferStats (Phase F per-offer revenue)', () => {
         await tx.campaign.deleteMany({ where: { orgId } }); // cascades offers
         await tx.domain.deleteMany({ where: { afsAccountId: afsId } });
         await tx.googleConnection.deleteMany({ where: { id: afsId } });
+        await tx.organization.deleteMany({ where: { id: orgId } });
+      });
+    }
+  });
+});
+
+describe('getCampaignDimBreakdown (country/hour)', () => {
+  it('allocates campaign revenue across countries by conversion share, sorted by spend', async () => {
+    const sfx = `dim-${suffix}`;
+    let orgId = '';
+    let buyerId = '';
+    let campaignId = '';
+    let adId = '';
+    await withSystem(async (tx) => {
+      orgId = (await tx.organization.create({ data: { name: 'Dim', slug: sfx } })).id;
+      buyerId = (await tx.user.create({ data: { orgId, email: `${sfx}@a.com`, name: 'B', passwordHash: 'x', role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE } })).id;
+      campaignId = (await tx.campaign.create({ data: { orgId, buyerId, name: 'c', status: 'ACTIVE', keywords: [] } })).id;
+      const set = await tx.adSet.create({ data: { orgId, campaignId, name: 's' } });
+      adId = (await tx.ad.create({ data: { orgId, adSetId: set.id, name: 'a', headline: 'H', primaryText: 'P', redirectId: `rd-${sfx}` } })).id;
+      // Campaign visible revenue today = $75.
+      await tx.adRevenueDaily.create({ data: { orgId, campaignId, adId, day: today, conversions: 4, allocatedUsdMinor: 7500, visibleUsdMinor: 7500, marginUsdMinor: 0, basis: 'conversions' } });
+      // Country cost/conversions: US 3 conv / $20, CA 1 conv / $5.
+      await tx.adStatDimDaily.create({ data: { orgId, adId, campaignId, day: today, dim: 'country', dimValue: 'US', impressions: 1000, clicks: 60, conversions: 3, spendMinor: 2000, spendUsdMinor: 2000, currency: 'USD' } });
+      await tx.adStatDimDaily.create({ data: { orgId, adId, campaignId, day: today, dim: 'country', dimValue: 'CA', impressions: 400, clicks: 20, conversions: 1, spendMinor: 500, spendUsdMinor: 500, currency: 'USD' } });
+    });
+    try {
+      const auth = { userId: buyerId, orgId, role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE };
+      const rows = await getCampaignDimBreakdown(auth, campaignId, { from: today, to: today }, 'country');
+      const by = new Map(rows.map((r) => [r.dimValue, r]));
+      // $75 split 3:1 by conversions → US $56.25, CA $18.75.
+      expect(by.get('US')).toMatchObject({ spendUsd: 20, revenueUsd: 56.25, conversions: 3 });
+      expect(by.get('CA')).toMatchObject({ spendUsd: 5, revenueUsd: 18.75, conversions: 1 });
+      expect(rows[0]?.dimValue).toBe('US'); // sorted by spend desc
+    } finally {
+      await withSystem(async (tx) => {
+        await tx.adStatDimDaily.deleteMany({ where: { orgId } });
+        await tx.adRevenueDaily.deleteMany({ where: { orgId } });
+        await tx.campaign.deleteMany({ where: { orgId } });
         await tx.organization.deleteMany({ where: { id: orgId } });
       });
     }

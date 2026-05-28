@@ -622,6 +622,35 @@ model AdStatsDaily {
   @@map("ad_stats_daily")
 }
 
+/// Per-ad daily FB cost stats broken down by a dimension (country / hour) for the
+/// Analytics drill-down. Cost + the conversion signal come from FB's breakdown
+/// insights; revenue is NOT dimensioned (AdSense AFS has no geo/hour), so the read
+/// layer allocates campaign revenue across buckets by conversion share (D8-style).
+model AdStatDimDaily {
+  id               String   @id @default(uuid()) @db.Uuid
+  orgId            String   @map("org_id") @db.Uuid
+  adId             String   @map("ad_id") @db.Uuid
+  campaignId       String   @map("campaign_id") @db.Uuid
+  day              String
+  /// 'country' | 'hour'
+  dim              String
+  /// The bucket value: an ISO country code ("US") or FB hour bucket ("06:00:00 - 06:59:59").
+  dimValue         String   @map("dim_value")
+  impressions      Int      @default(0)
+  clicks           Int      @default(0)
+  conversions      Int      @default(0)
+  spendMinor       Int      @default(0) @map("spend_minor")
+  spendUsdMinor    Int      @default(0) @map("spend_usd_minor")
+  currency         String   @default("USD")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@unique([adId, day, dim, dimValue])
+  @@index([campaignId, dim, day])
+  @@index([orgId])
+  @@map("ad_stats_dim_daily")
+}
+
 /// Per-campaign per-IST-day gross AdSense revenue — the AFS source of truth. One
 /// channel ↔ one campaign per day (D7), so AdSense per-channel revenue maps to the
 /// campaign holding that channel on `day` (ChannelAssignment.for_day). Native (AdSense

@@ -9,11 +9,14 @@ import {
   type CompanyRollup,
   type DailyPoint,
   type DateRange,
+  type DimStat,
   type MetricTotals,
   type OfferStat,
   ROLES,
+  type StatDim,
   type StatsSummary,
   addBusinessDays,
+  allocateByWeights,
   businessDaysInRange,
   centsToDollars,
   currentBusinessDay,
@@ -319,6 +322,63 @@ export async function getCampaignBreakdown(
       totals,
       adSets,
     };
+  });
+}
+
+/**
+ * Per-dimension (country / hour) breakdown for one campaign over a range. Cost +
+ * the conversion signal come from `ad_stats_dim_daily` (FB breakdown insights);
+ * revenue is allocated from the campaign's total over the range by conversion
+ * share (→ clicks → impressions), the same D8 principle as the ad-level split,
+ * since AFS revenue has no geo/hour dimension. 404 if out of scope; [] if no data.
+ */
+export async function getCampaignDimBreakdown(
+  auth: AuthContext,
+  campaignId: string,
+  range: DateRange,
+  dim: StatDim,
+): Promise<DimStat[]> {
+  return runScoped(auth, async (tx) => {
+    const campaign = await tx.campaign.findUnique({ where: { id: campaignId }, select: { id: true, buyerId: true } });
+    if (!campaign || (auth.role === ROLES.MEDIA_BUYER && campaign.buyerId !== auth.userId)) {
+      throw new AppError(404, 'Campaign not found');
+    }
+    const where = { campaignId, dim, day: { gte: range.from, lte: range.to } };
+    const grouped = await tx.adStatDimDaily.groupBy({
+      by: ['dimValue'],
+      where,
+      _sum: { spendUsdMinor: true, impressions: true, clicks: true, conversions: true },
+    });
+    if (grouped.length === 0) return [];
+
+    const rev = await tx.adRevenueDaily.aggregate({
+      where: { campaignId, day: { gte: range.from, lte: range.to } },
+      _sum: { visibleUsdMinor: true },
+    });
+    const grossCents = rev._sum.visibleUsdMinor ?? 0;
+
+    const convs = grouped.map((g) => g._sum.conversions ?? 0);
+    const clicks = grouped.map((g) => g._sum.clicks ?? 0);
+    const imps = grouped.map((g) => g._sum.impressions ?? 0);
+    const weights = convs.some((c) => c > 0) ? convs : clicks.some((c) => c > 0) ? clicks : imps;
+    const alloc = allocateByWeights(grossCents, weights);
+
+    return grouped
+      .map((g, i): DimStat => {
+        const spendUsd = round2(centsToDollars(g._sum.spendUsdMinor ?? 0));
+        const revenueUsd = round2(centsToDollars(alloc[i] ?? 0));
+        return {
+          dimValue: g.dimValue,
+          spendUsd,
+          revenueUsd,
+          profitUsd: round2(revenueUsd - spendUsd),
+          roi: roiOf(revenueUsd, spendUsd),
+          impressions: imps[i] ?? 0,
+          clicks: clicks[i] ?? 0,
+          conversions: convs[i] ?? 0,
+        };
+      })
+      .sort((a, b) => b.spendUsd - a.spendUsd);
   });
 }
 

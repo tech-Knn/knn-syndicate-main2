@@ -132,6 +132,42 @@ async function pullFbStatsForCampaign(
       });
       n += 1;
     }
+
+    // Best-effort country + hour breakdowns for the Analytics drill-down. Fully
+    // guarded: a breakdown failure (or a test fetcher that ignores `breakdown`)
+    // never affects the core cost/revenue attribution above.
+    for (const dim of ['country', 'hour'] as const) {
+      try {
+        const dimRows = await deps.fetchInsights({
+          fbCampaignId: campaign.fbCampaignId,
+          accountId: account.fbAccountId,
+          accessToken: decryptToken(account.connection.accessTokenEnc),
+          since,
+          until,
+          breakdown: dim,
+        });
+        for (const row of dimRows) {
+          const adId = adByFbId.get(row.fbAdId);
+          if (!adId || !row.dimValue) continue;
+          const rate = await deps.getRate(tx, row.day, account.currency);
+          const data = {
+            impressions: row.impressions,
+            clicks: row.clicks,
+            conversions: row.conversions,
+            spendMinor: row.spendMinor,
+            spendUsdMinor: toUsdMinor(row.spendMinor, rate),
+            currency: account.currency,
+          };
+          await tx.adStatDimDaily.upsert({
+            where: { adId_day_dim_dimValue: { adId, day: row.day, dim, dimValue: row.dimValue } },
+            create: { orgId: campaign.orgId, adId, campaignId: campaign.id, day: row.day, dim, dimValue: row.dimValue, ...data },
+            update: data,
+          });
+        }
+      } catch (err) {
+        console.error(`[attribution] dim '${dim}' pull failed for campaign ${campaign.id}:`, (err as Error).message);
+      }
+    }
     return n;
   });
 }
