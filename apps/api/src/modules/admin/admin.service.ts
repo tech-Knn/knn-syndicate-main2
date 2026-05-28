@@ -126,7 +126,9 @@ export async function addOrgUser(actor: AuthContext, orgId: string, input: AddOr
 /** All companies (super-admin only — route-guarded) with their user counts + modes. */
 export async function listOrganizations(): Promise<OrgRow[]> {
   return withSystem(async (tx) => {
-    const orgs = await tx.organization.findMany({ orderBy: { createdAt: 'asc' } });
+    // The platform org (KNN staff / super-admins) is not a client company — it must
+    // never appear in the Registered companies list.
+    const orgs = await tx.organization.findMany({ where: { isPlatform: false }, orderBy: { createdAt: 'asc' } });
     const byRole = await tx.user.groupBy({ by: ['orgId', 'role'], _count: { _all: true } });
     const pending = await tx.user.groupBy({ by: ['orgId'], where: { status: USER_STATUS.PENDING }, _count: { _all: true } });
     const buyerByOrg = new Map<string, number>();
@@ -233,6 +235,32 @@ export async function listUsers(actor: AuthContext): Promise<PublicUser[]> {
     const where = actor.role === ROLES.SUPER_ADMIN ? {} : { role: { not: ROLES.SUPER_ADMIN } };
     const users = await tx.user.findMany({ where, orderBy: { createdAt: 'desc' } });
     return users.map(toPublicUser);
+  });
+}
+
+/**
+ * Permanently delete a user (super-admin only — route-guarded). Used to clean up a
+ * mistakenly-created account so its email can be reused. Cascades to the user's
+ * refresh tokens, FB connection, and campaigns (all `onDelete: Cascade`); audit rows
+ * keep the (now dangling) actor id as an immutable trail. Guards: cannot delete
+ * yourself, and cannot delete a super-admin.
+ */
+export async function deleteUser(actor: AuthContext, userId: string): Promise<{ id: string }> {
+  if (actor.userId === userId) throw new AppError(400, 'You cannot delete your own account');
+  return withSystem(async (tx) => {
+    const target = await tx.user.findUnique({ where: { id: userId }, select: { id: true, orgId: true, email: true, role: true } });
+    if (!target) throw new AppError(404, 'User not found');
+    if (target.role === ROLES.SUPER_ADMIN) throw new AppError(403, 'Cannot delete a super admin');
+    await writeAudit(tx, {
+      orgId: target.orgId,
+      actorId: actor.userId,
+      action: 'user.deleted',
+      entityType: 'user',
+      entityId: userId,
+      details: { email: target.email, role: target.role },
+    });
+    await tx.user.delete({ where: { id: userId } });
+    return { id: userId };
   });
 }
 

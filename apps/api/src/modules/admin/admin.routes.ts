@@ -14,6 +14,7 @@ import {
 import {
   addOrgUser,
   createOrganization,
+  deleteUser,
   getActingOrg,
   listOrganizations,
   listUsers,
@@ -130,6 +131,20 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         const { action } = userActionSchema.parse(req.body);
         const user = await setUserStatus(req.auth, req.params.id, action);
         return reply.send({ user });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Permanently delete a user (super-admin only) — frees the email for re-use.
+  app.delete<{ Params: { id: string } }>(
+    '/users/:id',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.send(await deleteUser(req.auth, req.params.id));
       } catch (err) {
         return handleRouteError(err, reply);
       }

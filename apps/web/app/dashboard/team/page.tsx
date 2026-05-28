@@ -96,6 +96,18 @@ export default function TeamPage() {
     }
   };
 
+  // Super-admin only: permanently delete a user (frees their email for re-use).
+  const remove = async (m: PublicUser): Promise<void> => {
+    if (!window.confirm(`Permanently delete ${m.name} (${m.email})? This cannot be undone and frees their email to re-use.`)) return;
+    setBusy(m.id);
+    try {
+      await admin.deleteUser(m.id);
+      await loadMembers();
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className={styles.page}>
       <div className={styles.head}>
@@ -212,6 +224,16 @@ export default function TeamPage() {
                               {a.label}
                             </button>
                           ))}
+                        {user?.role === 'SUPER_ADMIN' && m.id !== user?.id && m.role !== 'SUPER_ADMIN' && (
+                          <button
+                            type="button"
+                            className={`${styles.actionBtn} ${styles.actionDanger}`}
+                            disabled={busy === m.id}
+                            onClick={() => void remove(m)}
+                          >
+                            Remove
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

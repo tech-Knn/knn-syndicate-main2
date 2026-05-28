@@ -358,6 +358,8 @@ export const admin = {
         }),
       )
     ).user,
+  deleteUser: async (id: string): Promise<{ id: string }> =>
+    parse<{ id: string }>(await authedFetch(`/api/admin/users/${id}`, { method: 'DELETE' })),
   channels: async (): Promise<ChannelRow[]> =>
     (await parse<{ channels: ChannelRow[] }>(await authedFetch('/api/admin/channels'))).channels,
   channelSummary: async (): Promise<ChannelSummary> => parse(await authedFetch('/api/admin/channel-summary')),

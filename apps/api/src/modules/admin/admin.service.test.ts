@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { prisma, withSystem } from '@knn/db';
 import { ROLES, USER_STATUS } from '@knn/shared';
 import type { AppError } from '../../lib/errors.js';
-import { addOrgUser, listUsers } from './admin.service.js';
+import { addOrgUser, deleteUser, listOrganizations, listUsers } from './admin.service.js';
 
 // Tenant-isolation regression: a COMPANY_ADMIN must never see — or be able to act
 // on — a SUPER_ADMIN, even when one shares their org (e.g. the platform org). And
@@ -73,5 +73,39 @@ describe('addOrgUser guards', () => {
     expect(u.orgId).toBe(clientOrgId);
     expect(u.status).toBe(USER_STATUS.ACTIVE);
     expect(clientAdminId).toBeTruthy();
+  });
+});
+
+describe('listOrganizations', () => {
+  it('excludes the platform org from the registered-companies list', async () => {
+    const orgs = await listOrganizations();
+    expect(orgs.some((o) => o.id === platformOrgId)).toBe(false);
+    expect(orgs.some((o) => o.id === clientOrgId)).toBe(true);
+  });
+});
+
+describe('deleteUser', () => {
+  it('refuses to delete yourself', async () => {
+    await expect(deleteUser(superAuth(), superId)).rejects.toMatchObject({ statusCode: 400 } satisfies Partial<AppError>);
+  });
+
+  it('refuses to delete a super admin', async () => {
+    const other = await withSystem((tx) =>
+      tx.user.create({ data: { orgId: platformOrgId, email: `svc-super2-${suffix}@a.com`, name: 'Super2', passwordHash: 'x', role: ROLES.SUPER_ADMIN, status: USER_STATUS.ACTIVE } }),
+    );
+    await expect(deleteUser(superAuth(), other.id)).rejects.toMatchObject({ statusCode: 403 } satisfies Partial<AppError>);
+    await withSystem((tx) => tx.user.delete({ where: { id: other.id } }));
+  });
+
+  it('permanently deletes a normal user and frees the email', async () => {
+    const email = `svc-del-${suffix}@a.com`;
+    const u = await addOrgUser(superAuth(), clientOrgId, { name: 'To Delete', email, password: PW, role: ROLES.MEDIA_BUYER });
+    const res = await deleteUser(superAuth(), u.id);
+    expect(res.id).toBe(u.id);
+    const gone = await withSystem((tx) => tx.user.findUnique({ where: { id: u.id } }));
+    expect(gone).toBeNull();
+    // Email is free to re-use.
+    const again = await addOrgUser(superAuth(), clientOrgId, { name: 'Reused', email, password: PW, role: ROLES.MEDIA_BUYER });
+    expect(again.email).toBe(email);
   });
 });
