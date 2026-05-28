@@ -64,6 +64,7 @@ async function main(): Promise<void> {
   const days = Array.from({ length: DAYS }, (_, i) => addBusinessDays(today, -(DAYS - 1 - i)));
 
   await withSystem(async (tx) => {
+    await tx.channel.deleteMany({ where: { channelId: { startsWith: `demo-${SLUG}-` } } });
     await tx.organization.deleteMany({ where: { slug: SLUG } });
     const org = await tx.organization.create({ data: { name: 'Demo Co', slug: SLUG } });
     const buyer = await tx.user.create({
@@ -77,16 +78,12 @@ async function main(): Promise<void> {
       },
     });
 
-    let chSuffix = 0;
     for (const spec of SPECS) {
-      chSuffix += 1;
-      const channel = await tx.channel.create({
-        data: { channelId: `demo-${SLUG}-${chSuffix}-${Date.now()}`, label: spec.channelLabel, status: 'ASSIGNED' },
-      });
+      // No global Channel rows: `channels` has no org scoping, so seeded channels would
+      // pollute the worker's cross-org channel-pool tests. (channelLabel is API-tested.)
       const campaign = await tx.campaign.create({
-        data: { orgId: org.id, buyerId: buyer.id, name: spec.name, status: 'ACTIVE', channelId: channel.id },
+        data: { orgId: org.id, buyerId: buyer.id, name: spec.name, status: 'ACTIVE' },
       });
-      await tx.channel.update({ where: { id: channel.id }, data: { currentCampaignId: campaign.id } });
 
       for (const setSpec of spec.adSets) {
         const adSet = await tx.adSet.create({ data: { orgId: org.id, campaignId: campaign.id, name: setSpec.name } });
