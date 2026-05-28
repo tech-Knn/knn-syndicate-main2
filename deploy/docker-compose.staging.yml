@@ -81,12 +81,10 @@ services:
       retries: 6
       start_period: 15s
 
-  redirect:
-    <<: *app
-    command: ['node', 'apps/redirect/dist/index.js']
-    depends_on:
-      redis:
-        condition: service_healthy
+  # NOTE: the public redirect engine is the Cloudflare Worker (apps/redirect/worker.ts
+  # on go.*, deployed via wrangler), NOT an origin service. The legacy Node redirect
+  # was retired (task #18) so a stray DNS/route flip to this box can't silently serve
+  # unmonetized, param-less 302s. REDIRECT_DOMAIN must point at the Worker (go.*).
 
   worker:
     <<: *app
@@ -123,7 +121,6 @@ services:
       - api
       - web
       - article
-      - redirect
 
 volumes:
   knn_pgdata: {}

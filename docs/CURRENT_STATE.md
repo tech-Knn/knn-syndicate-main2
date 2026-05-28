@@ -35,7 +35,9 @@ resolves to CF Worker IPs, not the origin). `/go/:id` → KV read (`redirect:{id
 `resolveRedirect` (`src/resolve.ts`, 11 tests): paid (`fbclid`/`utm_source`) → 302 to the content page
 with `rc`/`ch`/`rac`/`styleId` + minted `txid`; organic/paused/unknown → fallback; weighted split
 supported. **Benchmarked ~20–25ms steady-state from EU** (Worker compute sub-1ms + KV 1–5ms; gate met).
-`workers_dev=false`. Legacy Node redirect on the box is now superseded (retire from compose later).
+`workers_dev=false`. **Legacy Node redirect RETIRED (task #18):** removed from the staging
+compose + Caddy and deleted from source — `@knn/redirect` is Worker-only now (deploys via `wrangler`,
+no origin `build`/`start`), so a stray route flip to the box can't serve unmonetized 302s.
 **Remaining (Phase 8):** the origin→KV write-through sync (`redirect:{id}` config per ad) on launch +
 a CF API token (Workers KV Edit) on the origin. One test KV key `redirect:test` exists (benchmark).
 

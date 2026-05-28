@@ -37,6 +37,7 @@
 	encode gzip zstd
 }
 
-{$REDIRECT_HOST} {
-	reverse_proxy redirect:3002
-}
+# NOTE: the redirect domain (go.*) is served by the Cloudflare Worker
+# (apps/redirect/worker.ts), NOT this origin — there is intentionally NO redirect
+# host block here. Retiring it (task #18) means a stray route flip to the box fails
+# loud (no cert/host) instead of silently serving unmonetized 302s.

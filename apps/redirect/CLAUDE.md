@@ -13,8 +13,12 @@ through-synced from the origin (Postgres = source of truth) on launch/update. Ho
 - `src/resolve.ts` — the pure, runtime-agnostic decision (tested in `resolve.test.ts`).
 - `src/worker.ts` + `wrangler.toml` — the Worker (the deploy target). KV eventually-consistent
   (config propagates in seconds — fine; configs change rarely).
-- `src/app.ts` / `index.ts` — the legacy Node service (still on the box); **transitional** — retire
-  once the Worker is live on `go.*` and DNS/route is switched.
+- **Worker-only** (task #18): the legacy Node origin service (`app.ts`/`index.ts`) was retired now
+  the Worker is live on `go.*` — it's gone from the origin docker-compose + Caddy so a stray route
+  flip to the box can't serve unmonetized 302s. This package no longer has a `build`/`start`; it's
+  linted/typechecked/tested in the monorepo and deployed separately with wrangler.
+  Local dev: `pnpm --filter @knn/redirect dev:worker` (`wrangler dev`); deploy: `… deploy`
+  (`wrangler deploy`). `REDIRECT_DOMAIN` must point at the Worker host (`go.*`), not the origin.
 
 ## Invariants
 
@@ -34,4 +38,4 @@ through-synced from the origin (Postgres = source of truth) on launch/update. Ho
 - Don't add heavy middleware or Prisma to the cached path. Don't import the FB/AdSense SDKs here.
 - Don't log PII or full query strings at info level in prod.
 
-Phase 0 ships only health + a placeholder `/go/:id`. Real logic = Phase 7.
+The Worker (`/go/:id`: KV read → `resolveRedirect` → 302) is live on `go.10linesabout.com` (Phase 7).
