@@ -213,6 +213,28 @@
   display: flex;
   gap: 0.5rem;
 }
+.afsList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.9rem;
+}
+.afsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.afsRowRight {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
 .adsRangeBox {
   display: flex;
   flex-direction: column;

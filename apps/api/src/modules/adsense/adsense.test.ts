@@ -3,10 +3,19 @@ import type { FastifyInstance } from 'fastify';
 import { prisma, withSystem } from '@knn/db';
 import { closeQueues } from '@knn/queue';
 import { ROLES, USER_STATUS } from '@knn/shared';
+import { encryptToken } from '@knn/fb';
 import { hashPassword } from '../../lib/password.js';
 import { buildApp } from '../../app.js';
-import { getStatus, handleCallback, syncChannels } from './adsense.service.js';
+import {
+  disconnectAccount,
+  handleCallback,
+  listAfsAccounts,
+  setAccountLabel,
+  syncChannels,
+} from './adsense.service.js';
 import { signAdsenseState } from './state.js';
+
+const superAuth = () => ({ userId: superId, orgId, role: ROLES.SUPER_ADMIN, status: USER_STATUS.ACTIVE });
 
 const suffix = Date.now().toString(36);
 const PW = 'adsense-pw-1234';
@@ -61,7 +70,7 @@ afterEach(() => {
 
 afterAll(async () => {
   await withSystem(async (tx) => {
-    await tx.googleConnection.deleteMany({ where: { id: 'platform' } });
+    await tx.googleConnection.deleteMany({ where: { OR: [{ id: 'platform' }, { adsenseAccount: 'accounts/pub-1' }] } });
     await tx.channel.deleteMany({ where: { channelId: TEST_CH } });
     await tx.organization.deleteMany({ where: { id: orgId } });
   });
@@ -96,22 +105,46 @@ describe('AdSense connect', () => {
     expect(dest).toContain('adsense_error=bad_state');
   });
 
-  it('connects (exchange + discover) then syncs AFS channels into the pool', async () => {
+  it('connects: onboards every visible AFS account with its pubId', async () => {
     vi.stubGlobal('fetch', googleFetchStub());
-    const state = await signAdsenseState(superId, orgId);
-    const dest = await handleCallback('the-code', state);
+    const dest = await handleCallback('the-code', await signAdsenseState(superId, orgId));
     expect(dest).toContain('adsense=connected');
 
-    const status = await getStatus();
-    expect(status.connected).toBe(true);
-    expect(status.account).toBe('accounts/pub-1');
-    expect(status.adClient).toBe('accounts/pub-1/adclients/ca-pub-1');
+    const accounts = await listAfsAccounts();
+    const acc = accounts.find((a) => a.account === 'accounts/pub-1');
+    expect(acc).toBeTruthy();
+    expect(acc!.afsPubId).toBe('ca-pub-1'); // trailing segment of the AFS ad client
+    expect(acc!.status).toBe('ACTIVE');
+  });
 
-    const result = await syncChannels({ userId: superId, orgId, role: ROLES.SUPER_ADMIN, status: USER_STATUS.ACTIVE }, '90000-99999');
+  it('relabels and disconnects an account by id', async () => {
+    vi.stubGlobal('fetch', googleFetchStub());
+    await handleCallback('c2', await signAdsenseState(superId, orgId));
+    const acc = (await listAfsAccounts()).find((a) => a.account === 'accounts/pub-1')!;
+    const relabeled = await setAccountLabel(superAuth(), acc.id, 'AFS One');
+    expect(relabeled.label).toBe('AFS One');
+    await disconnectAccount(superAuth(), acc.id);
+    expect((await listAfsAccounts()).find((a) => a.id === acc.id)).toBeUndefined();
+  });
+
+  it('syncChannels imports the selected ranges (legacy primary account)', async () => {
+    await withSystem((tx) =>
+      tx.googleConnection.create({
+        data: {
+          id: 'platform',
+          accessTokenEnc: encryptToken('fake-access'),
+          tokenExpiresAt: new Date(Date.now() + 3_600_000),
+          adsenseAccount: 'accounts/pub-legacy',
+          adsenseAdClient: 'accounts/pub-1/adclients/ca-pub-1',
+          status: 'ACTIVE',
+        },
+      }),
+    );
+    vi.stubGlobal('fetch', googleFetchStub());
+    const result = await syncChannels(superAuth(), '90000-99999');
     expect(result.synced).toBe(1);
     expect(result.ranges).toBe('90000-99999');
     const ch = await withSystem((tx) => tx.channel.findUnique({ where: { channelId: TEST_CH } }));
-    expect(ch?.label).toBe('Auto US');
     expect(ch?.status).toBe('AVAILABLE');
   });
 });

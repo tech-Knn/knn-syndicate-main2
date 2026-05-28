@@ -12,7 +12,7 @@ import {
 } from '@knn/shared';
 import { Badge, Button, Card, Segmented, Skeleton } from '@/components/ui';
 import { adsense, admin, stats } from '@/lib/api';
-import { type AdsenseStatus } from '@/lib/types';
+import { type AdsenseStatus, type AfsAccountRow } from '@/lib/types';
 import { useAuth } from '../../providers';
 import styles from '../admin.module.css';
 
@@ -39,9 +39,19 @@ export default function PlatformPage() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [savedAt, setSavedAt] = useState(false);
   const [ads, setAds] = useState<AdsenseStatus | null>(null);
+  const [afsAccounts, setAfsAccounts] = useState<AfsAccountRow[] | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [adsNote, setAdsNote] = useState<string | null>(null);
   const [rangeInput, setRangeInput] = useState('');
+
+  const loadAfsAccounts = useCallback(() => {
+    void adsense.accounts().then(setAfsAccounts).catch(() => setAfsAccounts([]));
+  }, []);
+
+  const disconnectAfs = async (id: string): Promise<void> => {
+    await adsense.disconnectAccount(id).catch(() => undefined);
+    loadAfsAccounts();
+  };
 
   useEffect(() => {
     if (user && user.role !== 'SUPER_ADMIN') router.replace('/dashboard');
@@ -111,7 +121,8 @@ export default function PlatformPage() {
         if (s.channelRanges) setRangeInput(s.channelRanges);
       })
       .catch(() => setAds({ connected: false }));
-  }, [loadChannels]);
+    loadAfsAccounts();
+  }, [loadChannels, loadAfsAccounts]);
 
   const persistCut = async (orgId: string): Promise<void> => {
     const pct = Number(cuts[orgId]);
@@ -227,6 +238,25 @@ export default function PlatformPage() {
           )}
         </div>
         {adsNote && <p className={styles.adsNote}>{adsNote}</p>}
+        {afsAccounts && afsAccounts.length > 0 && (
+          <div className={styles.afsList}>
+            {afsAccounts.map((a) => (
+              <div key={a.id} className={styles.afsRow}>
+                <div>
+                  <span className={styles.name}>{a.label ?? a.afsPubId ?? a.account ?? 'AFS account'}</span>
+                  {a.afsPubId && <span className={styles.subtle}> · {a.afsPubId}</span>}
+                  {a.account && <div className={styles.subtle}>{a.account}</div>}
+                </div>
+                <div className={styles.afsRowRight}>
+                  <Badge tone={a.status === 'CONNECTION_BROKEN' ? 'danger' : 'success'}>{a.status.toLowerCase()}</Badge>
+                  <button type="button" className={`${styles.actionBtn} ${styles.actionDanger}`} onClick={() => void disconnectAfs(a.id)}>
+                    Disconnect
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {ads?.connected ? (
           <div className={styles.adsBody}>
             <div className={styles.adsMeta}>

@@ -1,6 +1,7 @@
 import {
   type AdminOrg,
   type AdsenseStatus,
+  type AfsAccountRow,
   type Campaign,
   type ConnectionStatus,
   type FbAccount,
@@ -368,6 +369,21 @@ export const stats = {
 
 export const adsense = {
   status: async (): Promise<AdsenseStatus> => parse(await authedFetch('/api/adsense/status')),
+  accounts: async (): Promise<AfsAccountRow[]> =>
+    (await parse<{ accounts: AfsAccountRow[] }>(await authedFetch('/api/adsense/accounts'))).accounts,
+  setAccountLabel: async (id: string, label: string): Promise<AfsAccountRow> =>
+    (
+      await parse<{ account: AfsAccountRow }>(
+        await authedFetch(`/api/adsense/accounts/${id}`, {
+          method: 'PATCH',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ label }),
+        }),
+      )
+    ).account,
+  disconnectAccount: async (id: string): Promise<void> => {
+    await authedFetch(`/api/adsense/accounts/${id}`, { method: 'DELETE' });
+  },
   authUrl: async (): Promise<{ url: string }> => parse(await authedFetch('/api/adsense/auth-url')),
   sync: async (ranges?: string): Promise<{ synced: number; added: number; account: string | null; ranges: string }> =>
     parse(

@@ -159,6 +159,16 @@ export interface PublicUser {
 
 export type UserAction = 'approve' | 'reject' | 'suspend' | 'reactivate';
 
+export interface AfsAccountRow {
+  id: string;
+  label: string | null;
+  afsPubId: string | null;
+  account: string | null;
+  email: string | null;
+  status: string;
+  connectedAt: string;
+}
+
 export interface AdsenseStatus {
   connected: boolean;
   email?: string | null;

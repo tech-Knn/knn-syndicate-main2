@@ -3,7 +3,16 @@ import { env } from '@knn/config';
 import { ROLES } from '@knn/shared';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate, requireRole } from '../../middleware/authenticate.js';
-import { disconnect, getAuthUrl, getStatus, handleCallback, syncChannels } from './adsense.service.js';
+import {
+  disconnect,
+  disconnectAccount,
+  getAuthUrl,
+  getStatus,
+  handleCallback,
+  listAfsAccounts,
+  setAccountLabel,
+  syncChannels,
+} from './adsense.service.js';
 
 const superOnly = [authenticate, requireRole(ROLES.SUPER_ADMIN)];
 
@@ -25,6 +34,37 @@ export async function adsenseRoutes(app: FastifyInstance): Promise<void> {
   app.get('/status', { preHandler: superOnly }, async (req, reply) => {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     return reply.send(await getStatus());
+  });
+
+  // All connected AFS accounts (multi-account, Phase B).
+  app.get('/accounts', { preHandler: superOnly }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    return reply.send({ accounts: await listAfsAccounts() });
+  });
+
+  app.patch<{ Params: { id: string }; Body: { label?: string } }>(
+    '/accounts/:id',
+    { preHandler: superOnly },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const label = (req.body?.label ?? '').trim();
+        if (!label) return reply.code(400).send({ error: 'Label required' });
+        return reply.send({ account: await setAccountLabel(req.auth, req.params.id, label) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>('/accounts/:id', { preHandler: superOnly }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      await disconnectAccount(req.auth, req.params.id);
+      return reply.code(204).send();
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
   });
 
   app.post<{ Body: { ranges?: string } }>('/sync', { preHandler: superOnly }, async (req, reply) => {

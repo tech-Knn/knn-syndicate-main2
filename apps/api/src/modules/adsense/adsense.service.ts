@@ -74,60 +74,127 @@ export async function handleCallback(code: string, state: string): Promise<strin
   }
   try {
     const tokens = await exchangeGoogleCode(code);
-    // Best-effort account + AFS ad-client discovery (may fail before AFS access is granted).
-    let account: string | undefined;
-    let adClient: string | undefined;
+    // Onboard EVERY AdSense account visible to this Google login (a login can hold
+    // several = the platform's AFS 1/2/3). Each becomes/updates an AfsAccount row keyed
+    // by its account resource, with its AFS ad client + pubId. The shared login token is
+    // stored on each. Re-connecting updates in place (the legacy `platform` row matches
+    // by its account and is preserved + enriched).
+    let accounts: { name: string; displayName?: string }[] = [];
     try {
-      account = (await listAccounts(tokens.accessToken))[0]?.name;
-      if (account) {
-        const clients = await listAdClients(tokens.accessToken, account);
-        adClient = (clients.find((c) => c.productCode === 'AFS') ?? clients[0])?.name;
-      }
+      accounts = await listAccounts(tokens.accessToken);
     } catch {
-      /* connect anyway; sync later once AFS access lands */
+      /* token can't list accounts — nothing to onboard */
     }
+    if (accounts.length === 0) return back('adsense_error=no_accounts');
+
     await withSystem(async (tx) => {
-      await tx.googleConnection.upsert({
-        where: { id: PLATFORM },
-        create: {
-          id: PLATFORM,
+      for (const acc of accounts) {
+        let adClient: string | undefined;
+        try {
+          const clients = await listAdClients(tokens.accessToken, acc.name);
+          adClient = (clients.find((c) => c.productCode === 'AFS') ?? clients[0])?.name;
+        } catch {
+          /* AFS access not granted yet — record the account, resolve the client later */
+        }
+        const afsPubId = adClient ? (adClient.split('/').pop() ?? null) : null;
+        const existing = await tx.googleConnection.findFirst({ where: { adsenseAccount: acc.name } });
+        const common = {
           googleEmail: tokens.email ?? null,
           accessTokenEnc: encryptToken(tokens.accessToken),
-          refreshTokenEnc: tokens.refreshToken ? encryptToken(tokens.refreshToken) : null,
           tokenExpiresAt: new Date(Date.now() + tokens.expiresInSec * 1000),
           scopes: tokens.scope,
-          adsenseAccount: account ?? null,
+          adsenseAccount: acc.name,
           adsenseAdClient: adClient ?? null,
-          status: 'ACTIVE',
-          connectedById: userId,
-        },
-        update: {
-          googleEmail: tokens.email ?? undefined,
-          accessTokenEnc: encryptToken(tokens.accessToken),
-          // Only overwrite the refresh token when Google returns a new one.
-          ...(tokens.refreshToken ? { refreshTokenEnc: encryptToken(tokens.refreshToken) } : {}),
-          tokenExpiresAt: new Date(Date.now() + tokens.expiresInSec * 1000),
-          scopes: tokens.scope,
-          ...(account ? { adsenseAccount: account } : {}),
-          ...(adClient ? { adsenseAdClient: adClient } : {}),
+          afsPubId,
           status: 'ACTIVE',
           lastError: null,
           connectedById: userId,
-        },
-      });
+        };
+        if (existing) {
+          await tx.googleConnection.update({
+            where: { id: existing.id },
+            data: {
+              ...common,
+              label: existing.label ?? acc.displayName ?? afsPubId ?? acc.name,
+              ...(tokens.refreshToken ? { refreshTokenEnc: encryptToken(tokens.refreshToken) } : {}),
+            },
+          });
+        } else {
+          await tx.googleConnection.create({
+            data: {
+              ...common,
+              label: acc.displayName ?? afsPubId ?? acc.name,
+              refreshTokenEnc: tokens.refreshToken ? encryptToken(tokens.refreshToken) : null,
+            },
+          });
+        }
+      }
       await writeAudit(tx, {
         orgId,
         actorId: userId,
         action: 'adsense.connected',
         entityType: 'google_connection',
-        entityId: PLATFORM,
-        details: { account: account ?? null },
+        entityId: 'multi',
+        details: { accounts: accounts.length },
       });
     });
     return back('adsense=connected');
   } catch {
     return back('adsense_error=exchange_failed');
   }
+}
+
+export interface AfsAccountRow {
+  id: string;
+  label: string | null;
+  afsPubId: string | null;
+  account: string | null;
+  email: string | null;
+  status: string;
+  connectedAt: string;
+}
+
+function toAfsRow(c: {
+  id: string;
+  label: string | null;
+  afsPubId: string | null;
+  adsenseAccount: string | null;
+  googleEmail: string | null;
+  status: string;
+  connectedAt: Date;
+}): AfsAccountRow {
+  return {
+    id: c.id,
+    label: c.label,
+    afsPubId: c.afsPubId,
+    account: c.adsenseAccount,
+    email: c.googleEmail,
+    status: c.status,
+    connectedAt: c.connectedAt.toISOString(),
+  };
+}
+
+/** All connected AFS accounts (super-admin view). */
+export async function listAfsAccounts(): Promise<AfsAccountRow[]> {
+  return withSystem(async (tx) => {
+    const rows = await tx.googleConnection.findMany({ orderBy: { connectedAt: 'asc' } });
+    return rows.map(toAfsRow);
+  });
+}
+
+export async function setAccountLabel(actor: AuthContext, id: string, label: string): Promise<AfsAccountRow> {
+  return withSystem(async (tx) => {
+    const updated = await tx.googleConnection.update({ where: { id }, data: { label } });
+    await writeAudit(tx, { orgId: actor.orgId, actorId: actor.userId, action: 'adsense.account.relabeled', entityType: 'google_connection', entityId: id });
+    return toAfsRow(updated);
+  });
+}
+
+export async function disconnectAccount(actor: AuthContext, id: string): Promise<void> {
+  await withSystem(async (tx) => {
+    await tx.googleConnection.deleteMany({ where: { id } });
+    await writeAudit(tx, { orgId: actor.orgId, actorId: actor.userId, action: 'adsense.disconnected', entityType: 'google_connection', entityId: id });
+  });
 }
 
 interface ConnRow {
