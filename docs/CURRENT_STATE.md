@@ -407,6 +407,30 @@ via the worker's daily token-refresh job.
   self-verify the authed flow: the staging super-admin password is custom and I won't fabricate a
   user in the shared DB.)
 
+## Admin + Facebook rework (2026-05-29, deployed to staging)
+
+- **Tenant-isolation fix:** a `COMPANY_ADMIN` can no longer see/act on a `SUPER_ADMIN`
+  (`listUsers` filters super-admins for non-super actors); client users can't be added to the
+  platform org (`isPlatform`); platform org hidden from the Companies list.
+- **Super-admin user delete:** `DELETE /api/admin/users/:id` (`deleteUser`) + Team-page **Remove**
+  button — frees an email for re-use; guards against deleting yourself/a super-admin.
+- **Companies tab** now: expandable per-company **member details** (`GET /organizations/:id/users`),
+  **Revenue-by-company + platform cut%** (moved off Platform; explicit **Save**, not silent on-blur),
+  and a **Recent activity** log (`GET /api/admin/audit`, actor email + org resolved). Platform tab =
+  AdSense + channel pool + settings only.
+- **Facebook = multiple profiles per user** (migration `20260529000000_fb_multi_profile`: dropped
+  `fb_connections.user_id` unique, added `fb_name` + `(user_id, fb_user_id)` unique). Profile-scoped
+  API: `/profiles` (own), `/profiles/all` (super-admin oversight — every profile + owner/company),
+  `/profiles/:id/{sync,accounts,pages}`, `DELETE /profiles/:id`. Aggregated `/accounts` + `/pages`
+  still feed the launcher. UI shows profiles by **name**, expandable to ad accounts→pixels + pages;
+  connect-multiple; super-admin sees the platform-wide list. **Re-sync also backfills the profile
+  name** (for profiles connected before names were stored).
+- **Token resolution hardened:** launch / attribution / CAPI dispatch / meta-rejection now use the
+  token of the connection that **owns the campaign's ad account** (not "the buyer's only
+  connection") — correct now that a buyer may have several profiles.
+- Gate: api 123 + worker 41 tests, all 12 packages typecheck + lint, web build — green. Migration
+  applied clean on staging (existing profile `1319558173572761` intact).
+
 ## New setup step
 
 - After `pnpm db:migrate`, run **`pnpm db:bootstrap`** once per environment to create the
