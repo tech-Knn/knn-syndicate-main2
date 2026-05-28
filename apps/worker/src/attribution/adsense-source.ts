@@ -3,33 +3,32 @@ import { type ChannelDayRevenue, fetchChannelReport, refreshGoogleToken } from '
 import { decryptToken, encryptToken } from '@knn/fb';
 
 /**
- * Live AFS revenue source for attribution (D8). Reads the platform's single
- * `GoogleConnection` (the super-admin's AdSense connect), refreshes the short-lived
- * access token on demand from the offline refresh token, and pulls the per-channel
- * daily report. Designed to be the DEFAULT `fetchAdsense`:
- *  - Not connected (or no account / CONNECTION_BROKEN) → returns [] (true no-op, so the
- *    dormant state and the test DB both behave like there's no AdSense).
- *  - Connected but the report fails (e.g. AFS access not yet granted, or a 5xx) → log +
- *    return [] so a transient AdSense failure can't fail the whole attribution run
- *    (FB cost stats still populate). It self-heals once access lands.
+ * Live **multi-account** AFS revenue source for attribution (Phase F). Each offer's
+ * channels belong to its website's AFS account, so a campaign can earn across several
+ * accounts — this pulls each account's channels with ITS OWN token and merges. Reads the
+ * `GoogleConnection` rows (the super-admin's AdSense connects), refreshing each short-lived
+ * access token on demand. Designed to be the DEFAULT `fetchAdsense`:
+ *  - An account not connected / no adsenseAccount / CONNECTION_BROKEN → skipped (so the
+ *    dormant state and the test DB behave like there's no AdSense).
+ *  - An account's report fails (AFS access not granted, 5xx) → logged + skipped, so one
+ *    bad account can't fail the whole attribution run (FB cost + other accounts still land).
  */
 
-const PLATFORM = 'platform';
-
 interface ConnRow {
+  id: string;
   accessTokenEnc: string;
   refreshTokenEnc: string | null;
   tokenExpiresAt: Date;
 }
 
-async function freshToken(c: ConnRow): Promise<string | null> {
+async function freshTokenFor(c: ConnRow): Promise<string | null> {
   if (c.tokenExpiresAt.getTime() - 60_000 > Date.now()) return decryptToken(c.accessTokenEnc);
   if (!c.refreshTokenEnc) return null;
   try {
     const r = await refreshGoogleToken(decryptToken(c.refreshTokenEnc));
     await withSystem((tx) =>
       tx.googleConnection.update({
-        where: { id: PLATFORM },
+        where: { id: c.id },
         data: {
           accessTokenEnc: encryptToken(r.accessToken),
           tokenExpiresAt: new Date(Date.now() + r.expiresInSec * 1000),
@@ -42,7 +41,7 @@ async function freshToken(c: ConnRow): Promise<string | null> {
   } catch (err) {
     await withSystem((tx) =>
       tx.googleConnection.update({
-        where: { id: PLATFORM },
+        where: { id: c.id },
         data: { status: 'CONNECTION_BROKEN', lastError: String(err).slice(0, 200) },
       }),
     ).catch(() => undefined);
@@ -53,22 +52,28 @@ async function freshToken(c: ConnRow): Promise<string | null> {
 export async function liveAdsenseFetch(params: {
   since: string;
   until: string;
-  channelIds: string[];
+  /** Channels grouped by their AFS account, so each is pulled with the right token. */
+  accounts: { afsAccountId: string; channelIds: string[] }[];
 }): Promise<ChannelDayRevenue[]> {
-  const conn = await withSystem((tx) => tx.googleConnection.findUnique({ where: { id: PLATFORM } }));
-  if (!conn || !conn.adsenseAccount || conn.status !== 'ACTIVE') return [];
-  const token = await freshToken(conn);
-  if (!token) return [];
-  try {
-    return await fetchChannelReport({
-      accessToken: token,
-      account: conn.adsenseAccount,
-      since: params.since,
-      until: params.until,
-      channelIds: params.channelIds,
-    });
-  } catch (err) {
-    console.error('[attribution] AdSense revenue pull failed:', String(err).slice(0, 200));
-    return [];
+  const out: ChannelDayRevenue[] = [];
+  for (const acc of params.accounts) {
+    if (acc.channelIds.length === 0) continue;
+    const conn = await withSystem((tx) => tx.googleConnection.findUnique({ where: { id: acc.afsAccountId } }));
+    if (!conn || !conn.adsenseAccount || conn.status !== 'ACTIVE') continue;
+    const token = await freshTokenFor(conn);
+    if (!token) continue;
+    try {
+      const rows = await fetchChannelReport({
+        accessToken: token,
+        account: conn.adsenseAccount,
+        since: params.since,
+        until: params.until,
+        channelIds: acc.channelIds,
+      });
+      out.push(...rows);
+    } catch (err) {
+      console.error(`[attribution] AdSense revenue pull failed for account ${acc.afsAccountId}:`, String(err).slice(0, 200));
+    }
   }
+  return out;
 }

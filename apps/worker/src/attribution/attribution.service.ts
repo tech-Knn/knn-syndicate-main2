@@ -29,8 +29,13 @@ import { ensureFxRatesForDays, getUsdRate } from './fx.service.js';
 
 export interface AttributionDeps {
   fetchInsights: typeof fetchAdInsights;
-  /** AFS revenue source. Dormant by default (AFS API access is OPEN_QUESTIONS #4). */
-  fetchAdsense?: (params: { since: string; until: string; channelIds: string[] }) => Promise<ChannelDayRevenue[]>;
+  /** AFS revenue source — channels grouped by AFS account (Phase F multi-account). Dormant
+   *  by default until a SUPER_ADMIN connects AdSense (AFS API access is OPEN_QUESTIONS #4). */
+  fetchAdsense?: (params: {
+    since: string;
+    until: string;
+    accounts: { afsAccountId: string; channelIds: string[] }[];
+  }) => Promise<ChannelDayRevenue[]>;
   getRate: (tx: TxClient, day: string, currency: string) => Promise<number>;
   /** Refresh FX rates for the days before pulling (best-effort; omitted in tests). */
   ensureFx?: (days: string[]) => Promise<void>;
@@ -159,21 +164,44 @@ export async function pullFbStats(
 
 // ── 2. AdSense revenue → campaign_revenue_daily ───────────────────────────────
 
+interface CampaignDayRollup {
+  orgId: string;
+  campaignId: string;
+  day: string;
+  channelRef: string;
+  revenueMinor: number;
+  revenueUsdMinor: number;
+  afsClicks: number;
+  currencies: Set<string>;
+}
+
+/** The "platform" AFS account for legacy global channels (domain_id IS NULL). */
+async function defaultAfsAccountId(): Promise<string | null> {
+  return withSystem(async (tx) => {
+    const platform = await tx.googleConnection.findUnique({ where: { id: 'platform' }, select: { id: true } });
+    if (platform) return platform.id;
+    const all = await tx.googleConnection.findMany({ select: { id: true }, take: 2 });
+    return all.length === 1 ? all[0]!.id : null;
+  });
+}
+
 /**
- * Pull AFS revenue per channel for [since, until] and record it on the campaign that
- * held each channel that day. Dormant when no `fetchAdsense` is wired (AFS access is
- * OPEN_QUESTIONS #4) — returns 0 without touching anything.
+ * Pull AFS revenue per channel for [since, until] and record it (Phase F): per-offer in
+ * `offer_revenue_daily` (each offer's own channel), and summed into `campaign_revenue_daily`
+ * for the campaign that held each channel that day (the attribution span, D7). Channels are
+ * grouped by their AFS account (offer channels → the domain's account; legacy global channels
+ * → the platform account) so each is pulled with the right token (multi-account). Dormant when
+ * no `fetchAdsense` is wired (AFS access is OPEN_QUESTIONS #4) — returns 0 without touching anything.
  */
 export async function pullAdsenseRevenue(
   since: string,
   until: string,
   deps: AttributionDeps = defaultDeps,
-): Promise<{ rows: number }> {
-  if (!deps.fetchAdsense) return { rows: 0 };
+): Promise<{ rows: number; offerRows: number }> {
+  if (!deps.fetchAdsense) return { rows: 0, offerRows: 0 };
 
-  // Only channels that HELD a campaign during [since, until] need a report. This bounds
-  // the report's channel filter when the pool is large — an AFS partner account can have
-  // 10k+ custom channels, but only the handful assigned to live campaigns are relevant.
+  // Only channels that HELD a campaign during [since, until] need a report — bounds the
+  // channel filter when an AFS partner account has 10k+ custom channels.
   const sinceStartUtc = zonedStartOfDayUtc(since);
   const assigned = await withSystem((tx) =>
     tx.channelAssignment.findMany({
@@ -182,55 +210,120 @@ export async function pullAdsenseRevenue(
       distinct: ['channelRef'],
     }),
   );
-  if (assigned.length === 0) return { rows: 0 };
+  if (assigned.length === 0) return { rows: 0, offerRows: 0 };
+
   const channels = await withSystem((tx) =>
-    tx.channel.findMany({ where: { id: { in: assigned.map((a) => a.channelRef) } }, select: { id: true, channelId: true } }),
+    tx.channel.findMany({ where: { id: { in: assigned.map((a) => a.channelRef) } }, select: { id: true, channelId: true, domainId: true } }),
   );
   const channelRefByCh = new Map(channels.map((c) => [c.channelId, c.id]));
-  const report = await deps.fetchAdsense({ since, until, channelIds: channels.map((c) => c.channelId) });
 
-  let rows = 0;
+  // Resolve each channel's AFS account: offer channel → its domain's account; legacy → platform.
+  const domainIds = [...new Set(channels.map((c) => c.domainId).filter((d): d is string => Boolean(d)))];
+  const domains = domainIds.length
+    ? await withSystem((tx) => tx.domain.findMany({ where: { id: { in: domainIds } }, select: { id: true, afsAccountId: true } }))
+    : [];
+  const acctByDomain = new Map(domains.map((d) => [d.id, d.afsAccountId]));
+  // Legacy global channels (no domain) → the platform account; the 'platform' sentinel is
+  // a live no-op when no such connection exists (so dormant/test deploys stay revenue-empty).
+  const fallbackAcct = (channels.some((c) => !c.domainId) ? await defaultAfsAccountId() : null) ?? 'platform';
+
+  const channelsByAccount = new Map<string, string[]>();
+  for (const c of channels) {
+    const acct = (c.domainId ? acctByDomain.get(c.domainId) : fallbackAcct) ?? 'platform';
+    const list = channelsByAccount.get(acct) ?? [];
+    list.push(c.channelId);
+    channelsByAccount.set(acct, list);
+  }
+
+  const report = await deps.fetchAdsense({
+    since,
+    until,
+    accounts: [...channelsByAccount].map(([afsAccountId, channelIds]) => ({ afsAccountId, channelIds })),
+  });
+
+  // Pass 1: write per-offer revenue + accumulate the campaign rollup (summed across channels).
+  const rollup = new Map<string, CampaignDayRollup>();
+  let offerRows = 0;
   for (const r of report) {
     const channelRef = channelRefByCh.get(r.channelId);
     if (!channelRef) continue;
-    const recorded = await withSystem(async (tx) => {
-      // The campaign holding this channel on day `r.day` (the attribution span, D7).
+    await withSystem(async (tx) => {
+      const rate = await deps.getRate(tx, r.day, r.currency);
+      const revenueUsdMinor = toUsdMinor(r.revenueMinor, rate);
+      const suppressed = r.afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD;
+
+      // Per-offer: the offer that holds this channel (if any).
+      const offer = await tx.offer.findFirst({ where: { channelRef }, select: { id: true, orgId: true, campaignId: true } });
+      if (offer) {
+        await tx.offerRevenueDaily.upsert({
+          where: { offerId_day: { offerId: offer.id, day: r.day } },
+          create: { orgId: offer.orgId, offerId: offer.id, campaignId: offer.campaignId, channelRef, day: r.day, afsClicks: r.afsClicks, revenueMinor: r.revenueMinor, revenueUsdMinor, currency: r.currency, suppressed },
+          update: { campaignId: offer.campaignId, channelRef, afsClicks: r.afsClicks, revenueMinor: r.revenueMinor, revenueUsdMinor, currency: r.currency, suppressed },
+        });
+        offerRows += 1;
+      }
+
+      // Campaign rollup: the campaign holding this channel on day `r.day` (the span, D7).
       const span = await tx.channelAssignment.findFirst({
         where: { channelRef, forDay: r.day },
         orderBy: { assignedAt: 'desc' },
         select: { campaignId: true, orgId: true },
       });
-      if (!span) return false;
-      const rate = await deps.getRate(tx, r.day, r.currency);
-      const revenueUsdMinor = toUsdMinor(r.revenueMinor, rate);
-      const suppressed = r.afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD;
-      await tx.campaignRevenueDaily.upsert({
-        where: { campaignId_day: { campaignId: span.campaignId, day: r.day } },
-        create: {
+      if (!span) return;
+      const key = `${span.campaignId}|${r.day}`;
+      const cur = rollup.get(key);
+      if (cur) {
+        cur.revenueMinor += r.revenueMinor;
+        cur.revenueUsdMinor += revenueUsdMinor;
+        cur.afsClicks += r.afsClicks;
+        cur.currencies.add(r.currency);
+      } else {
+        rollup.set(key, {
           orgId: span.orgId,
           campaignId: span.campaignId,
-          channelRef,
           day: r.day,
-          afsClicks: r.afsClicks,
+          channelRef,
           revenueMinor: r.revenueMinor,
           revenueUsdMinor,
-          currency: r.currency,
-          suppressed,
+          afsClicks: r.afsClicks,
+          currencies: new Set([r.currency]),
+        });
+      }
+    });
+  }
+
+  // Pass 2: upsert the campaign rollup (sum). When offers span >1 currency the native sum
+  // is meaningless (D15), so report USD as the native amount; USD is always summable.
+  let rows = 0;
+  for (const v of rollup.values()) {
+    const mixed = v.currencies.size > 1;
+    await withSystem((tx) =>
+      tx.campaignRevenueDaily.upsert({
+        where: { campaignId_day: { campaignId: v.campaignId, day: v.day } },
+        create: {
+          orgId: v.orgId,
+          campaignId: v.campaignId,
+          channelRef: v.channelRef,
+          day: v.day,
+          afsClicks: v.afsClicks,
+          revenueMinor: mixed ? v.revenueUsdMinor : v.revenueMinor,
+          revenueUsdMinor: v.revenueUsdMinor,
+          currency: mixed ? 'USD' : [...v.currencies][0]!,
+          suppressed: v.afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD,
         },
         update: {
-          channelRef,
-          afsClicks: r.afsClicks,
-          revenueMinor: r.revenueMinor,
-          revenueUsdMinor,
-          currency: r.currency,
-          suppressed,
+          channelRef: v.channelRef,
+          afsClicks: v.afsClicks,
+          revenueMinor: mixed ? v.revenueUsdMinor : v.revenueMinor,
+          revenueUsdMinor: v.revenueUsdMinor,
+          currency: mixed ? 'USD' : [...v.currencies][0]!,
+          suppressed: v.afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD,
         },
-      });
-      return true;
-    });
-    if (recorded) rows += 1;
+      }),
+    );
+    rows += 1;
   }
-  return { rows };
+  return { rows, offerRows };
 }
 
 // ── 3. Allocate campaign revenue across ads → ad_revenue_daily ────────────────

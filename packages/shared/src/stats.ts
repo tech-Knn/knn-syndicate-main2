@@ -91,6 +91,20 @@ export interface BuyerRollup {
   campaignCount: number;
 }
 
+/** Per-offer revenue for a campaign (Phase F). Cost is campaign-level FB spend; revenue
+ *  is per offer (its AFS channel). `revenueUsd` is buyer-visible (the platform cut applied);
+ *  hidden (0 + `suppressed`) when AFS clicks are below the §5.8.2 threshold. */
+export interface OfferStat {
+  offerId: string;
+  host: string;
+  afsLabel: string | null;
+  kind: 'PAID' | 'ORGANIC';
+  weightPct: number;
+  revenueUsd: number;
+  afsClicks: number;
+  suppressed: boolean;
+}
+
 /** Per-company rollup (super-admin only). */
 export interface CompanyRollup {
   orgId: string;

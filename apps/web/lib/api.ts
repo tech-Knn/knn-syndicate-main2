@@ -25,6 +25,7 @@ import {
   type CampaignPerf,
   type ChannelRow,
   type CompanyRollup,
+  type OfferStat,
   type PlatformSettings,
   type StatsSummary,
 } from '@knn/shared';
@@ -380,6 +381,8 @@ export const stats = {
   byCompany: async (range?: RangeArg): Promise<CompanyRollup[]> =>
     (await parse<{ companies: CompanyRollup[] }>(await authedFetch(`/api/stats/by-company${rangeQs(range)}`)))
       .companies,
+  campaignOffers: async (id: string, range?: RangeArg): Promise<OfferStat[]> =>
+    (await parse<{ offers: OfferStat[] }>(await authedFetch(`/api/stats/campaigns/${id}/offers${rangeQs(range)}`))).offers,
 };
 
 export const adsense = {

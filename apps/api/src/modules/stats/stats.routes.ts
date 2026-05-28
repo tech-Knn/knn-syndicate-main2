@@ -5,6 +5,7 @@ import { authenticate, requireRole } from '../../middleware/authenticate.js';
 import {
   getBuyerRollup,
   getCampaignBreakdown,
+  getCampaignOfferStats,
   getCampaignPerformance,
   getCompanyRollup,
   getSummary,
@@ -51,6 +52,20 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
         return reply.send(await getCampaignBreakdown(req.auth, req.params.id, parseRange(req.query)));
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Per-offer revenue for one campaign (Phase F) — owner/admin scoped in the service.
+  app.get<{ Params: { id: string }; Querystring: { from?: string; to?: string } }>(
+    '/campaigns/:id/offers',
+    { preHandler: [authenticate] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.send({ offers: await getCampaignOfferStats(req.auth, req.params.id, parseRange(req.query)) });
       } catch (err) {
         return handleRouteError(err, reply);
       }

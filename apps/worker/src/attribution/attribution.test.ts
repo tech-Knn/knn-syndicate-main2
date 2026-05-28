@@ -16,6 +16,10 @@ const suffix = Date.now().toString(36);
 let orgId = '';
 let buyerId = '';
 let connId = '';
+let afsAId = '';
+let afsBId = '';
+let domAId = '';
+let domBId = '';
 let chCounter = 0;
 
 const DAY = '2026-05-20';
@@ -120,16 +124,22 @@ beforeAll(async () => {
     connId = conn.id;
     // EUR rate for the currency-conversion test: 1 EUR = 1.10 USD.
     await tx.fxRate.upsert({ where: { day_currency: { day: DAY, currency: 'EUR' } }, create: { day: DAY, currency: 'EUR', rate: 1.1 }, update: { rate: 1.1 } });
+    // Two AFS accounts + two domains for the per-offer / multi-account test (Phase F).
+    afsAId = (await tx.googleConnection.create({ data: { accessTokenEnc: encryptToken('a'), tokenExpiresAt: new Date(Date.now() + 3_600_000), adsenseAccount: `acc-a-${suffix}`, adsenseAdClient: `adc-a-${suffix}`, afsPubId: `partner-pub-a-${suffix}`, label: 'AFS A', status: 'ACTIVE' } })).id;
+    afsBId = (await tx.googleConnection.create({ data: { accessTokenEnc: encryptToken('b'), tokenExpiresAt: new Date(Date.now() + 3_600_000), adsenseAccount: `acc-b-${suffix}`, adsenseAdClient: `adc-b-${suffix}`, afsPubId: `partner-pub-b-${suffix}`, label: 'AFS B', status: 'ACTIVE' } })).id;
+    domAId = (await tx.domain.create({ data: { host: `oa-${suffix}.example.com`, afsAccountId: afsAId, status: 'LIVE', verifyToken: `a-${suffix}` } })).id;
+    domBId = (await tx.domain.create({ data: { host: `ob-${suffix}.example.com`, afsAccountId: afsBId, status: 'LIVE', verifyToken: `b-${suffix}` } })).id;
   });
 });
 
 beforeEach(async () => {
   await withSystem(async (tx) => {
+    await tx.offerRevenueDaily.deleteMany({ where: { orgId } });
     await tx.adRevenueDaily.deleteMany({ where: { orgId } });
     await tx.adStatsDaily.deleteMany({ where: { orgId } });
     await tx.campaignRevenueDaily.deleteMany({ where: { orgId } });
     await tx.channelAssignment.deleteMany({ where: { orgId } });
-    await tx.campaign.deleteMany({ where: { orgId } });
+    await tx.campaign.deleteMany({ where: { orgId } }); // cascades offers
     await tx.channel.deleteMany({ where: { channelId: { startsWith: `ch-${suffix}` } } });
     await tx.fbAdAccount.deleteMany({ where: { orgId } });
     await tx.user.update({ where: { id: buyerId }, data: { revenueCutPct: null } });
@@ -138,11 +148,15 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await withSystem(async (tx) => {
+    await tx.offerRevenueDaily.deleteMany({ where: { orgId } });
     await tx.adRevenueDaily.deleteMany({ where: { orgId } });
     await tx.adStatsDaily.deleteMany({ where: { orgId } });
     await tx.campaignRevenueDaily.deleteMany({ where: { orgId } });
     await tx.channelAssignment.deleteMany({ where: { orgId } });
+    await tx.campaign.deleteMany({ where: { orgId } });
     await tx.channel.deleteMany({ where: { channelId: { startsWith: `ch-${suffix}` } } });
+    await tx.domain.deleteMany({ where: { afsAccountId: { in: [afsAId, afsBId] } } });
+    await tx.googleConnection.deleteMany({ where: { id: { in: [afsAId, afsBId] } } });
     await tx.fxRate.deleteMany({ where: { currency: 'EUR', day: DAY } });
     await tx.organization.deleteMany({ where: { id: orgId } });
   });
@@ -289,6 +303,71 @@ describe('allocateRevenueForCampaignDay (direct, no revenue row)', () => {
     const seed = await seedCampaign({ adCount: 1 });
     const written = await withSystem((tx) => allocateRevenueForCampaignDay(tx, seed.campaignId, DAY));
     expect(written).toBe(0);
+  });
+});
+
+interface SeededOffers {
+  campaignId: string;
+  ads: SeededAd[];
+  offerAId: string;
+  offerBId: string;
+  chA: string;
+  chB: string;
+}
+
+/** A launched OFFERS campaign: 2 PAID offers on 2 domains (2 AFS accounts), each with its
+ *  own channel + assignment span — the graph Phase-F attribution walks. */
+async function seedOfferCampaign(day = DAY): Promise<SeededOffers> {
+  return withSystem(async (tx) => {
+    const account = await tx.fbAdAccount.create({ data: { orgId, connectionId: connId, fbAccountId: `act_off_${chCounter}`, name: 'Acct', currency: 'USD', timezone: 'Asia/Kolkata', status: '1' } });
+    const chA = `ch-${suffix}-${chCounter++}`;
+    const chB = `ch-${suffix}-${chCounter++}`;
+    const channelA = await tx.channel.create({ data: { channelId: chA, domainId: domAId, status: 'ASSIGNED' } });
+    const channelB = await tx.channel.create({ data: { channelId: chB, domainId: domBId, status: 'ASSIGNED' } });
+    const campaign = await tx.campaign.create({ data: { orgId, buyerId, name: `off-attr ${Math.random()}`, status: 'ACTIVE', keywords: [], fbCampaignId: `fbcamp-off-${chA}`, adAccountId: account.id } });
+    await tx.channel.updateMany({ where: { id: { in: [channelA.id, channelB.id] } }, data: { currentCampaignId: campaign.id, lockedForDay: day } });
+    await tx.channelAssignment.create({ data: { orgId, channelRef: channelA.id, campaignId: campaign.id, forDay: day } });
+    await tx.channelAssignment.create({ data: { orgId, channelRef: channelB.id, campaignId: campaign.id, forDay: day } });
+    const offerA = await tx.offer.create({ data: { orgId, campaignId: campaign.id, domainId: domAId, weightPct: 60, kind: 'PAID', channelRef: channelA.id } });
+    const offerB = await tx.offer.create({ data: { orgId, campaignId: campaign.id, domainId: domBId, weightPct: 40, kind: 'PAID', channelRef: channelB.id } });
+    const adSet = await tx.adSet.create({ data: { orgId, campaignId: campaign.id, name: 'set', pxeEvent: 'search' } });
+    const fbAdId = `fbad-off-${chA}`;
+    const ad = await tx.ad.create({ data: { orgId, adSetId: adSet.id, name: 'ad', headline: 'h', primaryText: 'p', redirectId: randomUUID(), fbAdId } });
+    return { campaignId: campaign.id, ads: [{ id: ad.id, fbAdId }], offerAId: offerA.id, offerBId: offerB.id, chA, chB };
+  });
+}
+
+describe('attribution — per-offer revenue across multiple AFS accounts (Phase F)', () => {
+  it('records per-offer revenue, sums into the campaign rollup, and pulls each AFS account separately', async () => {
+    const seed = await seedOfferCampaign();
+    let seenAccounts: { afsAccountId: string; channelIds: string[] }[] = [];
+    const deps: AttributionDeps = {
+      fetchInsights: async (): Promise<FbAdInsightRow[]> => seed.ads.map((a) => ({ fbAdId: a.fbAdId, day: DAY, impressions: 10, clicks: 2, conversions: 1, spendMinor: 500 })),
+      fetchAdsense: async (p): Promise<ChannelDayRevenue[]> => {
+        seenAccounts = p.accounts;
+        return [
+          { channelId: seed.chA, day: DAY, revenueMinor: 3000, currency: 'USD', afsClicks: 30 },
+          { channelId: seed.chB, day: DAY, revenueMinor: 2000, currency: 'USD', afsClicks: 20 },
+        ];
+      },
+      getRate: getUsdRate,
+    };
+    await runAttribution([DAY], deps);
+
+    // Multi-account: each AFS account pulled with its own channel set.
+    expect(seenAccounts).toHaveLength(2);
+    expect(seenAccounts.map((a) => a.afsAccountId).sort()).toEqual([afsAId, afsBId].sort());
+
+    // Per-offer revenue (offer_revenue_daily).
+    const offerRows = await withSystem((tx) => tx.offerRevenueDaily.findMany({ where: { campaignId: seed.campaignId, day: DAY } }));
+    const byOffer = new Map(offerRows.map((r) => [r.offerId, r.revenueUsdMinor]));
+    expect(byOffer.get(seed.offerAId)).toBe(3000);
+    expect(byOffer.get(seed.offerBId)).toBe(2000);
+
+    // Campaign rollup = SUM across offer channels (not overwritten by the last one).
+    const camp = await withSystem((tx) => tx.campaignRevenueDaily.findUnique({ where: { campaignId_day: { campaignId: seed.campaignId, day: DAY } } }));
+    expect(camp!.revenueUsdMinor).toBe(5000);
+    expect(camp!.afsClicks).toBe(50);
   });
 });
 

@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { type OfferStat } from '@knn/shared';
 import { Badge, Button, Card } from '@/components/ui';
-import { campaigns } from '@/lib/api';
+import { campaigns, stats } from '@/lib/api';
 import { type CampaignStatus, type OfferDomainOption, type OfferRow } from '@/lib/types';
 import styles from '../../admin.module.css';
 
@@ -25,6 +26,7 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
   const [domains, setDomains] = useState<OfferDomainOption[]>([]);
   const [rows, setRows] = useState<Draft[]>([]);
   const [saved, setSaved] = useState<OfferRow[] | null>(null);
+  const [rev, setRev] = useState<Map<string, OfferStat>>(new Map());
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
@@ -34,6 +36,11 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
       setRows(offers.map((o) => ({ domainId: o.domainId, weightPct: o.weightPct, kind: o.kind })));
     });
     void campaigns.offerDomains().then(setDomains).catch(() => setDomains([]));
+    // Per-offer revenue (Phase F) — populated once the campaign runs (30-day window).
+    void stats
+      .campaignOffers(campaignId, { from: undefined, to: undefined })
+      .then((r) => setRev(new Map(r.map((x) => [x.offerId, x]))))
+      .catch(() => setRev(new Map()));
   }, [campaignId]);
   useEffect(() => load(), [load]);
 
@@ -83,23 +90,30 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
                   <th className={styles.thLeft}>Website</th>
                   <th className={styles.thLeft}>Kind</th>
                   <th>Weight</th>
+                  <th>Revenue (30d)</th>
                   <th className={styles.thLeft}>Channel</th>
                 </tr>
               </thead>
               <tbody>
-                {saved.map((o) => (
-                  <tr key={o.id}>
-                    <td>
-                      <div className={styles.name}>{o.host}</div>
-                      {o.afsLabel && <div className={styles.subtle}>{o.afsLabel}</div>}
-                    </td>
-                    <td>
-                      <Badge tone={o.kind === 'PAID' ? 'brand' : 'neutral'}>{o.kind.toLowerCase()}</Badge>
-                    </td>
-                    <td className={styles.num}>{o.weightPct}%</td>
-                    <td className="mono">{o.channelId ?? '—'}</td>
-                  </tr>
-                ))}
+                {saved.map((o) => {
+                  const r = rev.get(o.id);
+                  return (
+                    <tr key={o.id}>
+                      <td>
+                        <div className={styles.name}>{o.host}</div>
+                        {o.afsLabel && <div className={styles.subtle}>{o.afsLabel}</div>}
+                      </td>
+                      <td>
+                        <Badge tone={o.kind === 'PAID' ? 'brand' : 'neutral'}>{o.kind.toLowerCase()}</Badge>
+                      </td>
+                      <td className={styles.num}>{o.weightPct}%</td>
+                      <td className={`${styles.num} ${r && r.revenueUsd > 0 ? styles.pos : ''}`}>
+                        {r?.suppressed ? '—' : r ? `$${r.revenueUsd.toFixed(2)}` : '$0.00'}
+                      </td>
+                      <td className="mono">{o.channelId ?? '—'}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

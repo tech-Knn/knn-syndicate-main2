@@ -6,6 +6,7 @@ import { ROLES, USER_STATUS, addBusinessDays, currentBusinessDay } from '@knn/sh
 import type { CampaignBreakdown, CampaignPerf, StatsSummary } from '@knn/shared';
 import { hashPassword } from '../../lib/password.js';
 import { buildApp } from '../../app.js';
+import { getCampaignOfferStats } from './stats.service.js';
 
 const suffix = Date.now().toString(36);
 const PW = 'stats-pw-123456';
@@ -274,5 +275,47 @@ describe('admin & super-admin rollups + platform surfaces', () => {
     const arts = await app.inject({ method: 'GET', url: '/api/admin/articles', headers: h(adminTok) });
     expect(arts.statusCode).toBe(200);
     expect(Array.isArray(arts.json<{ articles: unknown[] }>().articles)).toBe(true);
+  });
+});
+
+describe('getCampaignOfferStats (Phase F per-offer revenue)', () => {
+  it('sums per-offer revenue, applies the buyer cut, and suppresses low-click offers', async () => {
+    const sfx = `ofs-${suffix}`;
+    const CH = '11111111-1111-1111-1111-111111111111';
+    let orgId = '';
+    let buyerId = '';
+    let afsId = '';
+    let campaignId = '';
+    let offerHi = '';
+    let offerLo = '';
+    await withSystem(async (tx) => {
+      orgId = (await tx.organization.create({ data: { name: 'OfStat', slug: sfx, defaultRevenueCutPct: 0.3 } })).id;
+      buyerId = (await tx.user.create({ data: { orgId, email: `${sfx}@a.com`, name: 'B', passwordHash: 'x', role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE } })).id;
+      afsId = (await tx.googleConnection.create({ data: { accessTokenEnc: 'e', tokenExpiresAt: new Date(Date.now() + 3_600_000), adsenseAccount: `acc-${sfx}`, adsenseAdClient: `adc-${sfx}`, afsPubId: `pp-${sfx}`, label: 'AFS', status: 'ACTIVE' } })).id;
+      const domHi = await tx.domain.create({ data: { host: `hi-${sfx}.example.com`, afsAccountId: afsId, status: 'LIVE', verifyToken: `h-${sfx}` } });
+      const domLo = await tx.domain.create({ data: { host: `lo-${sfx}.example.com`, afsAccountId: afsId, status: 'LIVE', verifyToken: `l-${sfx}` } });
+      campaignId = (await tx.campaign.create({ data: { orgId, buyerId, name: 'c', status: 'ACTIVE', keywords: [] } })).id;
+      offerHi = (await tx.offer.create({ data: { orgId, campaignId, domainId: domHi.id, weightPct: 60, kind: 'PAID' } })).id;
+      offerLo = (await tx.offer.create({ data: { orgId, campaignId, domainId: domLo.id, weightPct: 40, kind: 'PAID' } })).id;
+      await tx.offerRevenueDaily.create({ data: { orgId, offerId: offerHi, campaignId, channelRef: CH, day: today, revenueMinor: 10000, revenueUsdMinor: 10000, afsClicks: 50, currency: 'USD' } });
+      await tx.offerRevenueDaily.create({ data: { orgId, offerId: offerLo, campaignId, channelRef: CH, day: today, revenueMinor: 5000, revenueUsdMinor: 5000, afsClicks: 3, currency: 'USD' } });
+    });
+    try {
+      const auth = { userId: buyerId, orgId, role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE };
+      const stats = await getCampaignOfferStats(auth, campaignId, { from: today, to: today });
+      const byOffer = new Map(stats.map((s) => [s.offerId, s]));
+      // Hi: gross $100 → 30% cut → buyer-visible $70; 50 AFS clicks → not suppressed.
+      expect(byOffer.get(offerHi)).toMatchObject({ revenueUsd: 70, suppressed: false });
+      // Lo: 3 AFS clicks (< 10) → suppressed → revenue hidden.
+      expect(byOffer.get(offerLo)).toMatchObject({ revenueUsd: 0, suppressed: true });
+    } finally {
+      await withSystem(async (tx) => {
+        await tx.offerRevenueDaily.deleteMany({ where: { orgId } });
+        await tx.campaign.deleteMany({ where: { orgId } }); // cascades offers
+        await tx.domain.deleteMany({ where: { afsAccountId: afsId } });
+        await tx.googleConnection.deleteMany({ where: { id: afsId } });
+        await tx.organization.deleteMany({ where: { id: orgId } });
+      });
+    }
   });
 });

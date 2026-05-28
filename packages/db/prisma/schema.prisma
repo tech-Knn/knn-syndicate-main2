@@ -665,6 +665,33 @@ model AdRevenueDaily {
   @@map("ad_revenue_daily")
 }
 
+/// Per-offer per-IST-day AFS revenue (Phase F). With Phase-E offers a campaign holds
+/// MANY channels (one per offer, each from its website's AFS account), so per-offer
+/// revenue lives here; `campaign_revenue_daily` is the sum across the campaign's offers.
+/// Native (the offer's AFS account currency) paired with USD (D15); `afs_clicks <
+/// threshold` → `suppressed`. Scalar refs (no FK, like the other revenue tables).
+/// Org-scoped (RLS). Drives per-offer ROI (cost is campaign-level FB spend).
+model OfferRevenueDaily {
+  id              String   @id @default(uuid()) @db.Uuid
+  orgId           String   @map("org_id") @db.Uuid
+  offerId         String   @map("offer_id") @db.Uuid
+  campaignId      String   @map("campaign_id") @db.Uuid
+  channelRef      String   @map("channel_ref") @db.Uuid
+  day             String
+  afsClicks       Int      @default(0) @map("afs_clicks")
+  revenueMinor    Int      @default(0) @map("revenue_minor")
+  revenueUsdMinor Int      @default(0) @map("revenue_usd_minor")
+  currency        String   @default("USD")
+  suppressed      Boolean  @default(false)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([offerId, day])
+  @@index([orgId, day])
+  @@index([campaignId, day])
+  @@map("offer_revenue_daily")
+}
+
 // ---------------------------------------------------------------------------
 // Conversion tracking (RSOC final ad-click → Facebook Conversions API, S2S).
 // The AFS ad lives in a cross-origin Google iframe, so the client can't see the

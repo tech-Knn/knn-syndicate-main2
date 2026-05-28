@@ -1,5 +1,6 @@
 import { type TxClient } from '@knn/db';
 import {
+  AFS_CLICK_SUPPRESSION_THRESHOLD,
   type AdPerf,
   type AdSetPerf,
   type BuyerRollup,
@@ -9,6 +10,7 @@ import {
   type DailyPoint,
   type DateRange,
   type MetricTotals,
+  type OfferStat,
   ROLES,
   type StatsSummary,
   addBusinessDays,
@@ -294,6 +296,67 @@ export async function getCampaignBreakdown(
       totals,
       adSets,
     };
+  });
+}
+
+/** Effective platform cut for a campaign's buyer (buyer override ?? org default). */
+async function offerCutPct(tx: TxClient, orgId: string, buyerId: string): Promise<number> {
+  const [org, buyer] = await Promise.all([
+    tx.organization.findUnique({ where: { id: orgId }, select: { defaultRevenueCutPct: true } }),
+    tx.user.findUnique({ where: { id: buyerId }, select: { revenueCutPct: true } }),
+  ]);
+  return Number(buyer?.revenueCutPct ?? org?.defaultRevenueCutPct ?? 0);
+}
+
+/**
+ * Per-offer revenue for one campaign over the range (Phase F). Each offer's gross AFS
+ * channel revenue (offer_revenue_daily) summed, then the platform cut applied → the
+ * buyer-visible amount; suppressed (hidden) when AFS clicks are below the threshold.
+ * Lets the buyer see WHICH website/offer monetizes best (cost stays campaign-level).
+ * Owner/admin scoped (RLS + a buyer can only see their own campaign).
+ */
+export async function getCampaignOfferStats(
+  auth: AuthContext,
+  campaignId: string,
+  range: DateRange,
+): Promise<OfferStat[]> {
+  return runScoped(auth, async (tx) => {
+    const campaign = await tx.campaign.findUnique({ where: { id: campaignId }, select: { buyerId: true, orgId: true } });
+    if (!campaign) throw new AppError(404, 'Campaign not found');
+    if (auth.role === ROLES.MEDIA_BUYER && campaign.buyerId !== auth.userId) throw new AppError(404, 'Campaign not found');
+
+    const offers = await tx.offer.findMany({
+      where: { campaignId },
+      include: { domain: { select: { host: true, afsAccount: { select: { label: true } } } } },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (offers.length === 0) return [];
+
+    const rev = await tx.offerRevenueDaily.groupBy({
+      by: ['offerId'],
+      where: { offerId: { in: offers.map((o) => o.id) }, day: { gte: range.from, lte: range.to } },
+      _sum: { revenueUsdMinor: true, afsClicks: true },
+    });
+    const byOffer = new Map(rev.map((r) => [r.offerId, r]));
+    const cut = await offerCutPct(tx, campaign.orgId, campaign.buyerId);
+
+    return offers.map((o): OfferStat => {
+      const r = byOffer.get(o.id);
+      const grossMinor = r?._sum.revenueUsdMinor ?? 0;
+      const afsClicks = r?._sum.afsClicks ?? 0;
+      const suppressed = grossMinor > 0 && afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD;
+      const visibleMinor = Math.round(grossMinor * (1 - cut));
+      return {
+        offerId: o.id,
+        host: o.domain.host,
+        afsLabel: o.domain.afsAccount.label,
+        kind: o.kind,
+        weightPct: o.weightPct,
+        revenueUsd: suppressed ? 0 : round2(centsToDollars(visibleMinor)),
+        afsClicks,
+        suppressed,
+      };
+    });
   });
 }
 
