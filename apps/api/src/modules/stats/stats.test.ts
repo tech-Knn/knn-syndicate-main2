@@ -242,6 +242,12 @@ describe('admin & super-admin rollups + platform surfaces', () => {
     expect(orgA?.revenueUsd).toBe(185); // cA1 ($105) + cA2 ($80)
     expect(orgB).toBeTruthy(); // org B visible to super (cross-org)
     expect(typeof orgA?.defaultRevenueCutPct).toBe('number');
+
+    // The platform org (KNN staff) is never a "company" in this rollup.
+    const platform = await withSystem((tx) => tx.organization.create({ data: { name: 'Plat', slug: `plat-stats-${suffix}`, isPlatform: true } }));
+    const body2 = (await app.inject({ method: 'GET', url: '/api/stats/by-company', headers: h(superTok) })).json<{ companies: { orgId: string }[] }>();
+    expect(body2.companies.some((c) => c.orgId === platform.id)).toBe(false);
+    await withSystem((tx) => tx.organization.delete({ where: { id: platform.id } }));
   });
 
   it('platform settings: GET/PATCH is super-only and round-trips', async () => {

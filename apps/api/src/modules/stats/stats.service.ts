@@ -419,7 +419,12 @@ export async function getBuyerRollup(auth: AuthContext, range: DateRange): Promi
  */
 export async function getCompanyRollup(auth: AuthContext, range: DateRange): Promise<CompanyRollup[]> {
   return runScoped(auth, async (tx) => {
-    const orgs = await tx.organization.findMany({ select: { id: true, name: true, defaultRevenueCutPct: true } });
+    // Exclude the platform org (KNN staff) — it's not a client company, mirroring
+    // the Companies list (listOrganizations).
+    const orgs = await tx.organization.findMany({
+      where: { isPlatform: false },
+      select: { id: true, name: true, defaultRevenueCutPct: true },
+    });
     const where = { day: { gte: range.from, lte: range.to } };
     const [statsByOrg, revByOrg, buyerCounts, campCounts] = await Promise.all([
       tx.adStatsDaily.groupBy({ by: ['orgId'], where, _sum: { spendUsdMinor: true } }),
