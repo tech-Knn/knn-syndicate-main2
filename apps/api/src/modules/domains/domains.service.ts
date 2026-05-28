@@ -43,6 +43,25 @@ export interface CreateDomainInput {
   adsafe?: string;
 }
 
+/** Normalize a user/edge-supplied host: lowercase, strip scheme, then path, then port. */
+function normalizeHost(raw: string): string {
+  return raw.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
+}
+
+/**
+ * Edge on-demand-TLS gate (Caddy `ask` endpoint). Returns true iff `host` is a
+ * registered Domain. Allowed regardless of status: a cert must be issued on the
+ * first HTTPS hit BEFORE liveness verification can succeed (verification fetches
+ * `https://host/api/site-verify`), so gating on LIVE would be a chicken-and-egg.
+ * Unregistered hosts are refused → Caddy won't mint certs for arbitrary domains.
+ */
+export async function isDomainRegistered(rawHost: string): Promise<boolean> {
+  const host = normalizeHost(rawHost);
+  if (!host) return false;
+  const row = await withSystem((tx) => tx.domain.findUnique({ where: { host }, select: { id: true } }));
+  return row !== null;
+}
+
 /** DNS guidance shown to the admin: point the host at our article ingress. */
 export function dnsGuidance(): { cnameTarget: string } {
   // The article app's host is the canonical ingress; point new domains there.
@@ -104,7 +123,7 @@ export async function listDomains(): Promise<DomainRow[]> {
 }
 
 export async function createDomain(actor: AuthContext, input: CreateDomainInput): Promise<DomainRow> {
-  const host = input.host.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  const host = normalizeHost(input.host);
   if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(host)) throw new AppError(400, 'Enter a valid domain host (e.g. articles.example.com)');
   return withSystem(async (tx) => {
     const afs = await tx.googleConnection.findUnique({ where: { id: input.afsAccountId } });

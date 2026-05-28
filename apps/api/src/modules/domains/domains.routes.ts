@@ -7,6 +7,7 @@ import {
   createDomain,
   deleteDomain,
   dnsGuidance,
+  isDomainRegistered,
   listDomains,
   syncDomainChannels,
   updateDomain,
@@ -14,6 +15,27 @@ import {
 } from './domains.service.js';
 
 const superOnly = [authenticate, requireRole(ROLES.SUPER_ADMIN)];
+
+/**
+ * Public, unauthenticated edge endpoint for Caddy on-demand TLS. The edge calls
+ * `GET /api/public/domain-allowed?domain=<host>` during a TLS handshake for an
+ * unknown SNI; a 2xx tells Caddy to mint a cert and serve the article app for
+ * that host. We return 200 only for a registered Domain, so the catch-all can
+ * serve any number of article domains with zero per-domain Caddy changes — while
+ * refusing certs for arbitrary hosts pointed at the box. Mounted at `/api/public`.
+ */
+export async function publicEdgeRoutes(app: FastifyInstance): Promise<void> {
+  app.get<{ Querystring: { domain?: string } }>('/domain-allowed', async (req, reply) => {
+    const host = req.query.domain;
+    if (!host) return reply.code(400).send({ allowed: false, error: 'Missing domain' });
+    try {
+      if (!(await isDomainRegistered(host))) return reply.code(404).send({ allowed: false });
+      return reply.send({ allowed: true });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+}
 
 /** Super-admin domain (website) management — Phase C. */
 export async function domainRoutes(app: FastifyInstance): Promise<void> {

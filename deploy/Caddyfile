@@ -3,6 +3,16 @@
 # .env.staging (APP_DOMAIN / ARTICLE_DOMAIN / REDIRECT_DOMAIN — hostnames only,
 # no scheme). If Cloudflare proxying is on, use "Full (strict)" SSL mode.
 
+# On-demand TLS lets the edge serve ANY registered article domain with no per-domain
+# Caddy block: on the first HTTPS hit for an unknown host, Caddy asks the API whether
+# that host is a registered Domain (HTTP 200) before minting a Let's Encrypt cert.
+# Hosts that aren't registered are refused, so there's no cert-issuance abuse surface.
+{
+	on_demand_tls {
+		ask http://api:3000/api/public/domain-allowed
+	}
+}
+
 {$APP_HOST} {
 	# Internal worker→API routes (Phase 8 auto-launch, D19) must NOT be reachable from
 	# the public edge — the worker calls them on the internal Docker network (api:3000),
@@ -33,6 +43,19 @@
 # an internal localhost address when AFS_TEST_HOST is unset, so deploys that don't
 # use it aren't affected (Caddy won't try to issue a public cert for it).
 {$AFS_TEST_HOST:localhost:8081} {
+	reverse_proxy article:3001
+	encode gzip zstd
+}
+
+# Catch-all for every OTHER registered article domain (Phase C "add a website"). Any host
+# the admin registers in the Domains UI and points at this box auto-gets a cert (gated by
+# the on_demand ask above) and serves the article app — zero Caddy changes per domain.
+# Must stay AFTER the specific blocks so the app./articles./AFS_TEST hosts win exact match;
+# unregistered hosts get no cert (ask → 404), so this can't serve random traffic.
+https:// {
+	tls {
+		on_demand
+	}
 	reverse_proxy article:3001
 	encode gzip zstd
 }

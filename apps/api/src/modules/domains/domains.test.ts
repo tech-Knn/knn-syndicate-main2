@@ -6,6 +6,7 @@ import { encryptToken } from '@knn/fb';
 import {
   createDomain,
   deleteDomain,
+  isDomainRegistered,
   listDomains,
   syncDomainChannels,
   verifyDomain,
@@ -103,6 +104,13 @@ describe('domain management', () => {
     expect(ch?.domainId).toBe(domainId);
     const mine = (await listDomains()).find((x) => x.id === domainId);
     expect(mine?.channelCount).toBe(1);
+  });
+
+  it('edge ask gate: registered host (any case/scheme/port) allowed, unknown refused', async () => {
+    expect(await isDomainRegistered(HOST)).toBe(true);
+    expect(await isDomainRegistered(`HTTPS://${HOST.toUpperCase()}:443/`)).toBe(true); // normalized
+    expect(await isDomainRegistered(`nope-${suffix}.example.com`)).toBe(false);
+    expect(await isDomainRegistered('')).toBe(false);
   });
 
   it('blocks delete while offers reference the domain, allows it after', async () => {
