@@ -5,6 +5,7 @@ import {
   type AfsChannelRow,
   type Campaign,
   type ConnectionStatus,
+  type CreateOrgInput,
   type DomainRow,
   type FbAccount,
   type FbPage,
@@ -12,6 +13,7 @@ import {
   type OfferDomainOption,
   type OfferInput,
   type OfferRow,
+  type OrgRow,
   type PublicUser,
   type SessionUser,
   type SyncResult,
@@ -215,6 +217,11 @@ export const auth = {
     const data = await parse<{ user: SessionUser }>(res);
     return data.user;
   },
+
+  /** Public buyer signup → PENDING (a company admin approves). Needs the company slug. */
+  async signup(input: { name: string; email: string; password: string; companySlug: string }): Promise<{ status: string }> {
+    return parse(await rawFetch('/api/auth/signup', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(input) }));
+  },
 };
 
 export const facebook = {
@@ -313,6 +320,10 @@ export const campaigns = {
 export const admin = {
   organization: async (): Promise<AdminOrg> =>
     (await parse<{ organization: AdminOrg }>(await authedFetch('/api/admin/organization'))).organization,
+  organizations: async (): Promise<OrgRow[]> =>
+    (await parse<{ organizations: OrgRow[] }>(await authedFetch('/api/admin/organizations'))).organizations,
+  createOrganization: async (input: CreateOrgInput): Promise<{ orgId: string; adminId: string }> =>
+    parse(await authedFetch('/api/admin/organizations', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(input) })),
   setAutoApprove: async (orgId: string, autoApprove: boolean): Promise<AdminOrg> =>
     (
       await parse<{ organization: AdminOrg }>(

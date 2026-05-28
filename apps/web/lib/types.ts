@@ -212,6 +212,28 @@ export interface OfferDomainOption {
   afsLabel: string | null;
 }
 
+/** A company (organization) row for the super-admin Companies page. */
+export interface OrgRow {
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+  autoApprove: boolean;
+  autoLaunch: boolean;
+  buyerCount: number;
+  adminCount: number;
+  pendingCount: number;
+  createdAt: string;
+}
+
+export interface CreateOrgInput {
+  name: string;
+  slug: string;
+  adminName: string;
+  adminEmail: string;
+  adminPassword: string;
+}
+
 /** An AFS custom channel as shown in the domain channel browser (pick by name). */
 export interface AfsChannelRow {
   channelId: string;

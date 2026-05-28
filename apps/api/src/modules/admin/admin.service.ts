@@ -78,6 +78,47 @@ export interface OrgSettings {
 }
 const orgSettingsSelect = { id: true, name: true, autoApprove: true, autoLaunch: true } as const;
 
+export interface OrgRow {
+  id: string;
+  name: string;
+  slug: string;
+  status: string;
+  autoApprove: boolean;
+  autoLaunch: boolean;
+  buyerCount: number;
+  adminCount: number;
+  pendingCount: number;
+  createdAt: string;
+}
+
+/** All companies (super-admin only — route-guarded) with their user counts + modes. */
+export async function listOrganizations(): Promise<OrgRow[]> {
+  return withSystem(async (tx) => {
+    const orgs = await tx.organization.findMany({ orderBy: { createdAt: 'asc' } });
+    const byRole = await tx.user.groupBy({ by: ['orgId', 'role'], _count: { _all: true } });
+    const pending = await tx.user.groupBy({ by: ['orgId'], where: { status: USER_STATUS.PENDING }, _count: { _all: true } });
+    const buyerByOrg = new Map<string, number>();
+    const adminByOrg = new Map<string, number>();
+    for (const r of byRole) {
+      if (r.role === ROLES.MEDIA_BUYER) buyerByOrg.set(r.orgId, r._count._all);
+      if (r.role === ROLES.COMPANY_ADMIN) adminByOrg.set(r.orgId, r._count._all);
+    }
+    const pendingByOrg = new Map(pending.map((p) => [p.orgId, p._count._all]));
+    return orgs.map((o) => ({
+      id: o.id,
+      name: o.name,
+      slug: o.slug,
+      status: o.status,
+      autoApprove: o.autoApprove,
+      autoLaunch: o.autoLaunch,
+      buyerCount: buyerByOrg.get(o.id) ?? 0,
+      adminCount: adminByOrg.get(o.id) ?? 0,
+      pendingCount: pendingByOrg.get(o.id) ?? 0,
+      createdAt: o.createdAt.toISOString(),
+    }));
+  });
+}
+
 /** The acting admin's own company (id, name, approval + launch modes) — for the settings UI. */
 export async function getActingOrg(actor: AuthContext): Promise<OrgSettings> {
   return runScoped(actor, async (tx) => {

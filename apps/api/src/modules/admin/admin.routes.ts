@@ -13,6 +13,7 @@ import {
 import {
   createOrganization,
   getActingOrg,
+  listOrganizations,
   listUsers,
   setOrgAutoApprove,
   setOrgAutoLaunch,
@@ -39,6 +40,16 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       } catch (err) {
         return handleRouteError(err, reply);
       }
+    },
+  );
+
+  // All companies (super-admin only) — list + counts for the Companies management page.
+  app.get(
+    '/organizations',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      return reply.send({ organizations: await listOrganizations() });
     },
   );
 

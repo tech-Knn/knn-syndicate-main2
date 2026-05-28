@@ -21,6 +21,7 @@ function navFor(role: Role): { href: string; label: string }[] {
     { href: '/dashboard/campaigns', label: 'Campaigns' },
     ...(isAdmin ? [{ href: '/dashboard/approvals', label: 'Approvals' }] : []),
     ...(role === 'COMPANY_ADMIN' ? [{ href: '/dashboard/team', label: 'Team' }] : []),
+    ...(role === 'SUPER_ADMIN' ? [{ href: '/dashboard/companies', label: 'Companies' }] : []),
     ...(role === 'SUPER_ADMIN' ? [{ href: '/dashboard/platform', label: 'Platform' }] : []),
     ...(role === 'SUPER_ADMIN' ? [{ href: '/dashboard/domains', label: 'Domains' }] : []),
     { href: '/dashboard/facebook', label: 'Facebook' },

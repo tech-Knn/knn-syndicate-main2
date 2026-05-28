@@ -1,6 +1,7 @@
 'use client';
 
 import { type FormEvent, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Button, Card, TextField } from '@/components/ui';
 import { ApiError } from '@/lib/api';
@@ -68,7 +69,9 @@ export default function LoginPage() {
           </Button>
         </form>
 
-        <p className={styles.foot}>Access is provisioned by your company admin.</p>
+        <p className={styles.foot}>
+          New media buyer? <Link href="/signup">Create an account</Link>.
+        </p>
       </Card>
     </main>
   );
