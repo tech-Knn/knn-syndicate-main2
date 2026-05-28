@@ -45,12 +45,14 @@ click the way production AFS trackers (ClickFlare) do, then fire **Facebook Conv
   `redirect:{id}`, hit `go.10linesabout.com/go/…?fbclid=…` → 302 to the funnel article with
   `rc/ch/rac/styleId/txid` (not the fallback), and the Worker wrote `click:{txid}={redirectId,fbclid,ts}`
   (test keys cleaned up). `CLOUDFLARE_ACCOUNT_ID` + `CF_KV_NAMESPACE_ID` prefilled in `.env.staging`.
-- **ONE thing left to FIRE conversions live (a CF account secret — user must create it; wrangler's OAuth
-  lacks token-management scope so I can't mint it):** create a Cloudflare API token scoped **Account ›
-  Workers KV Storage › Edit**, set it as `CLOUDFLARE_API_TOKEN` in `/opt/rsoc/deploy/.env.staging`, recreate
-  `api`+`worker`. That single token unblocks BOTH the API's `readClick` (resolve click→pixel→fire CAPI) and
-  the launch KV-sync (auto-write `redirect:{id}` configs so real campaigns serve the funnel like the test
-  did). Until then the beacon 204s but the server logs `KvNotConfiguredError` → no CAPI fires.
+- **RESOLVED — conversion pipeline now fully wired on staging (2026-05-28).** User created a Cloudflare API
+  token (`rsoc-staging-kv`, scope **Account › Workers KV Storage › Edit**); I verified it active + proved
+  write/read/delete against namespace `0480a994…`, set it as `CLOUDFLARE_API_TOKEN` on the box, recreated
+  `api`+`worker`. **Live-verified `readClick`:** seeded a `click:{txid}` in KV, fired the public beacon →
+  204 with the api log showing a clean read (no more `KvNotConfiguredError`) → `unknown_ad` (fake redirect),
+  exactly per `events.service`. The same token also powers the launch KV-sync (write). **What's left to see
+  a real CAPI fire = a launched campaign** (creates the `redirectId → ad → adSet.pixel → campaign.buyer
+  token` chain + writes its `redirect:{id}` KV config). Infra is done; the rest is the normal product flow.
 
 ## Article generation — OpenAI (Phase 9.5, amends D16)
 
