@@ -23,6 +23,29 @@ export interface ConnectionStatus {
   connectedAt?: string;
 }
 
+/** A connected Facebook profile (one OAuth connection). A user may have several. */
+export interface FbProfile {
+  id: string;
+  fbUserId: string;
+  name: string;
+  status: FbStatus;
+  scopes: string[];
+  tokenExpiresAt: string;
+  lastError: string | null;
+  connectedAt: string;
+  adAccountCount: number;
+  pageCount: number;
+}
+
+/** A profile plus its owner — for the super-admin platform oversight view. */
+export interface FbProfileWithOwner extends FbProfile {
+  ownerId: string;
+  ownerName: string;
+  ownerEmail: string;
+  orgId: string;
+  orgName: string;
+}
+
 export interface FbAccount {
   id: string;
   fbAccountId: string;

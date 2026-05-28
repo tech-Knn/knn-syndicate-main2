@@ -80,7 +80,7 @@ model User {
 
   organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
   refreshTokens RefreshToken[]
-  fbConnection  FbConnection?
+  fbConnections FbConnection[]
   campaigns     Campaign[]
 
   @@index([orgId, status])
@@ -92,8 +92,11 @@ model User {
 model FbConnection {
   id             String             @id @default(uuid()) @db.Uuid
   orgId          String             @map("org_id") @db.Uuid
-  userId         String             @unique @map("user_id") @db.Uuid
+  userId         String             @map("user_id") @db.Uuid
   fbUserId       String             @map("fb_user_id")
+  /// The Facebook profile's display name (from /me). Shown in the UI; one user
+  /// may connect several profiles, so this is how they're identified.
+  fbName         String?            @map("fb_name")
   accessTokenEnc String             @map("access_token_enc")
   tokenExpiresAt DateTime           @map("token_expires_at")
   scopes         String             @default("")
@@ -106,6 +109,10 @@ model FbConnection {
   adAccounts FbAdAccount[]
   pages      FbPage[]
 
+  // One row per (user, FB profile): a user can connect multiple profiles, but
+  // reconnecting the same profile updates the existing row (no duplicates).
+  @@unique([userId, fbUserId])
+  @@index([userId])
   @@index([orgId, status])
   @@index([status, tokenExpiresAt])
   @@map("fb_connections")

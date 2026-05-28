@@ -43,6 +43,7 @@ function defaultNotify(n: Notification): void {
 }
 
 async function degrade(
+  connectionId: string,
   userId: string,
   orgId: string,
   message: string,
@@ -50,7 +51,7 @@ async function degrade(
 ): Promise<void> {
   await withSystem((tx) =>
     tx.fbConnection.update({
-      where: { userId },
+      where: { id: connectionId },
       data: { status: FbConnectionStatus.CONNECTION_BROKEN, lastError: message },
     }),
   );
@@ -59,7 +60,7 @@ async function degrade(
     userId,
     type: 'fb_connection_broken',
     title: 'Facebook connection lost',
-    body: 'Reconnect your Facebook account to resume ad launches and stats.',
+    body: 'Reconnect your Facebook profile to resume ad launches and stats.',
   });
 }
 
@@ -83,7 +84,7 @@ export async function refreshFbTokens(deps: TokenRefreshDeps = {}): Promise<Toke
     const msToExpiry = conn.tokenExpiresAt.getTime() - nowMs;
 
     if (msToExpiry <= 0) {
-      await degrade(conn.userId, conn.orgId, 'Access token expired', notify);
+      await degrade(conn.id, conn.userId, conn.orgId, 'Access token expired', notify);
       summary.broken += 1;
       continue;
     }
@@ -114,7 +115,7 @@ export async function refreshFbTokens(deps: TokenRefreshDeps = {}): Promise<Toke
       }
     } catch (err) {
       if (err instanceof FbConnectionBrokenError) {
-        await degrade(conn.userId, conn.orgId, err.message, notify);
+        await degrade(conn.id, conn.userId, conn.orgId, err.message, notify);
         summary.broken += 1;
       } else {
         console.error(`[token-refresh] connection ${conn.id} failed:`, (err as Error).message);

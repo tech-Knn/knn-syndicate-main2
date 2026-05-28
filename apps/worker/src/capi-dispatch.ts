@@ -49,11 +49,15 @@ export async function dispatchConversion(
     return { status: 'failed' };
   }
 
-  // Resolve the buyer's token (fresh — handles rotation since ingest).
-  const campaign = await withSystem((tx) => tx.campaign.findUnique({ where: { id: ev.campaignId }, select: { buyerId: true } }));
-  const conn = campaign
-    ? await withSystem((tx) => tx.fbConnection.findUnique({ where: { userId: campaign.buyerId }, select: { accessTokenEnc: true, status: true } }))
+  // Resolve the token of the connection that owns the campaign's ad account (fresh —
+  // handles rotation since ingest; a buyer may have several connected profiles).
+  const campaign = await withSystem((tx) => tx.campaign.findUnique({ where: { id: ev.campaignId }, select: { adAccountId: true } }));
+  const acc = campaign?.adAccountId
+    ? await withSystem((tx) =>
+        tx.fbAdAccount.findUnique({ where: { id: campaign.adAccountId! }, select: { connection: { select: { accessTokenEnc: true, status: true } } } }),
+      )
     : null;
+  const conn = acc?.connection ?? null;
   if (!conn || conn.status === FbConnectionStatus.CONNECTION_BROKEN) {
     await markFailed(ev.id, 'no usable Facebook connection');
     return { status: 'failed' };

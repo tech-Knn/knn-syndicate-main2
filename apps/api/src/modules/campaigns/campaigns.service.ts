@@ -32,11 +32,13 @@ async function ownedAssetIds(
   tx: TxClient,
   userId: string,
 ): Promise<{ accounts: Set<string>; pages: Set<string>; pixels: Set<string> }> {
-  const conn = await tx.fbConnection.findUnique({ where: { userId }, select: { id: true } });
-  if (!conn) return { accounts: new Set(), pages: new Set(), pixels: new Set() };
+  // A user may have several connected FB profiles — their usable assets span all of them.
+  const conns = await tx.fbConnection.findMany({ where: { userId }, select: { id: true } });
+  if (conns.length === 0) return { accounts: new Set(), pages: new Set(), pixels: new Set() };
+  const connIds = conns.map((c) => c.id);
   const [accounts, pages] = await Promise.all([
-    tx.fbAdAccount.findMany({ where: { connectionId: conn.id }, select: { id: true } }),
-    tx.fbPage.findMany({ where: { connectionId: conn.id }, select: { id: true } }),
+    tx.fbAdAccount.findMany({ where: { connectionId: { in: connIds } }, select: { id: true } }),
+    tx.fbPage.findMany({ where: { connectionId: { in: connIds } }, select: { id: true } }),
   ]);
   const accountIds = accounts.map((a) => a.id);
   const pixels = await tx.fbPixel.findMany({

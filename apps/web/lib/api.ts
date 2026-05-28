@@ -5,12 +5,13 @@ import {
   type AuditRow,
   type AfsChannelRow,
   type Campaign,
-  type ConnectionStatus,
   type CreateOrgInput,
   type DomainRow,
   type FbAccount,
   type FbPage,
   type FbPixel,
+  type FbProfile,
+  type FbProfileWithOwner,
   type OfferDomainOption,
   type OfferInput,
   type OfferRow,
@@ -226,24 +227,30 @@ export const auth = {
 };
 
 export const facebook = {
-  status: async (): Promise<ConnectionStatus> => parse(await authedFetch('/api/facebook/status')),
   authUrl: async (): Promise<{ url: string }> => parse(await authedFetch('/api/facebook/auth-url')),
+  // The actor's own connected profiles.
+  profiles: async (): Promise<FbProfile[]> =>
+    (await parse<{ profiles: FbProfile[] }>(await authedFetch('/api/facebook/profiles'))).profiles,
+  // Every connected profile across the platform (super-admin oversight).
+  allProfiles: async (): Promise<FbProfileWithOwner[]> =>
+    (await parse<{ profiles: FbProfileWithOwner[] }>(await authedFetch('/api/facebook/profiles/all'))).profiles,
+  syncProfile: async (id: string): Promise<SyncResult> =>
+    parse(await authedFetch(`/api/facebook/profiles/${id}/sync`, { method: 'POST' })),
+  disconnectProfile: async (id: string): Promise<void> =>
+    parse(await authedFetch(`/api/facebook/profiles/${id}`, { method: 'DELETE' })),
+  profileAccounts: async (id: string): Promise<FbAccount[]> =>
+    (await parse<{ accounts: FbAccount[] }>(await authedFetch(`/api/facebook/profiles/${id}/accounts`))).accounts,
+  profilePages: async (id: string): Promise<FbPage[]> =>
+    (await parse<{ pages: FbPage[] }>(await authedFetch(`/api/facebook/profiles/${id}/pages`))).pages,
+  // Aggregated across all the actor's profiles — feeds the campaign launcher.
   accounts: async (): Promise<FbAccount[]> =>
     (await parse<{ accounts: FbAccount[] }>(await authedFetch('/api/facebook/accounts'))).accounts,
   pages: async (): Promise<FbPage[]> =>
     (await parse<{ pages: FbPage[] }>(await authedFetch('/api/facebook/pages'))).pages,
   accountPages: async (accountId: string): Promise<FbPage[]> =>
-    (
-      await parse<{ pages: FbPage[] }>(await authedFetch(`/api/facebook/accounts/${accountId}/pages`))
-    ).pages,
+    (await parse<{ pages: FbPage[] }>(await authedFetch(`/api/facebook/accounts/${accountId}/pages`))).pages,
   pixels: async (accountId: string): Promise<FbPixel[]> =>
-    (
-      await parse<{ pixels: FbPixel[] }>(
-        await authedFetch(`/api/facebook/accounts/${accountId}/pixels`),
-      )
-    ).pixels,
-  sync: async (): Promise<SyncResult> => parse(await authedFetch('/api/facebook/sync', { method: 'POST' })),
-  disconnect: async (): Promise<void> => parse(await authedFetch('/api/facebook/connection', { method: 'DELETE' })),
+    (await parse<{ pixels: FbPixel[] }>(await authedFetch(`/api/facebook/accounts/${accountId}/pixels`))).pixels,
 };
 
 export const campaigns = {

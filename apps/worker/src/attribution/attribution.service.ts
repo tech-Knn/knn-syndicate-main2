@@ -79,13 +79,13 @@ async function pullFbStatsForCampaign(
 ): Promise<number> {
   return withSystem(async (tx) => {
     if (!campaign.adAccountId) return 0;
-    const conn = await tx.fbConnection.findUnique({ where: { userId: campaign.buyerId } });
-    if (!conn || conn.status === FbConnectionStatus.CONNECTION_BROKEN) return 0;
+    // Token comes from the connection that owns the campaign's ad account (a buyer
+    // may have several connected profiles), not "the buyer's (only) connection".
     const account = await tx.fbAdAccount.findUnique({
       where: { id: campaign.adAccountId },
-      select: { fbAccountId: true, currency: true },
+      select: { fbAccountId: true, currency: true, connection: { select: { accessTokenEnc: true, status: true } } },
     });
-    if (!account) return 0;
+    if (!account || account.connection.status === FbConnectionStatus.CONNECTION_BROKEN) return 0;
 
     const ads = await tx.ad.findMany({
       where: { adSet: { campaignId: campaign.id }, fbAdId: { not: null } },
@@ -97,7 +97,7 @@ async function pullFbStatsForCampaign(
     const rows: FbAdInsightRow[] = await deps.fetchInsights({
       fbCampaignId: campaign.fbCampaignId,
       accountId: account.fbAccountId,
-      accessToken: decryptToken(conn.accessTokenEnc),
+      accessToken: decryptToken(account.connection.accessTokenEnc),
       since,
       until,
     });

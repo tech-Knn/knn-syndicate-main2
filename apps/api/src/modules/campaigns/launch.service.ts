@@ -74,17 +74,19 @@ async function resolveLaunchPlan(auth: AuthContext, campaignId: string): Promise
     if (issues.length > 0) throw new AppError(422, 'Campaign is not complete enough to launch', issues);
     if (!campaign.adAccountId || !campaign.pageId) throw new AppError(400, 'Campaign is missing its ad account or page');
 
-    const conn = await tx.fbConnection.findUnique({ where: { userId: campaign.buyerId } });
-    if (!conn) throw new AppError(400, 'The campaign owner has no Facebook connection');
-    if (conn.status === FbConnectionStatus.CONNECTION_BROKEN) {
-      throw new AppError(409, 'Facebook connection is broken — reconnect first');
-    }
-
+    // The launch token comes from the connection that OWNS the campaign's chosen ad
+    // account — a buyer may have several connected profiles, so we must not assume one.
     const [adAccount, page] = await Promise.all([
-      tx.fbAdAccount.findUnique({ where: { id: campaign.adAccountId }, select: { fbAccountId: true } }),
+      tx.fbAdAccount.findUnique({
+        where: { id: campaign.adAccountId },
+        select: { fbAccountId: true, connection: { select: { accessTokenEnc: true, status: true } } },
+      }),
       tx.fbPage.findUnique({ where: { id: campaign.pageId }, select: { fbPageId: true } }),
     ]);
     if (!adAccount || !page) throw new AppError(400, 'Selected ad account/page no longer exists');
+    if (adAccount.connection.status === FbConnectionStatus.CONNECTION_BROKEN) {
+      throw new AppError(409, 'Facebook connection is broken — reconnect first');
+    }
 
     const adSets = await Promise.all(
       campaign.adSets.map(async (set) => {
@@ -103,7 +105,7 @@ async function resolveLaunchPlan(auth: AuthContext, campaignId: string): Promise
       }),
     );
 
-    return { campaign, token: decryptToken(conn.accessTokenEnc), fbAccountId: adAccount.fbAccountId, fbPageId: page.fbPageId, adSets };
+    return { campaign, token: decryptToken(adAccount.connection.accessTokenEnc), fbAccountId: adAccount.fbAccountId, fbPageId: page.fbPageId, adSets };
   });
 }
 

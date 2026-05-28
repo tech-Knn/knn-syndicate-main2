@@ -33,15 +33,19 @@ export interface MetaRejectionDeps {
 
 const DISAPPROVED = 'DISAPPROVED';
 
-/** Resolve the buyer's token + ad-account, then fetch the campaign's ad statuses. */
+/** Resolve the ad-account's connection token, then fetch the campaign's ad statuses. */
 async function defaultFetchStatuses(c: CampaignRow): Promise<AdStatusDTO[]> {
   if (!c.fbCampaignId || !c.adAccountId) return [];
-  const { conn, acc } = await withSystem(async (tx) => ({
-    conn: await tx.fbConnection.findUnique({ where: { userId: c.buyerId }, select: { accessTokenEnc: true, status: true } }),
-    acc: await tx.fbAdAccount.findUnique({ where: { id: c.adAccountId! }, select: { fbAccountId: true } }),
-  }));
-  if (!conn || conn.status === 'CONNECTION_BROKEN' || !acc) return [];
-  return fetchCampaignAdStatuses(acc.fbAccountId, decryptToken(conn.accessTokenEnc), c.fbCampaignId);
+  // Use the token of the connection that owns the campaign's ad account (a buyer
+  // may have several connected profiles), not "the buyer's (only) connection".
+  const acc = await withSystem((tx) =>
+    tx.fbAdAccount.findUnique({
+      where: { id: c.adAccountId! },
+      select: { fbAccountId: true, connection: { select: { accessTokenEnc: true, status: true } } },
+    }),
+  );
+  if (!acc || acc.connection.status === 'CONNECTION_BROKEN') return [];
+  return fetchCampaignAdStatuses(acc.fbAccountId, decryptToken(acc.connection.accessTokenEnc), c.fbCampaignId);
 }
 
 const defaultNotify = (n: Notification): void => {

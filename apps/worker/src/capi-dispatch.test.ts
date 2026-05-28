@@ -45,8 +45,10 @@ beforeAll(async () => {
     const org = await tx.organization.create({ data: { name: 'Capi Co', slug: `capi-${suffix}` } });
     orgId = org.id;
     buyerId = (await tx.user.create({ data: { orgId, email: `capi-${suffix}@a.com`, name: 'B', passwordHash: 'x', role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE } })).id;
-    await tx.fbConnection.create({ data: { orgId, userId: buyerId, fbUserId: 'fb', accessTokenEnc: encryptToken('tok-xyz'), tokenExpiresAt: new Date(Date.now() + 60 * 86_400_000) } });
-    campaignId = (await tx.campaign.create({ data: { orgId, buyerId, name: 'c', status: 'ACTIVE', keywords: [] } })).id;
+    const conn = await tx.fbConnection.create({ data: { orgId, userId: buyerId, fbUserId: 'fb', accessTokenEnc: encryptToken('tok-xyz'), tokenExpiresAt: new Date(Date.now() + 60 * 86_400_000) } });
+    // The CAPI token is resolved via the campaign's ad account → its connection.
+    const acct = await tx.fbAdAccount.create({ data: { orgId, connectionId: conn.id, fbAccountId: 'act_capi', name: 'A', currency: 'USD', timezone: 'Asia/Kolkata', status: '1' } });
+    campaignId = (await tx.campaign.create({ data: { orgId, buyerId, name: 'c', status: 'ACTIVE', keywords: [], adAccountId: acct.id } })).id;
   });
 });
 

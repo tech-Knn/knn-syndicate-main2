@@ -14,26 +14,44 @@ import {
   getMe,
   isFbConfigured,
 } from '@knn/fb';
+import { ROLES } from '@knn/shared';
 import { AppError } from '../../lib/errors.js';
 import { notify } from '../../lib/notify.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 import { signFbState, verifyFbState } from './state.js';
 
-export interface ConnectionStatus {
-  connected: boolean;
-  status?: FbConnectionStatus;
-  fbUserId?: string;
-  scopes?: string[];
-  tokenExpiresAt?: Date;
-  lastError?: string | null;
-  connectedAt?: Date;
+/** A connected Facebook profile (one OAuth connection). A user may have several. */
+export interface FbProfile {
+  id: string;
+  fbUserId: string;
+  name: string;
+  status: FbConnectionStatus;
+  scopes: string[];
+  tokenExpiresAt: Date;
+  lastError: string | null;
+  connectedAt: Date;
+  adAccountCount: number;
+  pageCount: number;
+}
+
+/** A profile plus its owner — for the super-admin platform oversight view. */
+export interface FbProfileWithOwner extends FbProfile {
+  ownerId: string;
+  ownerName: string;
+  ownerEmail: string;
+  orgId: string;
+  orgName: string;
 }
 
 export interface SyncResult {
   adAccounts: number;
   pages: number;
   pixels: number;
+}
+
+function profileName(c: { fbName: string | null; fbUserId: string }): string {
+  return c.fbName?.trim() || `Profile ${c.fbUserId}`;
 }
 
 /** Build the Facebook OAuth dialog URL for the authenticated user (spec §5.2.1). */
@@ -117,31 +135,32 @@ async function syncFromFacebook(args: {
  * Mark a connection broken (DECISION D13): flip status to CONNECTION_BROKEN, stash
  * the error, and emit a notification so the buyer can one-click reconnect. The
  * durable in-app signal is the row's own `status` — polling/launches for this
- * account stop until it's reconnected.
+ * profile stop until it's reconnected. Keyed by connection id (a user can have many).
  */
-export async function markConnectionBroken(userId: string, message: string): Promise<void> {
+export async function markConnectionBroken(connectionId: string, message: string): Promise<void> {
   await withSystem(async (tx) => {
-    const conn = await tx.fbConnection.findUnique({ where: { userId } });
+    const conn = await tx.fbConnection.findUnique({ where: { id: connectionId } });
     if (!conn) return;
     await tx.fbConnection.update({
-      where: { userId },
+      where: { id: connectionId },
       data: { status: FbConnectionStatus.CONNECTION_BROKEN, lastError: message },
     });
     await notify({
       orgId: conn.orgId,
-      userId,
+      userId: conn.userId,
       type: 'fb_connection_broken',
       title: 'Facebook connection lost',
-      body: 'Reconnect your Facebook account to resume ad launches and stats.',
+      body: `Reconnect the Facebook profile “${profileName(conn)}” to resume ad launches and stats.`,
     });
   });
 }
 
 /**
- * OAuth callback: exchange the code for a long-lived token, identify the user,
+ * OAuth callback: exchange the code for a long-lived token, identify the FB profile,
  * store the encrypted token, and run an initial sync. Called from a PUBLIC route
  * (Facebook redirects the browser here), so trust comes entirely from the signed
- * `state`, not a session.
+ * `state`, not a session. Upserts on (userId, fbUserId): connecting a NEW profile
+ * adds a row; reconnecting the SAME profile refreshes it.
  */
 export async function handleCallback(code: string, state: string): Promise<void> {
   const { userId, orgId } = await verifyFbState(state);
@@ -156,18 +175,19 @@ export async function handleCallback(code: string, state: string): Promise<void>
 
   const conn = await withSystem((tx) =>
     tx.fbConnection.upsert({
-      where: { userId },
+      where: { userId_fbUserId: { userId, fbUserId: me.id } },
       create: {
         orgId,
         userId,
         fbUserId: me.id,
+        fbName: me.name,
         accessTokenEnc,
         tokenExpiresAt,
         scopes,
         status: FbConnectionStatus.ACTIVE,
       },
       update: {
-        fbUserId: me.id,
+        fbName: me.name,
         accessTokenEnc,
         tokenExpiresAt,
         scopes,
@@ -183,15 +203,88 @@ export async function handleCallback(code: string, state: string): Promise<void>
     await syncFromFacebook({ connectionId: conn.id, orgId, accessToken: long.accessToken });
   } catch (err) {
     if (err instanceof FbConnectionBrokenError) {
-      await markConnectionBroken(userId, err.message);
+      await markConnectionBroken(conn.id, err.message);
     }
   }
 }
 
-/** Re-pull the account graph for the current user's connection. */
-export async function resync(auth: AuthContext): Promise<SyncResult> {
-  const conn = await runScoped(auth, (tx) => tx.fbConnection.findUnique({ where: { userId: auth.userId } }));
-  if (!conn) throw new AppError(404, 'No Facebook connection');
+/** The authenticated user's own connected profiles (with asset counts). */
+export async function listProfiles(auth: AuthContext): Promise<FbProfile[]> {
+  return runScoped(auth, async (tx) => {
+    const conns = await tx.fbConnection.findMany({
+      where: { userId: auth.userId },
+      orderBy: { connectedAt: 'asc' },
+      include: { _count: { select: { adAccounts: true, pages: true } } },
+    });
+    return conns.map((c) => ({
+      id: c.id,
+      fbUserId: c.fbUserId,
+      name: profileName(c),
+      status: c.status,
+      scopes: c.scopes ? c.scopes.split(',') : [],
+      tokenExpiresAt: c.tokenExpiresAt,
+      lastError: c.lastError,
+      connectedAt: c.connectedAt,
+      adAccountCount: c._count.adAccounts,
+      pageCount: c._count.pages,
+    }));
+  });
+}
+
+/** ALL connected profiles across the platform (super-admin oversight only). */
+export async function listAllProfiles(): Promise<FbProfileWithOwner[]> {
+  return withSystem(async (tx) => {
+    const conns = await tx.fbConnection.findMany({
+      orderBy: { connectedAt: 'desc' },
+      include: {
+        _count: { select: { adAccounts: true, pages: true } },
+        user: { select: { id: true, name: true, email: true, orgId: true } },
+      },
+    });
+    const orgIds = [...new Set(conns.map((c) => c.user.orgId))];
+    const orgs = await tx.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } });
+    const orgMap = new Map(orgs.map((o) => [o.id, o.name]));
+    return conns.map((c) => ({
+      id: c.id,
+      fbUserId: c.fbUserId,
+      name: profileName(c),
+      status: c.status,
+      scopes: c.scopes ? c.scopes.split(',') : [],
+      tokenExpiresAt: c.tokenExpiresAt,
+      lastError: c.lastError,
+      connectedAt: c.connectedAt,
+      adAccountCount: c._count.adAccounts,
+      pageCount: c._count.pages,
+      ownerId: c.user.id,
+      ownerName: c.user.name,
+      ownerEmail: c.user.email,
+      orgId: c.user.orgId,
+      orgName: orgMap.get(c.user.orgId) ?? '—',
+    }));
+  });
+}
+
+/**
+ * Load one connection the actor may act on: a user can touch only their own
+ * profiles; a super-admin can touch any (oversight). Returns 404 otherwise.
+ */
+async function loadConnection(auth: AuthContext, connectionId: string) {
+  const conn = await runScoped(auth, (tx) =>
+    tx.fbConnection.findUnique({
+      where: { id: connectionId },
+      select: { id: true, userId: true, orgId: true, accessTokenEnc: true, status: true },
+    }),
+  );
+  if (!conn) throw new AppError(404, 'Facebook profile not found');
+  if (auth.role !== ROLES.SUPER_ADMIN && conn.userId !== auth.userId) {
+    throw new AppError(404, 'Facebook profile not found');
+  }
+  return conn;
+}
+
+/** Re-pull the account graph for one of the actor's profiles. */
+export async function resync(auth: AuthContext, connectionId: string): Promise<SyncResult> {
+  const conn = await loadConnection(auth, connectionId);
   if (conn.status === FbConnectionStatus.CONNECTION_BROKEN) {
     throw new AppError(409, 'Facebook connection is broken — reconnect first');
   }
@@ -200,69 +293,76 @@ export async function resync(auth: AuthContext): Promise<SyncResult> {
     return await syncFromFacebook({ connectionId: conn.id, orgId: conn.orgId, accessToken });
   } catch (err) {
     if (err instanceof FbConnectionBrokenError) {
-      await markConnectionBroken(conn.userId, err.message);
+      await markConnectionBroken(conn.id, err.message);
       throw new AppError(409, 'Facebook connection is broken — reconnect');
     }
     throw err;
   }
 }
 
-export async function getConnectionStatus(auth: AuthContext): Promise<ConnectionStatus> {
-  return runScoped(auth, async (tx) => {
-    const conn = await tx.fbConnection.findUnique({ where: { userId: auth.userId } });
-    if (!conn) return { connected: false };
-    return {
-      connected: true,
-      status: conn.status,
-      fbUserId: conn.fbUserId,
-      scopes: conn.scopes ? conn.scopes.split(',') : [],
-      tokenExpiresAt: conn.tokenExpiresAt,
-      lastError: conn.lastError,
-      connectedAt: conn.connectedAt,
-    };
-  });
+/** Ad accounts for one profile (the Facebook-tab drill-down). */
+export async function listProfileAccounts(auth: AuthContext, connectionId: string) {
+  await loadConnection(auth, connectionId);
+  return runScoped(auth, (tx) => tx.fbAdAccount.findMany({ where: { connectionId }, orderBy: { name: 'asc' } }));
 }
 
-async function requireConnection(auth: AuthContext): Promise<{ id: string }> {
-  const conn = await runScoped(auth, (tx) =>
-    tx.fbConnection.findUnique({ where: { userId: auth.userId }, select: { id: true } }),
+/** Pages for one profile (the Facebook-tab drill-down). */
+export async function listProfilePages(auth: AuthContext, connectionId: string) {
+  await loadConnection(auth, connectionId);
+  return runScoped(auth, (tx) => tx.fbPage.findMany({ where: { connectionId }, orderBy: { name: 'asc' } }));
+}
+
+/** The actor's own connection ids (across all their profiles). */
+async function ownConnectionIds(auth: AuthContext): Promise<string[]> {
+  const conns = await runScoped(auth, (tx) =>
+    tx.fbConnection.findMany({ where: { userId: auth.userId }, select: { id: true } }),
   );
-  if (!conn) throw new AppError(404, 'No Facebook connection');
-  return conn;
+  return conns.map((c) => c.id);
 }
 
+/** All ad accounts the actor can use to launch (aggregated across their profiles). */
 export async function listAccounts(auth: AuthContext) {
-  const conn = await requireConnection(auth);
+  const ids = await ownConnectionIds(auth);
+  if (ids.length === 0) return [];
   return runScoped(auth, (tx) =>
-    tx.fbAdAccount.findMany({ where: { connectionId: conn.id }, orderBy: { name: 'asc' } }),
+    tx.fbAdAccount.findMany({ where: { connectionId: { in: ids } }, orderBy: { name: 'asc' } }),
   );
 }
 
+/** All pages the actor can use to launch (aggregated across their profiles). */
 export async function listPages(auth: AuthContext) {
-  const conn = await requireConnection(auth);
+  const ids = await ownConnectionIds(auth);
+  if (ids.length === 0) return [];
   return runScoped(auth, (tx) =>
-    tx.fbPage.findMany({ where: { connectionId: conn.id }, orderBy: { name: 'asc' } }),
+    tx.fbPage.findMany({ where: { connectionId: { in: ids } }, orderBy: { name: 'asc' } }),
   );
 }
 
-/**
- * Pages promotable by a specific ad account (live from FB via `promote_pages`),
- * upserted into fb_pages so a campaign can reference them. This scopes the page
- * picker to the chosen ad account instead of the whole connection.
- */
-export async function listAccountPages(auth: AuthContext, adAccountId: string) {
+/** Ad account belonging to the actor (any of their profiles), or any for a super-admin. */
+async function loadOwnedAccount(auth: AuthContext, adAccountId: string) {
   const account = await runScoped(auth, (tx) =>
     tx.fbAdAccount.findFirst({
       where: { id: adAccountId },
       select: {
+        id: true,
         fbAccountId: true,
         connection: { select: { id: true, userId: true, accessTokenEnc: true, status: true } },
       },
     }),
   );
-  if (!account || account.connection.userId !== auth.userId) {
+  if (!account || (auth.role !== ROLES.SUPER_ADMIN && account.connection.userId !== auth.userId)) {
     throw new AppError(404, 'Ad account not found');
   }
+  return account;
+}
+
+/**
+ * Pages promotable by a specific ad account (live from FB via `promote_pages`),
+ * upserted into fb_pages so a campaign can reference them. Scopes the page picker
+ * to the chosen ad account instead of the whole connection.
+ */
+export async function listAccountPages(auth: AuthContext, adAccountId: string) {
+  const account = await loadOwnedAccount(auth, adAccountId);
   if (account.connection.status === FbConnectionStatus.CONNECTION_BROKEN) {
     throw new AppError(409, 'Facebook connection is broken — reconnect first');
   }
@@ -272,7 +372,7 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
     pages = await fetchPromotePages(account.fbAccountId, decryptToken(account.connection.accessTokenEnc));
   } catch (err) {
     if (err instanceof FbConnectionBrokenError) {
-      await markConnectionBroken(auth.userId, err.message);
+      await markConnectionBroken(account.connection.id, err.message);
       throw new AppError(409, 'Facebook connection is broken — reconnect');
     }
     throw err;
@@ -296,21 +396,12 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
 }
 
 export async function listPixels(auth: AuthContext, adAccountId: string) {
-  const conn = await requireConnection(auth);
-  return runScoped(auth, async (tx) => {
-    const account = await tx.fbAdAccount.findFirst({
-      where: { id: adAccountId, connectionId: conn.id },
-      select: { id: true },
-    });
-    if (!account) throw new AppError(404, 'Ad account not found');
-    return tx.fbPixel.findMany({ where: { adAccountId: account.id }, orderBy: { name: 'asc' } });
-  });
+  const account = await loadOwnedAccount(auth, adAccountId);
+  return runScoped(auth, (tx) => tx.fbPixel.findMany({ where: { adAccountId: account.id }, orderBy: { name: 'asc' } }));
 }
 
-export async function disconnect(auth: AuthContext): Promise<void> {
-  await runScoped(auth, async (tx) => {
-    const conn = await tx.fbConnection.findUnique({ where: { userId: auth.userId }, select: { id: true } });
-    if (!conn) throw new AppError(404, 'No Facebook connection');
-    await tx.fbConnection.delete({ where: { id: conn.id } });
-  });
+/** Disconnect one profile (deletes the connection + cascades its accounts/pages/pixels). */
+export async function disconnect(auth: AuthContext, connectionId: string): Promise<void> {
+  await loadConnection(auth, connectionId);
+  await runScoped(auth, (tx) => tx.fbConnection.delete({ where: { id: connectionId } }));
 }
