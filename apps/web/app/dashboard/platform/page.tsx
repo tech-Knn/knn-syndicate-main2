@@ -41,6 +41,7 @@ export default function PlatformPage() {
   const [ads, setAds] = useState<AdsenseStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [adsNote, setAdsNote] = useState<string | null>(null);
+  const [rangeInput, setRangeInput] = useState('');
 
   useEffect(() => {
     if (user && user.role !== 'SUPER_ADMIN') router.replace('/dashboard');
@@ -70,8 +71,8 @@ export default function PlatformPage() {
   const syncAdsense = async (): Promise<void> => {
     setSyncing(true);
     try {
-      const r = await adsense.sync();
-      setAdsNote(`Synced ${r.synced} channel${r.synced === 1 ? '' : 's'} (${r.added} new) from ${r.account ?? 'AdSense'}.`);
+      const r = await adsense.sync(rangeInput.trim() || undefined);
+      setAdsNote(`Synced ${r.synced} channel${r.synced === 1 ? '' : 's'} (${r.added} new) in ranges ${r.ranges || '—'}.`);
       loadChannels();
     } catch {
       setAdsNote('Channel sync failed — confirm AFS access is granted, then retry.');
@@ -103,7 +104,13 @@ export default function PlatformPage() {
   useEffect(() => {
     loadChannels();
     void admin.settings().then(setSettings).catch(() => setSettings({ compliancePrompt: '', articleDomain: '', redirectDomain: '' }));
-    void adsense.status().then(setAds).catch(() => setAds({ connected: false }));
+    void adsense
+      .status()
+      .then((s) => {
+        setAds(s);
+        if (s.channelRanges) setRangeInput(s.channelRanges);
+      })
+      .catch(() => setAds({ connected: false }));
   }, [loadChannels]);
 
   const persistCut = async (orgId: string): Promise<void> => {
@@ -231,13 +238,28 @@ export default function PlatformPage() {
               {ads.account && <span className="mono">{ads.account}</span>}
               {!ads.account && <span className={styles.subtle}>No AFS account resolved — reconnect once AFS access is granted.</span>}
             </div>
-            <div className={styles.adsActions}>
-              <Button onClick={() => void syncAdsense()} loading={syncing} disabled={!ads.account}>
-                Sync channels
-              </Button>
-              <Button variant="ghost" onClick={() => void disconnectAdsense()}>
-                Disconnect
-              </Button>
+            <div className={styles.adsRangeBox}>
+              <label className={styles.fieldLabel} htmlFor="chranges">
+                Channel id ranges
+              </label>
+              <input
+                id="chranges"
+                className={styles.rangeInput}
+                value={rangeInput}
+                onChange={(e) => setRangeInput(e.target.value)}
+                placeholder="e.g. 03700-05000, 09000-09500"
+              />
+              <span className={styles.fieldHint}>
+                Only these series import (the account holds 100k+ channels split across teams).
+              </span>
+              <div className={styles.adsActions}>
+                <Button onClick={() => void syncAdsense()} loading={syncing} disabled={!ads.account || !rangeInput.trim()}>
+                  Sync channels
+                </Button>
+                <Button variant="ghost" onClick={() => void disconnectAdsense()}>
+                  Disconnect
+                </Button>
+              </div>
             </div>
           </div>
         ) : (

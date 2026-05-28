@@ -369,8 +369,14 @@ export const stats = {
 export const adsense = {
   status: async (): Promise<AdsenseStatus> => parse(await authedFetch('/api/adsense/status')),
   authUrl: async (): Promise<{ url: string }> => parse(await authedFetch('/api/adsense/auth-url')),
-  sync: async (): Promise<{ synced: number; added: number; account: string | null }> =>
-    parse(await authedFetch('/api/adsense/sync', { method: 'POST' })),
+  sync: async (ranges?: string): Promise<{ synced: number; added: number; account: string | null; ranges: string }> =>
+    parse(
+      await authedFetch('/api/adsense/sync', {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({ ranges }),
+      }),
+    ),
   disconnect: async (): Promise<void> => parse(await authedFetch('/api/adsense/connection', { method: 'DELETE' })),
 };
 

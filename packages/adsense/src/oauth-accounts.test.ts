@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   buildGoogleAuthUrl,
   discoverChannels,
+  discoverChannelsInRanges,
   exchangeGoogleCode,
   listCustomChannels,
+  parseChannelRanges,
   refreshGoogleToken,
   toCustomChannel,
 } from './index.js';
@@ -72,6 +74,31 @@ describe('AdSense Management listing', () => {
     ]);
     const channels = await listCustomChannels('at', 'accounts/p/adclients/c', { fetch, baseUrl: 'https://adsense.googleapis.com/v2' });
     expect(channels.map((c) => c.channelId)).toEqual(['1', '2']);
+  });
+
+  it('parses channel-range specs (normalizes reversed; single ids)', () => {
+    expect(parseChannelRanges('03700-05000, 00500')).toEqual([
+      { start: 3700, end: 5000 },
+      { start: 500, end: 500 },
+    ]);
+    expect(parseChannelRanges('5000-3700')).toEqual([{ start: 3700, end: 5000 }]);
+  });
+
+  it('discoverChannelsInRanges filters to the ranges and early-stops past the max', async () => {
+    const page = (ids: string[], next?: string) => ({
+      customChannels: ids.map((id) => ({ name: `accounts/p/adclients/c/customchannels/${id}`, displayName: id })),
+      ...(next ? { nextPageToken: next } : {}),
+    });
+    const { fetch, calls } = stubFetch([
+      page(['0498', '0499', '0500', '0501', '0502', '0503'], 'p2'),
+      page(['0600']), // page 2 — must NOT be fetched (we overshot 501 on page 1)
+    ]);
+    const chs = await discoverChannelsInRanges('at', 'accounts/p/adclients/c', [{ start: 500, end: 501 }], {
+      fetch,
+      baseUrl: 'https://adsense.googleapis.com/v2',
+    });
+    expect(chs.map((c) => c.channelId)).toEqual(['0500', '0501']);
+    expect(calls.length).toBe(1); // stopped after seeing 0502 (> max end), no page 2
   });
 
   it('discoverChannels filters to AFS ad clients when afsOnly is set', async () => {

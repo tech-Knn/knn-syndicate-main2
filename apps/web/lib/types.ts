@@ -164,6 +164,7 @@ export interface AdsenseStatus {
   email?: string | null;
   account?: string | null;
   adClient?: string | null;
+  channelRanges?: string | null;
   status?: string;
   scopes?: string[];
   connectedAt?: string;

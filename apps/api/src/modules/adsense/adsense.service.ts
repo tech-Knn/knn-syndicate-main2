@@ -2,11 +2,12 @@ import { env } from '@knn/config';
 import { withSystem } from '@knn/db';
 import {
   buildGoogleAuthUrl,
-  discoverChannels,
+  discoverChannelsInRanges,
   exchangeGoogleCode,
   isGoogleConfigured,
   listAccounts,
   listAdClients,
+  parseChannelRanges,
   refreshGoogleToken,
 } from '@knn/adsense';
 import { decryptToken, encryptToken } from '@knn/fb';
@@ -30,6 +31,7 @@ export interface AdsenseStatus {
   email?: string | null;
   account?: string | null;
   adClient?: string | null;
+  channelRanges?: string | null;
   status?: string;
   scopes?: string[];
   connectedAt?: string;
@@ -45,6 +47,7 @@ export async function getStatus(): Promise<AdsenseStatus> {
       email: c.googleEmail,
       account: c.adsenseAccount,
       adClient: c.adsenseAdClient,
+      channelRanges: c.channelRanges,
       status: c.status,
       scopes: c.scopes ? c.scopes.split(' ') : [],
       connectedAt: c.connectedAt.toISOString(),
@@ -153,22 +156,27 @@ async function freshAccessToken(c: ConnRow): Promise<string> {
 }
 
 /**
- * Pull the publisher's AFS custom channels (capped) and bulk-insert NEW ones into the
- * global pool. AFS partner accounts can hold 10k+ channels, so we cap the seed and
- * insert in chunks (existing channels are left untouched — never clobber a channel's
- * status / current campaign). One channel per concurrent campaign is plenty.
+ * Import the AFS channels in the admin-selected id ranges into the pool. The AFS
+ * account holds 100k+ channels split across teams, so we only pull the ranges this
+ * platform owns (`rangesSpec` overrides + persists the stored selection). NEW channels
+ * are bulk-inserted; existing ones are left untouched (status / current campaign).
  */
-const MAX_CHANNELS_SEED = 2000;
-
 export async function syncChannels(
   actor: AuthContext,
-): Promise<{ synced: number; added: number; account: string | null }> {
+  rangesSpec?: string,
+): Promise<{ synced: number; added: number; account: string | null; ranges: string }> {
   const conn = await withSystem((tx) => tx.googleConnection.findUnique({ where: { id: PLATFORM } }));
   if (!conn) throw new AppError(409, 'AdSense is not connected');
-  if (!conn.adsenseAccount) throw new AppError(409, 'No AdSense account resolved yet — reconnect once AFS access is granted');
+  if (!conn.adsenseAdClient) throw new AppError(409, 'No AFS ad client resolved yet — reconnect once AFS access is granted');
+
+  const spec = (rangesSpec ?? conn.channelRanges ?? '').trim();
+  const ranges = parseChannelRanges(spec);
+  if (ranges.length === 0) {
+    throw new AppError(400, 'Select the channel id range(s) to import first (e.g. 03700-05000)');
+  }
 
   const token = await freshAccessToken(conn);
-  const channels = await discoverChannels(token, conn.adsenseAccount, { afsOnly: true, max: MAX_CHANNELS_SEED });
+  const channels = await discoverChannelsInRanges(token, conn.adsenseAdClient, ranges);
 
   const added = await withSystem(async (tx) => {
     const existing = new Set((await tx.channel.findMany({ select: { channelId: true } })).map((c) => c.channelId));
@@ -183,17 +191,19 @@ export async function syncChannels(
         skipDuplicates: true,
       });
     }
+    // Persist the selected ranges so a re-sync reuses them.
+    await tx.googleConnection.update({ where: { id: PLATFORM }, data: { channelRanges: spec } });
     await writeAudit(tx, {
       orgId: actor.orgId,
       actorId: actor.userId,
       action: 'adsense.channels.synced',
       entityType: 'channel',
       entityId: 'pool',
-      details: { discovered: channels.length, added: fresh.length },
+      details: { ranges: spec, discovered: channels.length, added: fresh.length },
     });
     return fresh.length;
   });
-  return { synced: channels.length, added, account: conn.adsenseAccount };
+  return { synced: channels.length, added, account: conn.adsenseAccount, ranges: spec };
 }
 
 export async function disconnect(actor: AuthContext): Promise<void> {

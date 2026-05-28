@@ -213,6 +213,26 @@
   display: flex;
   gap: 0.5rem;
 }
+.adsRangeBox {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 260px;
+}
+.rangeInput {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--cream);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 0.5rem 0.7rem;
+  width: 100%;
+}
+.rangeInput:focus {
+  outline: none;
+  border-color: var(--gold);
+}
 
 .empty {
   color: var(--muted);

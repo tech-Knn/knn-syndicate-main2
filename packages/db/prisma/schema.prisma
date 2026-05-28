@@ -728,6 +728,9 @@ model GoogleConnection {
   /// AdSense resource ids discovered at connect (e.g. accounts/pub-X, .../adclients/ca-pub-X).
   adsenseAccount  String?  @map("adsense_account")
   adsenseAdClient String?  @map("adsense_ad_client")
+  /// Admin-selected channel-id series this platform may use (e.g. "03700-05000").
+  /// AFS accounts hold 100k+ channels split across teams — only these are imported.
+  channelRanges   String?  @map("channel_ranges")
   /// ACTIVE | CONNECTION_BROKEN (string, not the FB enum, to avoid coupling).
   status          String   @default("ACTIVE")
   lastError       String?  @map("last_error")

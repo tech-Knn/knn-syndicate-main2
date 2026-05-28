@@ -12,7 +12,9 @@ const suffix = Date.now().toString(36);
 const PW = 'adsense-pw-1234';
 const superEmail = `ads-super-${suffix}@a.com`;
 const buyerEmail = `ads-buyer-${suffix}@a.com`;
-const TEST_CH = `aff-test-${suffix}`;
+// Numeric id in a high range (90000-98999) — channels are filtered by numeric range now,
+// and a high id avoids polluting the worker's cross-org channel-pool scans.
+const TEST_CH = String(90000 + (Date.now() % 9000));
 
 let app: FastifyInstance;
 let orgId = '';
@@ -105,8 +107,9 @@ describe('AdSense connect', () => {
     expect(status.account).toBe('accounts/pub-1');
     expect(status.adClient).toBe('accounts/pub-1/adclients/ca-pub-1');
 
-    const result = await syncChannels({ userId: superId, orgId, role: ROLES.SUPER_ADMIN, status: USER_STATUS.ACTIVE });
+    const result = await syncChannels({ userId: superId, orgId, role: ROLES.SUPER_ADMIN, status: USER_STATUS.ACTIVE }, '90000-99999');
     expect(result.synced).toBe(1);
+    expect(result.ranges).toBe('90000-99999');
     const ch = await withSystem((tx) => tx.channel.findUnique({ where: { channelId: TEST_CH } }));
     expect(ch?.label).toBe('Auto US');
     expect(ch?.status).toBe('AVAILABLE');

@@ -27,10 +27,10 @@ export async function adsenseRoutes(app: FastifyInstance): Promise<void> {
     return reply.send(await getStatus());
   });
 
-  app.post('/sync', { preHandler: superOnly }, async (req, reply) => {
+  app.post<{ Body: { ranges?: string } }>('/sync', { preHandler: superOnly }, async (req, reply) => {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     try {
-      return reply.send(await syncChannels(req.auth));
+      return reply.send(await syncChannels(req.auth, req.body?.ranges));
     } catch (err) {
       return handleRouteError(err, reply);
     }

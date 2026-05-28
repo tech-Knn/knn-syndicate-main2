@@ -124,3 +124,74 @@ export async function discoverChannels(
   }
   return all.length > max ? all.slice(0, max) : all;
 }
+
+export interface ChannelRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * Parse a channel-range spec ("03700-05000, 00500-01000" or single ids "03700") into
+ * numeric inclusive ranges. AFS accounts can carry 100k+ channels split across teams,
+ * so an admin selects only the id series that belong to THIS platform.
+ */
+export function parseChannelRanges(spec: string): ChannelRange[] {
+  const out: ChannelRange[] = [];
+  for (const part of spec.split(',').map((s) => s.trim()).filter(Boolean)) {
+    const m = part.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (m) {
+      const a = Number(m[1]);
+      const b = Number(m[2]);
+      out.push(a <= b ? { start: a, end: b } : { start: b, end: a });
+    } else if (/^\d+$/.test(part)) {
+      const n = Number(part);
+      out.push({ start: n, end: n });
+    }
+  }
+  return out;
+}
+
+function channelNum(channelId: string): number | null {
+  return /^\d+$/.test(channelId) ? Number(channelId) : null;
+}
+
+/**
+ * Discover only the AFS channels whose numeric id falls in `ranges`. Channels list
+ * sorted ascending, so we page with the max page size and STOP once we pass the
+ * highest requested id — bounding the scan even for a 100k-channel account. `hardCap`
+ * is a safety ceiling on the import size.
+ */
+export async function discoverChannelsInRanges(
+  accessToken: string,
+  adClient: string,
+  ranges: ChannelRange[],
+  deps: ListDeps = defaultDeps,
+  hardCap = 5000,
+): Promise<AdsenseCustomChannel[]> {
+  if (ranges.length === 0) return [];
+  const maxEnd = Math.max(...ranges.map((r) => r.end));
+  const inRange = (n: number): boolean => ranges.some((r) => n >= r.start && n <= r.end);
+  const out: AdsenseCustomChannel[] = [];
+  let pageToken: string | undefined;
+  do {
+    const url = `${deps.baseUrl}/${adClient}/customchannels?pageSize=10000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+    const json = await getJson<{
+      customChannels?: { name: string; displayName?: string; reportingDimensionId?: string }[];
+      nextPageToken?: string;
+    }>(url, accessToken, deps);
+    let overshot = false;
+    for (const raw of json.customChannels ?? []) {
+      const ch = toCustomChannel(raw);
+      const n = channelNum(ch.channelId);
+      if (n === null) continue;
+      if (n > maxEnd) {
+        overshot = true;
+        continue;
+      }
+      if (inRange(n)) out.push(ch);
+    }
+    if (overshot || out.length >= hardCap) break;
+    pageToken = json.nextPageToken;
+  } while (pageToken);
+  return out.slice(0, hardCap);
+}
