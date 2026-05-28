@@ -117,6 +117,16 @@ export interface CompanyRollup {
   defaultRevenueCutPct: number; // 0..1 — the platform's cut for this company
 }
 
+/** Accurate channel-pool counts for the platform view (real totals, per website). */
+export interface ChannelSummary {
+  total: number;
+  available: number;
+  assigned: number;
+  /** Channels with no domain (legacy global / placeholder seed) — should be 0 in prod. */
+  untagged: number;
+  byDomain: { domainId: string; host: string; total: number; available: number }[];
+}
+
 /** A channel-pool row for the super-admin operational view. */
 export interface ChannelRow {
   id: string;

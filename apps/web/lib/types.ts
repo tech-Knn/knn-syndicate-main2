@@ -184,6 +184,8 @@ export interface AfsAccountRow {
   email: string | null;
   status: string;
   connectedAt: string;
+  catalogCount: number;
+  importedCount: number;
 }
 
 /** A campaign offer (Phase E): one website the campaign's traffic routes to. */

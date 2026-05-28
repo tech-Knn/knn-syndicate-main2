@@ -19,6 +19,7 @@ import {
   setUserStatus,
 } from './admin.service.js';
 import {
+  getChannelSummary,
   getPlatformSettings,
   listArticles,
   listChannels,
@@ -130,6 +131,20 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
         return reply.send({ channels: await listChannels() });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Accurate pool counts (totals + per-website) — replaces the capped raw list in the UI.
+  app.get(
+    '/channel-summary',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.send(await getChannelSummary());
       } catch (err) {
         return handleRouteError(err, reply);
       }

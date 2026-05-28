@@ -153,6 +153,10 @@ export interface AfsAccountRow {
   email: string | null;
   status: string;
   connectedAt: string;
+  /** Channels mirrored locally from AdSense for this account (≈ the account's total). */
+  catalogCount: number;
+  /** Channels imported from this account into the usable pool (across its domains). */
+  importedCount: number;
 }
 
 function toAfsRow(c: {
@@ -172,14 +176,28 @@ function toAfsRow(c: {
     email: c.googleEmail,
     status: c.status,
     connectedAt: c.connectedAt.toISOString(),
+    catalogCount: 0,
+    importedCount: 0,
   };
 }
 
-/** All connected AFS accounts (super-admin view). */
+/** All connected AFS accounts (super-admin view) with per-account channel counts. */
 export async function listAfsAccounts(): Promise<AfsAccountRow[]> {
   return withSystem(async (tx) => {
     const rows = await tx.googleConnection.findMany({ orderBy: { connectedAt: 'asc' } });
-    return rows.map(toAfsRow);
+    // Catalog size per account (≈ how many channels the AdSense account holds, once synced).
+    const cat = await tx.afsChannelCatalog.groupBy({ by: ['afsAccountId'], _count: { _all: true } });
+    const catByAcct = new Map(cat.map((c) => [c.afsAccountId, c._count._all]));
+    // Imported-to-pool per account = channels via that account's domains.
+    const domains = await tx.domain.findMany({ select: { id: true, afsAccountId: true } });
+    const acctByDomain = new Map(domains.map((d) => [d.id, d.afsAccountId]));
+    const chByDomain = await tx.channel.groupBy({ by: ['domainId'], where: { domainId: { not: null } }, _count: { _all: true } });
+    const impByAcct = new Map<string, number>();
+    for (const r of chByDomain) {
+      const acct = r.domainId ? acctByDomain.get(r.domainId) : null;
+      if (acct) impByAcct.set(acct, (impByAcct.get(acct) ?? 0) + r._count._all);
+    }
+    return rows.map((r) => ({ ...toAfsRow(r), catalogCount: catByAcct.get(r.id) ?? 0, importedCount: impByAcct.get(r.id) ?? 0 }));
   });
 }
 

@@ -1,5 +1,5 @@
 import { withSystem } from '@knn/db';
-import { type ArticleRow, type ChannelRow, type PlatformSettings, ROLES } from '@knn/shared';
+import { type ArticleRow, type ChannelRow, type ChannelSummary, type PlatformSettings, ROLES } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { runScoped } from '../../lib/scope.js';
@@ -37,6 +37,34 @@ export async function listChannels(): Promise<ChannelRow[]> {
       campaignName: c.currentCampaignId ? (nameById.get(c.currentCampaignId) ?? null) : null,
       lockedForDay: c.lockedForDay,
     }));
+  });
+}
+
+/** Accurate channel-pool counts (real totals + per-website breakdown), not a capped list. */
+export async function getChannelSummary(): Promise<ChannelSummary> {
+  return withSystem(async (tx) => {
+    const [byStatus, byDomainTotal, byDomainAvail, domains] = await Promise.all([
+      tx.channel.groupBy({ by: ['status'], _count: { _all: true } }),
+      tx.channel.groupBy({ by: ['domainId'], _count: { _all: true } }),
+      tx.channel.groupBy({ by: ['domainId'], where: { status: 'AVAILABLE' }, _count: { _all: true } }),
+      tx.domain.findMany({ select: { id: true, host: true } }),
+    ]);
+    const total = byStatus.reduce((s, r) => s + r._count._all, 0);
+    const available = byStatus.find((r) => r.status === 'AVAILABLE')?._count._all ?? 0;
+    const assigned = byStatus.find((r) => r.status === 'ASSIGNED')?._count._all ?? 0;
+    const untagged = byDomainTotal.find((r) => r.domainId === null)?._count._all ?? 0;
+    const hostById = new Map(domains.map((d) => [d.id, d.host]));
+    const availByDomain = new Map(byDomainAvail.map((r) => [r.domainId, r._count._all]));
+    const byDomain = byDomainTotal
+      .filter((r) => r.domainId !== null)
+      .map((r) => ({
+        domainId: r.domainId as string,
+        host: hostById.get(r.domainId as string) ?? '(removed domain)',
+        total: r._count._all,
+        available: availByDomain.get(r.domainId) ?? 0,
+      }))
+      .sort((a, b) => b.total - a.total);
+    return { total, available, assigned, untagged, byDomain };
   });
 }
 

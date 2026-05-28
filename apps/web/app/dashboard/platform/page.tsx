@@ -3,7 +3,7 @@
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  type ChannelRow,
+  type ChannelSummary,
   type CompanyRollup,
   type PlatformSettings,
   addBusinessDays,
@@ -12,7 +12,7 @@ import {
 } from '@knn/shared';
 import { Badge, Button, Card, Segmented, Skeleton } from '@/components/ui';
 import { adsense, admin, stats } from '@/lib/api';
-import { type AdsenseStatus, type AfsAccountRow } from '@/lib/types';
+import { type AfsAccountRow } from '@/lib/types';
 import { useAuth } from '../../providers';
 import styles from '../admin.module.css';
 
@@ -22,51 +22,37 @@ function rangeFor(days: number): { from: string; to: string } {
   return { from: addBusinessDays(to, -(days - 1)), to };
 }
 
-const CH_TONE: Record<string, 'neutral' | 'brand' | 'success' | 'warning'> = {
-  AVAILABLE: 'success',
-  ASSIGNED: 'brand',
-  RESERVED: 'warning',
-};
-
 export default function PlatformPage() {
   const { user } = useAuth();
   const router = useRouter();
   const [rangeKey, setRangeKey] = useState('30');
   const [companies, setCompanies] = useState<CompanyRollup[] | null>(null);
-  const [channels, setChannels] = useState<ChannelRow[] | null>(null);
+  const [summary, setSummary] = useState<ChannelSummary | null>(null);
   const [settings, setSettings] = useState<PlatformSettings | null>(null);
   const [cuts, setCuts] = useState<Record<string, string>>({});
   const [savingSettings, setSavingSettings] = useState(false);
   const [savedAt, setSavedAt] = useState(false);
-  const [ads, setAds] = useState<AdsenseStatus | null>(null);
   const [afsAccounts, setAfsAccounts] = useState<AfsAccountRow[] | null>(null);
-  const [syncing, setSyncing] = useState(false);
+  const [catSyncing, setCatSyncing] = useState<string | null>(null);
   const [adsNote, setAdsNote] = useState<string | null>(null);
-  const [rangeInput, setRangeInput] = useState('');
-
-  const loadAfsAccounts = useCallback(() => {
-    void adsense.accounts().then(setAfsAccounts).catch(() => setAfsAccounts([]));
-  }, []);
-
-  const disconnectAfs = async (id: string): Promise<void> => {
-    await adsense.disconnectAccount(id).catch(() => undefined);
-    loadAfsAccounts();
-  };
 
   useEffect(() => {
     if (user && user.role !== 'SUPER_ADMIN') router.replace('/dashboard');
   }, [user, router]);
 
+  const loadAfsAccounts = useCallback(() => {
+    void adsense.accounts().then(setAfsAccounts).catch(() => setAfsAccounts([]));
+  }, []);
+  const loadSummary = useCallback(() => {
+    void admin.channelSummary().then(setSummary).catch(() => setSummary(null));
+  }, []);
+
   // Surface the OAuth return (?adsense=connected / ?adsense_error=…).
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const p = new URLSearchParams(window.location.search);
-    if (p.get('adsense') === 'connected') setAdsNote('AdSense connected. Sync channels to populate the pool.');
+    if (p.get('adsense') === 'connected') setAdsNote('AdSense account connected. Use “Sync catalog” to pull its channels.');
     else if (p.get('adsense_error')) setAdsNote(`AdSense connect failed: ${p.get('adsense_error')}`);
-  }, []);
-
-  const loadChannels = useCallback(() => {
-    void admin.channels().then(setChannels).catch(() => setChannels([]));
   }, []);
 
   const connectAdsense = async (): Promise<void> => {
@@ -74,27 +60,27 @@ export default function PlatformPage() {
       const { url } = await adsense.authUrl();
       window.location.href = url;
     } catch {
-      setAdsNote('Google/AdSense is not configured on the server yet.');
+      setAdsNote('Google / AdSense is not configured on the server yet.');
     }
   };
 
-  const syncAdsense = async (): Promise<void> => {
-    setSyncing(true);
+  const syncCatalog = async (id: string): Promise<void> => {
+    setCatSyncing(id);
+    setAdsNote('Syncing the account’s channels from AdSense… (large accounts take a moment)');
     try {
-      const r = await adsense.sync(rangeInput.trim() || undefined);
-      setAdsNote(`Synced ${r.synced} channel${r.synced === 1 ? '' : 's'} (${r.added} new) in ranges ${r.ranges || '—'}.`);
-      loadChannels();
+      const r = await adsense.syncCatalog(id);
+      setAdsNote(`Synced ${r.synced.toLocaleString()} channels from AdSense into the catalog.`);
+      loadAfsAccounts();
     } catch {
-      setAdsNote('Channel sync failed — confirm AFS access is granted, then retry.');
+      setAdsNote('Catalog sync failed — confirm AFS access is granted for this account, then retry.');
     } finally {
-      setSyncing(false);
+      setCatSyncing(null);
     }
   };
 
-  const disconnectAdsense = async (): Promise<void> => {
-    await adsense.disconnect().catch(() => undefined);
-    setAds({ connected: false });
-    setAdsNote('AdSense disconnected.');
+  const disconnectAfs = async (id: string): Promise<void> => {
+    await adsense.disconnectAccount(id).catch(() => undefined);
+    loadAfsAccounts();
   };
 
   const loadCompanies = useCallback(async (key: string) => {
@@ -112,17 +98,10 @@ export default function PlatformPage() {
     void loadCompanies(rangeKey);
   }, [rangeKey, loadCompanies]);
   useEffect(() => {
-    loadChannels();
-    void admin.settings().then(setSettings).catch(() => setSettings({ compliancePrompt: '', articleDomain: '', redirectDomain: '' }));
-    void adsense
-      .status()
-      .then((s) => {
-        setAds(s);
-        if (s.channelRanges) setRangeInput(s.channelRanges);
-      })
-      .catch(() => setAds({ connected: false }));
+    loadSummary();
     loadAfsAccounts();
-  }, [loadChannels, loadAfsAccounts]);
+    void admin.settings().then(setSettings).catch(() => setSettings({ compliancePrompt: '', articleDomain: '', redirectDomain: '' }));
+  }, [loadSummary, loadAfsAccounts]);
 
   const persistCut = async (orgId: string): Promise<void> => {
     const pct = Number(cuts[orgId]);
@@ -155,7 +134,7 @@ export default function PlatformPage() {
         <div>
           <span className="eyebrow">Platform</span>
           <h1 className={`serif ${styles.title}`}>Platform control</h1>
-          <p className={styles.sub}>Revenue by company, the channel pool, and global settings.</p>
+          <p className={styles.sub}>Companies &amp; revenue, AdSense accounts, and the channel pool.</p>
         </div>
       </div>
 
@@ -225,130 +204,121 @@ export default function PlatformPage() {
         )}
       </Card>
 
-      {/* AdSense connection */}
+      {/* AdSense accounts (multi-account) */}
       <Card className={styles.section}>
         <div className={styles.sectionHead}>
-          <span className={styles.sectionTitle}>AdSense connection</span>
-          {ads?.connected ? (
-            <Badge tone={ads.status === 'CONNECTION_BROKEN' ? 'danger' : 'success'} dot>
-              {ads.status === 'CONNECTION_BROKEN' ? 'Reconnect needed' : 'Connected'}
-            </Badge>
-          ) : (
-            <Badge tone="neutral">Not connected</Badge>
-          )}
+          <span className={styles.sectionTitle}>AdSense accounts</span>
+          <Button onClick={() => void connectAdsense()}>Connect AdSense account</Button>
         </div>
         {adsNote && <p className={styles.adsNote}>{adsNote}</p>}
-        {afsAccounts && afsAccounts.length > 0 && (
-          <div className={styles.afsList}>
-            {afsAccounts.map((a) => (
-              <div key={a.id} className={styles.afsRow}>
-                <div>
-                  <span className={styles.name}>{a.label ?? a.afsPubId ?? a.account ?? 'AFS account'}</span>
-                  {a.afsPubId && <span className={styles.subtle}> · {a.afsPubId}</span>}
-                  {a.account && <div className={styles.subtle}>{a.account}</div>}
-                </div>
-                <div className={styles.afsRowRight}>
-                  <Badge tone={a.status === 'CONNECTION_BROKEN' ? 'danger' : 'success'}>{a.status.toLowerCase()}</Badge>
-                  <button type="button" className={`${styles.actionBtn} ${styles.actionDanger}`} onClick={() => void disconnectAfs(a.id)}>
-                    Disconnect
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        {ads?.connected ? (
-          <div className={styles.adsBody}>
-            <div className={styles.adsMeta}>
-              {ads.email && (
-                <span>
-                  <span className={styles.subtle}>Account</span> {ads.email}
-                </span>
-              )}
-              {ads.account && <span className="mono">{ads.account}</span>}
-              {!ads.account && <span className={styles.subtle}>No AFS account resolved — reconnect once AFS access is granted.</span>}
-            </div>
-            <div className={styles.adsRangeBox}>
-              <label className={styles.fieldLabel} htmlFor="chranges">
-                Channel id ranges
-              </label>
-              <input
-                id="chranges"
-                className={styles.rangeInput}
-                value={rangeInput}
-                onChange={(e) => setRangeInput(e.target.value)}
-                placeholder="e.g. 03700-05000, 09000-09500"
-              />
-              <span className={styles.fieldHint}>
-                Only these series import (the account holds 100k+ channels split across teams).
-              </span>
-              <div className={styles.adsActions}>
-                <Button onClick={() => void syncAdsense()} loading={syncing} disabled={!ads.account || !rangeInput.trim()}>
-                  Sync channels
-                </Button>
-                <Button variant="ghost" onClick={() => void disconnectAdsense()}>
-                  Disconnect
-                </Button>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className={styles.adsBody}>
-            <p className={styles.subtle}>
-              Connect the platform&apos;s Google / AdSense account to pull AFS revenue and seed the channel pool
-              with real channel ids.
-            </p>
-            <Button onClick={() => void connectAdsense()}>Connect AdSense</Button>
-          </div>
-        )}
-      </Card>
-
-      {/* Channel pool */}
-      <Card className={styles.section}>
-        <div className={styles.sectionHead}>
-          <span className={styles.sectionTitle}>Channel pool</span>
-          {channels && (
-            <span className={styles.subtle}>
-              {channels.filter((c) => c.status === 'AVAILABLE').length} available · {channels.length} total
-            </span>
-          )}
-        </div>
-        {!channels ? (
-          <div className={styles.rowsSkel}>
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className={styles.rowSkel} />
-            ))}
-          </div>
-        ) : channels.length === 0 ? (
-          <p className={styles.empty}>The channel pool is empty. Seed it with real AdSense channel ids.</p>
+        {!afsAccounts ? (
+          <Skeleton className={styles.rowSkel} />
+        ) : afsAccounts.length === 0 ? (
+          <p className={styles.empty}>
+            No AdSense accounts connected. &ldquo;Connect AdSense account&rdquo; onboards every AFS account that Google login can see — connect again with a different login to add more.
+          </p>
         ) : (
           <div className={styles.tableWrap}>
             <table className={styles.table}>
               <thead>
                 <tr>
-                  <th className={styles.thLeft}>Channel</th>
+                  <th className={styles.thLeft}>Account</th>
+                  <th className={styles.thLeft}>pubId</th>
+                  <th>In AdSense</th>
+                  <th>Imported</th>
                   <th className={styles.thLeft}>Status</th>
-                  <th className={styles.thLeft}>Holding campaign</th>
-                  <th className={styles.thLeft}>Locked for</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                {channels.map((c) => (
-                  <tr key={c.id}>
+                {afsAccounts.map((a) => (
+                  <tr key={a.id}>
                     <td>
-                      <div className={styles.name}>{c.label ?? c.channelId}</div>
-                      {c.label && <div className={styles.subtle}>{c.channelId}</div>}
+                      <div className={styles.name}>{a.label ?? a.account ?? 'AFS account'}</div>
+                      {a.account && <div className={styles.subtle}>{a.account}</div>}
+                    </td>
+                    <td className="mono">{a.afsPubId ?? '—'}</td>
+                    <td className={styles.num}>{a.catalogCount ? a.catalogCount.toLocaleString() : '—'}</td>
+                    <td className={styles.num}>{a.importedCount.toLocaleString()}</td>
+                    <td>
+                      <Badge tone={a.status === 'CONNECTION_BROKEN' ? 'danger' : 'success'}>{a.status.toLowerCase()}</Badge>
                     </td>
                     <td>
-                      <Badge tone={CH_TONE[c.status] ?? 'neutral'}>{c.status.toLowerCase()}</Badge>
+                      <div className={styles.actions}>
+                        <button type="button" className={styles.actionBtn} disabled={catSyncing === a.id} onClick={() => void syncCatalog(a.id)}>
+                          {catSyncing === a.id ? 'Syncing…' : 'Sync catalog'}
+                        </button>
+                        <button type="button" className={`${styles.actionBtn} ${styles.actionDanger}`} onClick={() => void disconnectAfs(a.id)}>
+                          Disconnect
+                        </button>
+                      </div>
                     </td>
-                    <td className={styles.subtle}>{c.campaignName ?? '—'}</td>
-                    <td className={styles.subtle}>{c.lockedForDay ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+        )}
+        <p className={styles.fieldHint}>
+          <strong>In AdSense</strong> = channels mirrored to the local catalog by &ldquo;Sync catalog&rdquo; (≈ the account&apos;s total).{' '}
+          <strong>Imported</strong> = channels added into a website&apos;s usable pool. Assign channels to a website in{' '}
+          <strong>Domains → Channels</strong>.
+        </p>
+      </Card>
+
+      {/* Channel pool — accurate counts, per website */}
+      <Card className={styles.section}>
+        <div className={styles.sectionHead}>
+          <span className={styles.sectionTitle}>Channel pool</span>
+          {summary && (
+            <span className={styles.subtle}>
+              {summary.available.toLocaleString()} available · {summary.assigned.toLocaleString()} in use ·{' '}
+              {summary.total.toLocaleString()} total
+            </span>
+          )}
+        </div>
+        {!summary ? (
+          <Skeleton className={styles.rowSkel} />
+        ) : summary.total === 0 ? (
+          <p className={styles.empty}>No channels imported yet. Sync an AdSense account above, then import channels per website in Domains → Channels.</p>
+        ) : (
+          <>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th className={styles.thLeft}>Website</th>
+                    <th>Channels</th>
+                    <th>Available</th>
+                    <th>In use</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.byDomain.length === 0 ? (
+                    <tr>
+                      <td className={styles.subtle} colSpan={4}>
+                        No channels are tied to a website yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    summary.byDomain.map((d) => (
+                      <tr key={d.domainId}>
+                        <td className={styles.name}>{d.host}</td>
+                        <td className={styles.num}>{d.total.toLocaleString()}</td>
+                        <td className={styles.num}>{d.available.toLocaleString()}</td>
+                        <td className={styles.num}>{(d.total - d.available).toLocaleString()}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {summary.untagged > 0 && (
+              <p className={styles.fieldHint}>
+                {summary.untagged.toLocaleString()} channel(s) are untagged (legacy/placeholder, not tied to a website) — these are ignored by the offer funnel.
+              </p>
+            )}
+          </>
         )}
       </Card>
 

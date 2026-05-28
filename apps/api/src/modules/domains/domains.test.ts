@@ -16,6 +16,7 @@ import {
   updateDomain,
   verifyDomain,
 } from './domains.service.js';
+import { getChannelSummary } from '../admin/platform.service.js';
 
 const suffix = Date.now().toString(36);
 const HOST = `articles-${suffix}.example.com`;
@@ -210,6 +211,17 @@ describe('domain management', () => {
     const outside = await withSystem((tx) => tx.channel.findUnique({ where: { channelId: '79999' } }));
     expect(outside).toBeNull(); // out-of-range id not imported
     await withSystem((tx) => tx.channel.deleteMany({ where: { channelId: { in: ['72000', '72001', '72002', '72003', '72004', '79999'] } } }));
+  });
+
+  it('channel summary reports this website’s imported channels accurately', async () => {
+    await setDomainChannels(auth(), domainId, { add: [{ channelId: '73001', label: 'A' }, { channelId: '73002', label: 'B' }] });
+    const sum = await getChannelSummary();
+    const mine = sum.byDomain.find((d) => d.domainId === domainId);
+    expect(mine?.host).toBe(HOST);
+    expect(mine?.total).toBeGreaterThanOrEqual(2); // ≥ the 2 just imported (other tests may add more)
+    expect(mine?.available).toBeGreaterThanOrEqual(2);
+    expect(sum.total).toBeGreaterThanOrEqual(2); // global total ≥ this domain's (robust to other suites)
+    await withSystem((tx) => tx.channel.deleteMany({ where: { channelId: { in: ['73001', '73002'] } } }));
   });
 
   it('blocks delete while offers reference the domain, allows it after', async () => {
