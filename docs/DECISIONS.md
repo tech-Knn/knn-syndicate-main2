@@ -334,3 +334,25 @@ the approved plan.
   three roles because the API scopes by actor (buyer→own, company-admin→org via RLS, super→platform).
 - **Revisit if** a third-party-heavy surface (e.g. a complex pivot table) ever needs TanStack Table, or
   the design system is opened to non-KNN white-label themes — then shadcn's theming may earn its keep.
+
+### 2026-05-28 — D22: AdSense (Google) connect is a platform singleton; live source is dormant-by-default
+
+- **Decision:** unlike Facebook (one connection **per buyer**, their own ad accounts), AdSense is a
+  **single platform account** (the funnel's AFS-approved domain), so `GoogleConnection` is a **global
+  singleton** (`id = 'platform'`, no org scope / no RLS — like `channels` & `platform_settings`); a
+  **SUPER_ADMIN** connects it. Tokens are AES-256-GCM encrypted (same `TOKEN_ENCRYPTION_KEY` as FB).
+- **OAuth:** Google OAuth 2.0 with `access_type=offline` + `prompt=consent` → a **refresh token** (access
+  tokens last ~1h). Read-only scope (`adsense.readonly`). `@knn/adsense` adds `buildGoogleAuthUrl`/
+  `exchangeGoogleCode`/`refreshGoogleToken` (mirrors `@knn/fb/oauth`) + Management API v2 account/
+  ad-client/custom-channel listing. The connect flow lives in `apps/api/.../adsense` (signed state,
+  public callback); a super-admin **Connect AdSense** card sits on the Platform page.
+- **Channel sync:** `POST /api/adsense/sync` lists the publisher's **AFS** custom channels and upserts
+  them into the pool (`channelId` = the channel resource's trailing numeric segment; label only — never
+  clobbers a channel's status / current campaign). This is how the placeholder pool gets real ids.
+- **Live revenue source is the default, but self-dormant:** the worker's `AttributionDeps.fetchAdsense`
+  is now `liveAdsenseFetch` (reads the connection, refreshes the token, pulls the report). It returns `[]`
+  when not connected / no account / broken, and logs+swallows a failed report — so it **auto-activates**
+  the moment AdSense is connected and AFS access lands, while staying a clean no-op until then (no separate
+  Google token-refresh cron — the hourly attribution refreshes lazily). Resolves the build half of
+  OPEN_QUESTIONS #13; the remaining blocker is purely external (AFS Management API access + the `GOOGLE_*`
+  envs + a `…/api/adsense/callback` redirect URI).

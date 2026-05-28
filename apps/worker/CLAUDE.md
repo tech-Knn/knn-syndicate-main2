@@ -24,8 +24,12 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
   IST business day (FB uses the ad-account tz; OPEN_QUESTIONS #14).
 - **Every revenue/stats write is an upsert keyed on (entity, day)** → finalization re-pulls are
   idempotent (no double counting). All attribution runs under `withSystem` (cross-org; rows carry org_id).
-- **AdSense is injected + dormant** — `AttributionDeps.fetchAdsense` is undefined by default (AFS
-  access is OPEN_QUESTIONS #4/#13), so `pullAdsenseRevenue` cleanly no-ops; tests inject fakes.
+- **AdSense source = `liveAdsenseFetch`** (`attribution/adsense-source.ts`), the default
+  `AttributionDeps.fetchAdsense`. It reads the platform `GoogleConnection` (super-admin's AdSense
+  connect), refreshes the access token on demand, and pulls the per-channel report. **Self-dormant:**
+  returns `[]` when not connected / no account / `CONNECTION_BROKEN`, and logs+swallows a failed report
+  (so a transient AFS error can't fail attribution — FB cost stats still populate). Tests inject fakes;
+  with no connection it no-ops exactly like the old dormant path (AFS access is OPEN_QUESTIONS #4/#13).
   Multi-currency (D15): native spend/revenue + a USD field via the daily `FxRate` (`fx.service.ts`).
 - **FB calls go through the per-ad-account rate-limit queue** (D12) with backoff + circuit breaker;
   respect the `BATCHED` state. The SDK does no backoff itself.
