@@ -67,12 +67,13 @@ describe('graph client', () => {
             currency: 'USD',
             timezone_name: 'Asia/Kolkata',
             account_status: 1,
+            business: { id: 'bm_1' },
           },
         ],
       }),
     );
     await expect(fetchAdAccounts('tok')).resolves.toEqual([
-      { fbAccountId: 'act_1', name: 'Main', currency: 'USD', timezone: 'Asia/Kolkata', status: '1' },
+      { fbAccountId: 'act_1', name: 'Main', currency: 'USD', timezone: 'Asia/Kolkata', status: '1', businessId: 'bm_1' },
     ]);
   });
 });

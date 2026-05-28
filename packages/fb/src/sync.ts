@@ -6,6 +6,8 @@ export interface AdAccountDTO {
   currency: string;
   timezone: string;
   status: string;
+  /** The owning Business Manager id (for BM-level pixel lookup), if any. */
+  businessId: string | null;
 }
 export interface PageDTO {
   fbPageId: string;
@@ -51,9 +53,11 @@ export async function fetchAdAccounts(accessToken: string): Promise<AdAccountDTO
     currency?: string;
     timezone_name?: string;
     account_status?: number;
+    business?: { id?: string };
   }>({
     path: '/me/adaccounts',
-    params: { fields: 'account_id,name,currency,timezone_name,account_status', limit: '200' },
+    // `business{id}` lets us resolve each account's BM in this one call (no per-account lookup).
+    params: { fields: 'account_id,name,currency,timezone_name,account_status,business{id}', limit: '200' },
     accessToken,
   });
   return data.map((a) => ({
@@ -62,6 +66,7 @@ export async function fetchAdAccounts(accessToken: string): Promise<AdAccountDTO
     currency: a.currency ?? 'USD',
     timezone: a.timezone_name ?? 'UTC',
     status: String(a.account_status ?? ''),
+    businessId: a.business?.id ?? null,
   }));
 }
 
@@ -93,32 +98,19 @@ export async function fetchPixels(fbAccountId: string, accessToken: string): Pro
 }
 
 /**
- * Pixels owned by the ad account's Business Manager (not just those already on the
- * account). A fresh ad account has no `adspixels` of its own, but the BM usually
- * owns pixels that can be assigned to it — surfacing them lets the buyer pick one.
- * Best-effort: returns [] if the account has no business or the BM read isn't
- * permitted, so callers can merge it with the account-scoped pixels safely.
+ * Pixels owned by a Business Manager (not just those already on an ad account). A
+ * fresh ad account has no `adspixels` of its own, but the BM usually owns pixels that
+ * can be assigned to it — surfacing them lets the buyer pick one. Best-effort:
+ * returns [] if the BM read isn't permitted, so callers can merge it safely. Pass the
+ * business id (resolved cheaply from `fetchAdAccounts`) so this is ONE call per BM.
  */
-export async function fetchBusinessPixels(fbAccountId: string, accessToken: string): Promise<PixelDTO[]> {
-  let businessId: string | undefined;
-  try {
-    const acc = await graphRequest<{ business?: { id?: string } }>({
-      path: `/act_${fbAccountId}`,
-      params: { fields: 'business' },
-      accessToken,
-      accountId: fbAccountId,
-    });
-    businessId = acc.business?.id;
-  } catch {
-    return [];
-  }
+export async function fetchBusinessPixels(businessId: string, accessToken: string): Promise<PixelDTO[]> {
   if (!businessId) return [];
   try {
     const data = await fetchAllPages<{ id: string; name?: string }>({
       path: `/${businessId}/adspixels`,
       params: { fields: 'id,name', limit: '100' },
       accessToken,
-      accountId: fbAccountId,
     });
     return data.map((p) => ({ fbPixelId: p.id, name: p.name ?? p.id }));
   } catch {

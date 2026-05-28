@@ -80,15 +80,20 @@ async function syncFromFacebook(args: {
     fetchAdAccounts(accessToken),
     fetchPages(accessToken),
   ]);
-  // Pixels usable by each account = the account's own pixels PLUS the Business
-  // Manager's pixels (a fresh ad account has none of its own, but the BM usually
-  // owns pixels that can be assigned to it). Merge + dedupe by FB pixel id.
+  // BM-owned pixels, fetched ONCE per unique Business Manager (resolved cheaply from
+  // fetchAdAccounts' business{id}) — not per ad account, which made sync slow.
+  const businessIds = [...new Set(accounts.map((a) => a.businessId).filter((b): b is string => !!b))];
+  const bizPixelEntries = await Promise.all(
+    businessIds.map(async (bid) => [bid, await fetchBusinessPixels(bid, accessToken)] as const),
+  );
+  const bizPixels = new Map(bizPixelEntries);
+
+  // Pixels usable by each account = the account's own pixels PLUS its BM's pixels
+  // (a fresh ad account has none of its own). Merge + dedupe by FB pixel id.
   const pixelsByAccount = await Promise.all(
     accounts.map(async (account) => {
-      const [own, biz] = await Promise.all([
-        fetchPixels(account.fbAccountId, accessToken),
-        fetchBusinessPixels(account.fbAccountId, accessToken),
-      ]);
+      const own = await fetchPixels(account.fbAccountId, accessToken);
+      const biz = account.businessId ? (bizPixels.get(account.businessId) ?? []) : [];
       const byId = new Map<string, (typeof own)[number]>();
       for (const p of [...own, ...biz]) byId.set(p.fbPixelId, p);
       return { fbAccountId: account.fbAccountId, pixels: [...byId.values()] };
