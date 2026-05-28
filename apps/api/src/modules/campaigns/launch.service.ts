@@ -9,6 +9,7 @@ import {
   createFbAdSet,
   createFbCampaign,
   decryptToken,
+  updateFbCampaignStatus,
   uploadFbAdImage,
 } from '@knn/fb';
 import { CAMPAIGN_STATUS, ROLES, campaignSubmitIssues, canTransitionCampaign } from '@knn/shared';
@@ -106,6 +107,71 @@ async function resolveLaunchPlan(auth: AuthContext, campaignId: string): Promise
     );
 
     return { campaign, token: decryptToken(adAccount.connection.accessTokenEnc), fbAccountId: adAccount.fbAccountId, fbPageId: page.fbPageId, adSets };
+  });
+}
+
+/**
+ * Pause or resume a launched campaign — the core optimization action. Flips the FB
+ * campaign's delivery status (network call done OUTSIDE the txn) AND the local status
+ * (ACTIVE ↔ PAUSED). A buyer may only touch their own; admins/super their scope (RLS).
+ * Requires the campaign to be ACTIVE or PAUSED; a no-op if already in the target state.
+ */
+export async function setCampaignActive(
+  auth: AuthContext,
+  campaignId: string,
+  active: boolean,
+): Promise<{ id: string; status: string }> {
+  const target = active ? CAMPAIGN_STATUS.ACTIVE : CAMPAIGN_STATUS.PAUSED;
+
+  // Read phase: validate scope/state and resolve the FB campaign + token (no network).
+  const plan = await runScoped(auth, async (tx) => {
+    const campaign = await tx.campaign.findUnique({
+      where: { id: campaignId },
+      select: { id: true, buyerId: true, orgId: true, status: true, fbCampaignId: true, adAccountId: true },
+    });
+    if (!campaign) throw new AppError(404, 'Campaign not found');
+    if (auth.role === ROLES.MEDIA_BUYER && campaign.buyerId !== auth.userId) throw new AppError(404, 'Campaign not found');
+    if (campaign.status === target) return { done: true as const, status: campaign.status };
+    if (campaign.status !== CAMPAIGN_STATUS.ACTIVE && campaign.status !== CAMPAIGN_STATUS.PAUSED) {
+      throw new AppError(409, `Only an active or paused campaign can be ${active ? 'resumed' : 'paused'}`);
+    }
+    let fb: { fbCampaignId: string; fbAccountId: string; token: string } | null = null;
+    if (campaign.fbCampaignId && campaign.adAccountId) {
+      const acc = await tx.fbAdAccount.findUnique({
+        where: { id: campaign.adAccountId },
+        select: { fbAccountId: true, connection: { select: { accessTokenEnc: true, status: true } } },
+      });
+      if (!acc) throw new AppError(400, 'Selected ad account no longer exists');
+      if (acc.connection.status === FbConnectionStatus.CONNECTION_BROKEN) {
+        throw new AppError(409, 'Facebook connection is broken — reconnect first');
+      }
+      fb = { fbCampaignId: campaign.fbCampaignId, fbAccountId: acc.fbAccountId, token: decryptToken(acc.connection.accessTokenEnc) };
+    }
+    return { done: false as const, orgId: campaign.orgId, fb };
+  });
+  if (plan.done) return { id: campaignId, status: plan.status };
+
+  // Network phase (outside any txn): tell Facebook to pause/resume delivery.
+  if (plan.fb) {
+    try {
+      await updateFbCampaignStatus(plan.fb.fbCampaignId, plan.fb.fbAccountId, plan.fb.token, active ? 'ACTIVE' : 'PAUSED');
+    } catch (err) {
+      if (err instanceof FbRateLimitError) throw new AppError(429, 'Facebook is rate-limiting — try again in a moment');
+      throw err;
+    }
+  }
+
+  // Write phase: persist the new status + audit.
+  return runScoped(auth, async (tx) => {
+    const updated = await tx.campaign.update({ where: { id: campaignId }, data: { status: target }, select: { id: true, status: true } });
+    await writeAudit(tx, {
+      orgId: plan.orgId,
+      actorId: auth.userId,
+      action: active ? 'campaign.resumed' : 'campaign.paused',
+      entityType: 'campaign',
+      entityId: campaignId,
+    });
+    return updated;
   });
 }
 

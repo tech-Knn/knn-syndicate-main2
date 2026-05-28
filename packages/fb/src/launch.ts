@@ -24,6 +24,22 @@ function postEdge<T>(
   });
 }
 
+/** Pause or resume an existing FB campaign (the optimization action). */
+export function updateFbCampaignStatus(
+  fbCampaignId: string,
+  fbAccountId: string,
+  accessToken: string,
+  status: 'ACTIVE' | 'PAUSED',
+): Promise<{ success?: boolean }> {
+  return graphRequest<{ success?: boolean }>({
+    path: `/${fbCampaignId}`,
+    method: 'POST',
+    params: { status },
+    accessToken,
+    accountId: fbAccountId,
+  });
+}
+
 export interface FbCampaignParams {
   name: string;
   objective: string;

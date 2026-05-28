@@ -18,6 +18,7 @@ function navFor(role: Role): { href: string; label: string }[] {
   const isAdmin = role === 'SUPER_ADMIN' || role === 'COMPANY_ADMIN';
   return [
     { href: '/dashboard', label: 'Overview' },
+    { href: '/dashboard/analytics', label: 'Analytics' },
     { href: '/dashboard/campaigns', label: 'Campaigns' },
     ...(isAdmin ? [{ href: '/dashboard/approvals', label: 'Approvals' }] : []),
     ...(role === 'COMPANY_ADMIN' ? [{ href: '/dashboard/team', label: 'Team' }] : []),

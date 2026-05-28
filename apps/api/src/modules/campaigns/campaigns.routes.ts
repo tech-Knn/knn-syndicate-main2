@@ -14,7 +14,7 @@ import {
   submitCampaign,
   updateCampaign,
 } from './campaigns.service.js';
-import { launchCampaign, testLaunchCampaign } from './launch.service.js';
+import { launchCampaign, setCampaignActive, testLaunchCampaign } from './launch.service.js';
 import { listOfferDomains, listOffers, setOffers } from './offers.service.js';
 import { offerSetSchema } from './offers.schemas.js';
 
@@ -125,6 +125,25 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
       }
     },
   );
+
+  // Optimization actions: pause / resume a launched campaign (flips FB delivery + local status).
+  app.post<{ Params: { id: string } }>('/:id/pause', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ campaign: await setCampaignActive(req.auth, req.params.id, false) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  app.post<{ Params: { id: string } }>('/:id/resume', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ campaign: await setCampaignActive(req.auth, req.params.id, true) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
 
   app.delete<{ Params: { id: string } }>(
     '/:id',

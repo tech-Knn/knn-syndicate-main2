@@ -42,6 +42,11 @@ export interface CampaignPerf {
   name: string;
   status: string;
   channelLabel: string | null;
+  /** The owning buyer + company — used by the Analytics workbench filters. */
+  buyerId: string;
+  buyerName: string;
+  orgId: string;
+  companyName: string;
   spendUsd: number;
   revenueUsd: number;
   profitUsd: number;

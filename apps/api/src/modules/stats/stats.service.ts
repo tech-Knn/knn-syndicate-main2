@@ -137,14 +137,16 @@ export async function getCampaignPerformance(
     const campaigns = await tx.campaign.findMany({
       where: auth.role === ROLES.MEDIA_BUYER ? { buyerId: auth.userId } : {},
       orderBy: { createdAt: 'desc' },
-      select: { id: true, name: true, status: true, channelId: true },
+      select: { id: true, name: true, status: true, channelId: true, buyerId: true, orgId: true },
     });
     if (campaigns.length === 0) return [];
 
     const ids = campaigns.map((c) => c.id);
     const where = dayWhere(range, ids);
+    const buyerIds = [...new Set(campaigns.map((c) => c.buyerId))];
+    const orgIds = [...new Set(campaigns.map((c) => c.orgId))];
 
-    const [statsByCamp, revByCamp, adSets, channels] = await Promise.all([
+    const [statsByCamp, revByCamp, adSets, channels, buyers, orgs] = await Promise.all([
       tx.adStatsDaily.groupBy({
         by: ['campaignId'],
         where,
@@ -161,10 +163,14 @@ export async function getCampaignPerformance(
           ? tx.channel.findMany({ where: { id: { in: refs } }, select: { id: true, label: true, channelId: true } })
           : Promise.resolve([] as { id: string; label: string | null; channelId: string }[]);
       })(),
+      tx.user.findMany({ where: { id: { in: buyerIds } }, select: { id: true, name: true } }),
+      tx.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } }),
     ]);
 
     const statsMap = new Map(statsByCamp.map((r) => [r.campaignId, r._sum]));
     const revMap = new Map(revByCamp.map((r) => [r.campaignId, r._sum.visibleUsdMinor ?? 0]));
+    const buyerName = new Map(buyers.map((b) => [b.id, b.name]));
+    const orgName = new Map(orgs.map((o) => [o.id, o.name]));
     const adSetCount = new Map<string, number>();
     const adCount = new Map<string, number>();
     for (const s of adSets) {
@@ -182,6 +188,10 @@ export async function getCampaignPerformance(
         name: c.name,
         status: c.status,
         channelLabel: c.channelId ? (channelLabel.get(c.channelId) ?? null) : null,
+        buyerId: c.buyerId,
+        buyerName: buyerName.get(c.buyerId) ?? '—',
+        orgId: c.orgId,
+        companyName: orgName.get(c.orgId) ?? '—',
         spendUsd,
         revenueUsd,
         profitUsd: round2(revenueUsd - spendUsd),

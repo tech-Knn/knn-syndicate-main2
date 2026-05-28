@@ -1,0 +1,443 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  type CampaignBreakdown,
+  type CampaignPerf,
+  addBusinessDays,
+  currentBusinessDay,
+  formatUsd,
+} from '@knn/shared';
+import { Badge, type DateRange, DateRangePicker, Skeleton } from '@/components/ui';
+import { campaigns as campaignApi, stats } from '@/lib/api';
+import { useAuth } from '../../providers';
+import admin from '../admin.module.css';
+import styles from '../analytics.module.css';
+
+function rangeFor(days: number): DateRange {
+  const to = currentBusinessDay();
+  return { from: addBusinessDays(to, -(days - 1)), to };
+}
+
+const STATUS_TONE: Record<string, 'neutral' | 'brand' | 'success' | 'warning' | 'danger'> = {
+  ACTIVE: 'success',
+  PROCESSING: 'brand',
+  LAUNCHING: 'brand',
+  PENDING_APPROVAL: 'warning',
+  BATCHED: 'warning',
+  QUEUED_NO_CHANNEL: 'warning',
+  PAUSED: 'neutral',
+  DRAFT: 'neutral',
+  REJECTED: 'danger',
+  META_REJECTED: 'danger',
+  ARCHIVED: 'neutral',
+};
+const statusLabel = (s: string): string => s.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+
+// Derived per-row optimization metrics.
+const ctr = (r: CampaignPerf): number => (r.impressions ? (r.clicks / r.impressions) * 100 : 0);
+const cpc = (r: CampaignPerf): number => (r.clicks ? r.spendUsd / r.clicks : 0);
+const cpa = (r: CampaignPerf): number => (r.conversions ? r.spendUsd / r.conversions : 0);
+const rpc = (r: CampaignPerf): number => (r.clicks ? r.revenueUsd / r.clicks : 0);
+
+type SortKey =
+  | 'name' | 'status' | 'buyerName' | 'companyName'
+  | 'spendUsd' | 'revenueUsd' | 'profitUsd' | 'roi' | 'conversions' | 'cpa' | 'clicks' | 'cpc' | 'ctr' | 'impressions' | 'rpc';
+
+function metric(r: CampaignPerf, key: SortKey): number | string {
+  switch (key) {
+    case 'name': return r.name.toLowerCase();
+    case 'status': return r.status;
+    case 'buyerName': return r.buyerName.toLowerCase();
+    case 'companyName': return r.companyName.toLowerCase();
+    case 'cpa': return cpa(r);
+    case 'cpc': return cpc(r);
+    case 'ctr': return ctr(r);
+    case 'rpc': return rpc(r);
+    default: return r[key];
+  }
+}
+
+const PAGE_SIZE = 50;
+
+export default function AnalyticsPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'SUPER_ADMIN' || user?.role === 'COMPANY_ADMIN';
+  const isSuper = user?.role === 'SUPER_ADMIN';
+
+  const [range, setRange] = useState<DateRange>(() => rangeFor(30));
+  const [rows, setRows] = useState<CampaignPerf[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const [search, setSearch] = useState('');
+  const [statusSel, setStatusSel] = useState<Set<string>>(new Set());
+  const [buyerSel, setBuyerSel] = useState('');
+  const [companySel, setCompanySel] = useState('');
+  const [profitSel, setProfitSel] = useState<'all' | 'profit' | 'loss'>('all');
+  const [sortKey, setSortKey] = useState<SortKey>('spendUsd');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [page, setPage] = useState(0);
+
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [breakdowns, setBreakdowns] = useState<Record<string, CampaignBreakdown>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async (r: DateRange, silent = false) => {
+    if (!silent) setRows(null);
+    setError(null);
+    try {
+      setRows(await stats.campaigns(r));
+    } catch {
+      setError('Could not load campaigns. Retrying shortly…');
+    }
+  }, []);
+
+  useEffect(() => {
+    void load(range);
+    const id = setInterval(() => void load(range, true), 60_000);
+    return () => clearInterval(id);
+  }, [range, load]);
+
+  // Reset to the first page whenever the filtered view changes.
+  useEffect(() => setPage(0), [search, statusSel, buyerSel, companySel, profitSel, range]);
+
+  const statuses = useMemo(() => [...new Set((rows ?? []).map((r) => r.status))].sort(), [rows]);
+  const buyers = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rows ?? []) m.set(r.buyerId, r.buyerName);
+    return [...m].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [rows]);
+  const companies = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rows ?? []) m.set(r.orgId, r.companyName);
+    return [...m].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [rows]);
+
+  const filtered = useMemo(() => {
+    let out = rows ?? [];
+    const q = search.trim().toLowerCase();
+    if (q) out = out.filter((r) => r.name.toLowerCase().includes(q) || (r.channelLabel ?? '').toLowerCase().includes(q) || r.buyerName.toLowerCase().includes(q));
+    if (statusSel.size > 0) out = out.filter((r) => statusSel.has(r.status));
+    if (buyerSel) out = out.filter((r) => r.buyerId === buyerSel);
+    if (companySel) out = out.filter((r) => r.orgId === companySel);
+    if (profitSel === 'profit') out = out.filter((r) => r.profitUsd > 0);
+    if (profitSel === 'loss') out = out.filter((r) => r.profitUsd < 0);
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...out].sort((a, b) => {
+      const av = metric(a, sortKey);
+      const bv = metric(b, sortKey);
+      if (typeof av === 'string' || typeof bv === 'string') return String(av).localeCompare(String(bv)) * dir;
+      return (av - bv) * dir;
+    });
+  }, [rows, search, statusSel, buyerSel, companySel, profitSel, sortKey, sortDir]);
+
+  const totals = useMemo(() => {
+    const t = filtered.reduce(
+      (acc, r) => {
+        acc.spend += r.spendUsd;
+        acc.revenue += r.revenueUsd;
+        acc.profit += r.profitUsd;
+        acc.conv += r.conversions;
+        acc.clicks += r.clicks;
+        acc.impr += r.impressions;
+        return acc;
+      },
+      { spend: 0, revenue: 0, profit: 0, conv: 0, clicks: 0, impr: 0 },
+    );
+    return {
+      ...t,
+      roas: t.spend ? t.revenue / t.spend : 0,
+      cpa: t.conv ? t.spend / t.conv : 0,
+      cpc: t.clicks ? t.spend / t.clicks : 0,
+      ctr: t.impr ? (t.clicks / t.impr) * 100 : 0,
+      rpc: t.clicks ? t.revenue / t.clicks : 0,
+    };
+  }, [filtered]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageRows = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+
+  const sortBy = (key: SortKey): void => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir(typeof metric(rows?.[0] ?? ({} as CampaignPerf), key) === 'string' ? 'asc' : 'desc');
+    }
+  };
+
+  const toggleStatus = (s: string): void =>
+    setStatusSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
+      return next;
+    });
+
+  const toggleExpand = async (id: string): Promise<void> => {
+    if (expanded === id) {
+      setExpanded(null);
+      return;
+    }
+    setExpanded(id);
+    if (!breakdowns[id]) {
+      try {
+        const bd = await stats.campaignBreakdown(id, range);
+        setBreakdowns((p) => ({ ...p, [id]: bd }));
+      } catch {
+        /* non-critical */
+      }
+    }
+  };
+
+  const toggleActive = async (r: CampaignPerf, active: boolean): Promise<void> => {
+    setBusy(r.id);
+    try {
+      const res = active ? await campaignApi.resume(r.id) : await campaignApi.pause(r.id);
+      setRows((prev) => (prev ? prev.map((x) => (x.id === r.id ? { ...x, status: res.status } : x)) : prev));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update the campaign');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const exportCsv = (): void => {
+    const head = ['Campaign', 'Status', 'Buyer', 'Company', 'Spend', 'Revenue', 'Profit', 'ROAS', 'Conversions', 'CPA', 'Clicks', 'CPC', 'CTR%', 'Impressions', 'RPC', 'Channel'];
+    const esc = (v: string | number): string => {
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [
+      head.join(','),
+      ...filtered.map((r) =>
+        [r.name, r.status, r.buyerName, r.companyName, r.spendUsd, r.revenueUsd, r.profitUsd, r.roi.toFixed(2), r.conversions, cpa(r).toFixed(2), r.clicks, cpc(r).toFixed(2), ctr(r).toFixed(2), r.impressions, rpc(r).toFixed(2), r.channelLabel ?? '']
+          .map(esc)
+          .join(','),
+      ),
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `knn-analytics-${range.from}_${range.to}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const num = (n: number): string => formatUsd(n);
+  const arrow = (key: SortKey): string => (sortKey !== key ? '' : sortDir === 'asc' ? '▲' : '▼');
+  const colSpan = 14 + (isAdmin ? 1 : 0) + (isSuper ? 1 : 0); // total columns incl. actions
+
+  const Th = ({ k, label }: { k: SortKey; label: string }): React.ReactNode => (
+    <th className={`${admin.thLeft} ${styles.sortable}`} onClick={() => sortBy(k)}>
+      {label}
+      <span className={styles.arrow}>{arrow(k)}</span>
+    </th>
+  );
+
+  return (
+    <div className={admin.page}>
+      <div className={admin.head}>
+        <div>
+          <span className="eyebrow">Analytics</span>
+          <h1 className={`serif ${admin.title}`}>Performance</h1>
+          <p className={admin.sub}>Every campaign with the metrics that drive optimization. Filter, sort, search — then pause losers and scale winners.</p>
+        </div>
+        <DateRangePicker value={range} onChange={setRange} />
+      </div>
+
+      {error && <div className={admin.section} style={{ color: 'var(--red)' }}>{error}</div>}
+
+      {/* Toolbar: search + filters */}
+      <div className={styles.toolbar}>
+        <div className={styles.toolbarRow}>
+          <input className={styles.search} placeholder="Search campaign, channel, or buyer…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          {isAdmin && (
+            <select className={styles.filterSelect} value={buyerSel} onChange={(e) => setBuyerSel(e.target.value)} aria-label="Filter by buyer">
+              <option value="">All buyers</option>
+              {buyers.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+          )}
+          {isSuper && (
+            <select className={styles.filterSelect} value={companySel} onChange={(e) => setCompanySel(e.target.value)} aria-label="Filter by company">
+              <option value="">All companies</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          )}
+          <select className={styles.filterSelect} value={profitSel} onChange={(e) => setProfitSel(e.target.value as 'all' | 'profit' | 'loss')} aria-label="Filter by profitability">
+            <option value="all">All</option>
+            <option value="profit">Profitable</option>
+            <option value="loss">Losing money</option>
+          </select>
+          <div className={styles.spacer} />
+          <button type="button" className={admin.actionBtn} onClick={exportCsv} disabled={filtered.length === 0}>
+            Export CSV
+          </button>
+        </div>
+        {statuses.length > 0 && (
+          <div className={styles.chips}>
+            {statuses.map((s) => (
+              <button key={s} type="button" className={`${styles.chip} ${statusSel.has(s) ? styles.chipActive : ''}`} onClick={() => toggleStatus(s)}>
+                {statusLabel(s)}
+              </button>
+            ))}
+            {statusSel.size > 0 && (
+              <button type="button" className={styles.chip} onClick={() => setStatusSel(new Set())}>
+                Clear
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {!rows ? (
+        <div className={admin.rowsSkel}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className={admin.rowSkel} />
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
+        <p className={admin.empty}>No campaigns match. Adjust the filters or date range.</p>
+      ) : (
+        <>
+          <div className={admin.tableWrap}>
+            <table className={admin.table}>
+              <thead>
+                <tr>
+                  <Th k="name" label="Campaign" />
+                  <Th k="status" label="Status" />
+                  {isAdmin && <Th k="buyerName" label="Buyer" />}
+                  {isSuper && <Th k="companyName" label="Company" />}
+                  <Th k="spendUsd" label="Spend" />
+                  <Th k="revenueUsd" label="Revenue" />
+                  <Th k="profitUsd" label="Profit" />
+                  <Th k="roi" label="ROAS" />
+                  <Th k="conversions" label="Conv" />
+                  <Th k="cpa" label="CPA" />
+                  <Th k="clicks" label="Clicks" />
+                  <Th k="cpc" label="CPC" />
+                  <Th k="ctr" label="CTR" />
+                  <Th k="impressions" label="Impr" />
+                  <Th k="rpc" label="RPC" />
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map((r) => {
+                  const open = expanded === r.id;
+                  const bd = breakdowns[r.id];
+                  return (
+                    <FragmentRow key={r.id}>
+                      <tr className={styles.clickRow} onClick={() => void toggleExpand(r.id)}>
+                        <td className={admin.name}>
+                          <span className={`${styles.caret} ${open ? styles.caretOpen : ''}`}>▸</span> {r.name}
+                          {r.channelLabel && <div className={admin.subtle}>{r.channelLabel}</div>}
+                        </td>
+                        <td>
+                          <Badge tone={STATUS_TONE[r.status] ?? 'neutral'}>{statusLabel(r.status)}</Badge>
+                        </td>
+                        {isAdmin && <td className={admin.subtle}>{r.buyerName}</td>}
+                        {isSuper && <td className={admin.subtle}>{r.companyName}</td>}
+                        <td className={admin.num}>{num(r.spendUsd)}</td>
+                        <td className={admin.num}>{num(r.revenueUsd)}</td>
+                        <td className={`${admin.num} ${r.profitUsd > 0 ? styles.pos : r.profitUsd < 0 ? styles.neg : ''}`}>{num(r.profitUsd)}</td>
+                        <td className={`${admin.num} ${r.roi > 1 ? styles.pos : r.roi > 0 && r.roi < 1 ? styles.neg : ''}`}>{r.roi.toFixed(2)}×</td>
+                        <td className={admin.num}>{r.conversions.toLocaleString()}</td>
+                        <td className={admin.num}>{r.conversions ? num(cpa(r)) : '—'}</td>
+                        <td className={admin.num}>{r.clicks.toLocaleString()}</td>
+                        <td className={admin.num}>{r.clicks ? num(cpc(r)) : '—'}</td>
+                        <td className={admin.num}>{ctr(r).toFixed(2)}%</td>
+                        <td className={admin.num}>{r.impressions.toLocaleString()}</td>
+                        <td className={admin.num}>{r.clicks ? num(rpc(r)) : '—'}</td>
+                        <td onClick={(e) => e.stopPropagation()}>
+                          {r.status === 'ACTIVE' ? (
+                            <button type="button" className={`${admin.actionBtn} ${admin.actionDanger}`} disabled={busy === r.id} onClick={() => void toggleActive(r, false)}>
+                              {busy === r.id ? '…' : 'Pause'}
+                            </button>
+                          ) : r.status === 'PAUSED' ? (
+                            <button type="button" className={admin.actionBtn} disabled={busy === r.id} onClick={() => void toggleActive(r, true)}>
+                              {busy === r.id ? '…' : 'Resume'}
+                            </button>
+                          ) : (
+                            <span className={admin.subtle}>—</span>
+                          )}
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr>
+                          <td colSpan={colSpan}>
+                            {!bd ? (
+                              <Skeleton className={admin.rowSkel} />
+                            ) : bd.adSets.length === 0 ? (
+                              <p className={admin.subtle}>No ad sets.</p>
+                            ) : (
+                              <div className={styles.detail}>
+                                {bd.adSets.map((set) => (
+                                  <div key={set.id} className={styles.adSet}>
+                                    <div className={styles.adSetName}>{set.name}</div>
+                                    {set.ads.map((ad) => (
+                                      <div key={ad.id} className={styles.adRow}>
+                                        <span className={styles.adName}>{ad.name}</span>
+                                        <span>{num(ad.spendUsd)} spend</span>
+                                        <span>{num(ad.revenueUsd)} rev</span>
+                                        <span className={ad.profitUsd >= 0 ? styles.pos : styles.neg}>{num(ad.profitUsd)} profit</span>
+                                        <span>{ad.conversions} conv</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </FragmentRow>
+                  );
+                })}
+                {/* Totals over the full filtered set (not just this page). */}
+                <tr className={styles.totalsRow}>
+                  <td className={admin.name}>Totals ({filtered.length})</td>
+                  <td></td>
+                  {isAdmin && <td></td>}
+                  {isSuper && <td></td>}
+                  <td className={admin.num}>{num(totals.spend)}</td>
+                  <td className={admin.num}>{num(totals.revenue)}</td>
+                  <td className={`${admin.num} ${totals.profit >= 0 ? styles.pos : styles.neg}`}>{num(totals.profit)}</td>
+                  <td className={admin.num}>{totals.roas.toFixed(2)}×</td>
+                  <td className={admin.num}>{totals.conv.toLocaleString()}</td>
+                  <td className={admin.num}>{totals.conv ? num(totals.cpa) : '—'}</td>
+                  <td className={admin.num}>{totals.clicks.toLocaleString()}</td>
+                  <td className={admin.num}>{totals.clicks ? num(totals.cpc) : '—'}</td>
+                  <td className={admin.num}>{totals.ctr.toFixed(2)}%</td>
+                  <td className={admin.num}>{totals.impr.toLocaleString()}</td>
+                  <td className={admin.num}>{totals.clicks ? num(totals.rpc) : '—'}</td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className={styles.pager}>
+            <span className={styles.pageInfo}>
+              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+            </span>
+            <button type="button" className={styles.pagerBtn} disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+              Prev
+            </button>
+            <button type="button" className={styles.pagerBtn} disabled={page >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}>
+              Next
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function FragmentRow({ children }: { children: React.ReactNode }): React.ReactNode {
+  return <>{children}</>;
+}

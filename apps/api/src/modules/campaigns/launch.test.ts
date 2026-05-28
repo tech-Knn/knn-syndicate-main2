@@ -19,11 +19,12 @@ vi.mock('@knn/fb', async (importOriginal) => {
     uploadFbAdImage: vi.fn(async () => 'imghash'),
     createFbAdCreative: vi.fn(async () => ({ id: 'fbcreative-1' })),
     createFbAd: vi.fn(async () => ({ id: 'fbad-1' })),
+    updateFbCampaignStatus: vi.fn(async () => ({ success: true })),
   };
 });
 
 const fb = await import('@knn/fb');
-const { launchCampaign } = await import('./launch.service.js');
+const { launchCampaign, setCampaignActive } = await import('./launch.service.js');
 
 const suffix = Date.now().toString(36);
 const storageKey = `launch-${suffix}.png`;
@@ -206,5 +207,34 @@ describe('launchCampaign (Phase 8)', () => {
     await expect(
       launchCampaign(auth(), c.id, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
     ).rejects.toMatchObject({ statusCode: 409 });
+  });
+});
+
+describe('setCampaignActive (pause/resume optimization)', () => {
+  it('pauses an ACTIVE campaign on FB and locally, then resumes it', async () => {
+    const c = await withSystem((tx) =>
+      tx.campaign.create({ data: { orgId, buyerId, name: 'Live', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-pr' } }),
+    );
+    vi.mocked(fb.updateFbCampaignStatus).mockClear();
+
+    const paused = await setCampaignActive(auth(), c.id, false);
+    expect(paused.status).toBe('PAUSED');
+    expect(fb.updateFbCampaignStatus).toHaveBeenCalledWith('fbcamp-pr', 'act_1', 'tok', 'PAUSED');
+    expect((await withSystem((tx) => tx.campaign.findUnique({ where: { id: c.id }, select: { status: true } })))?.status).toBe('PAUSED');
+
+    const resumed = await setCampaignActive(auth(), c.id, true);
+    expect(resumed.status).toBe('ACTIVE');
+    expect(fb.updateFbCampaignStatus).toHaveBeenLastCalledWith('fbcamp-pr', 'act_1', 'tok', 'ACTIVE');
+  });
+
+  it('refuses to pause a non-launched (DRAFT) campaign', async () => {
+    const c = await withSystem((tx) => tx.campaign.create({ data: { orgId, buyerId, name: 'Draft', status: 'DRAFT', keywords: ['x'] } }));
+    await expect(setCampaignActive(auth(), c.id, false)).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("forbids another buyer from pausing someone else's campaign (404)", async () => {
+    const c = await withSystem((tx) => tx.campaign.create({ data: { orgId, buyerId, name: 'Mine', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-pr2' } }));
+    const stranger = { userId: '00000000-0000-0000-0000-000000000000', orgId, role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE };
+    await expect(setCampaignActive(stranger, c.id, false)).rejects.toMatchObject({ statusCode: 404 });
   });
 });

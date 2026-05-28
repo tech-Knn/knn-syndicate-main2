@@ -290,6 +290,10 @@ export const campaigns = {
         await authedFetch(`/api/campaigns/${id}/reopen`, { method: 'POST' }),
       )
     ).campaign,
+  pause: async (id: string): Promise<{ id: string; status: string }> =>
+    (await parse<{ campaign: { id: string; status: string } }>(await authedFetch(`/api/campaigns/${id}/pause`, { method: 'POST' }))).campaign,
+  resume: async (id: string): Promise<{ id: string; status: string }> =>
+    (await parse<{ campaign: { id: string; status: string } }>(await authedFetch(`/api/campaigns/${id}/resume`, { method: 'POST' }))).campaign,
   pending: async (): Promise<Campaign[]> =>
     (await parse<{ campaigns: Campaign[] }>(await authedFetch('/api/campaigns/pending'))).campaigns,
   approve: async (id: string): Promise<Campaign> =>
