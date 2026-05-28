@@ -39,11 +39,18 @@ click the way production AFS trackers (ClickFlare) do, then fire **Facebook Conv
   in `.env.staging`, rebuilt the image (article bundle confirmed to inline the URL), `up -d` ran the
   `conversion_events` migration (RLS=true, pgvector index intact). Smoke: `POST /api/events` → 204;
   `/api/internal` still 403; worker boots the CAPI consumer cleanly.
-- **Remaining to actually FIRE conversions on staging (external/secret — user's step):** (1) create a
-  Cloudflare API token (Workers KV: Edit) + set `CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_API_TOKEN`/`CF_KV_NAMESPACE_ID`
-  in `.env.staging` and recreate `api`+`worker` (so `readClick`/launch KV-sync work); (2) `wrangler deploy`
-  the edge redirect Worker (`apps/redirect`) so it writes `click:{txid}` to KV. Until both, the beacon 204s
-  but the server can't resolve the click (logs `KvNotConfiguredError`) → no CAPI fires.
+- **Progress (2026-05-28, second pass):** OpenAI key persisted on the box (validated live, api+worker carry
+  it). Edge Worker **redeployed** via wrangler (version `4f902640`, KV binding `REDIRECTS` 0480a994…) — the
+  `click:{txid}` write is live. **Funnel + click-log proven live** by a KV round-trip: seeded one
+  `redirect:{id}`, hit `go.10linesabout.com/go/…?fbclid=…` → 302 to the funnel article with
+  `rc/ch/rac/styleId/txid` (not the fallback), and the Worker wrote `click:{txid}={redirectId,fbclid,ts}`
+  (test keys cleaned up). `CLOUDFLARE_ACCOUNT_ID` + `CF_KV_NAMESPACE_ID` prefilled in `.env.staging`.
+- **ONE thing left to FIRE conversions live (a CF account secret — user must create it; wrangler's OAuth
+  lacks token-management scope so I can't mint it):** create a Cloudflare API token scoped **Account ›
+  Workers KV Storage › Edit**, set it as `CLOUDFLARE_API_TOKEN` in `/opt/rsoc/deploy/.env.staging`, recreate
+  `api`+`worker`. That single token unblocks BOTH the API's `readClick` (resolve click→pixel→fire CAPI) and
+  the launch KV-sync (auto-write `redirect:{id}` configs so real campaigns serve the funnel like the test
+  did). Until then the beacon 204s but the server logs `KvNotConfiguredError` → no CAPI fires.
 
 ## Article generation — OpenAI (Phase 9.5, amends D16)
 
