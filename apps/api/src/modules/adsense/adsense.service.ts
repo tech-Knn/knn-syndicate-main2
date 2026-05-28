@@ -152,21 +152,35 @@ async function freshAccessToken(c: ConnRow): Promise<string> {
   return refreshed.accessToken;
 }
 
-/** Pull the publisher's AFS custom channels and upsert them into the global pool. */
-export async function syncChannels(actor: AuthContext): Promise<{ synced: number; account: string | null }> {
+/**
+ * Pull the publisher's AFS custom channels (capped) and bulk-insert NEW ones into the
+ * global pool. AFS partner accounts can hold 10k+ channels, so we cap the seed and
+ * insert in chunks (existing channels are left untouched — never clobber a channel's
+ * status / current campaign). One channel per concurrent campaign is plenty.
+ */
+const MAX_CHANNELS_SEED = 2000;
+
+export async function syncChannels(
+  actor: AuthContext,
+): Promise<{ synced: number; added: number; account: string | null }> {
   const conn = await withSystem((tx) => tx.googleConnection.findUnique({ where: { id: PLATFORM } }));
   if (!conn) throw new AppError(409, 'AdSense is not connected');
   if (!conn.adsenseAccount) throw new AppError(409, 'No AdSense account resolved yet — reconnect once AFS access is granted');
 
   const token = await freshAccessToken(conn);
-  const channels = await discoverChannels(token, conn.adsenseAccount, { afsOnly: true });
+  const channels = await discoverChannels(token, conn.adsenseAccount, { afsOnly: true, max: MAX_CHANNELS_SEED });
 
-  await withSystem(async (tx) => {
-    for (const ch of channels) {
-      await tx.channel.upsert({
-        where: { channelId: ch.channelId },
-        create: { channelId: ch.channelId, label: ch.displayName ?? null, status: 'AVAILABLE' },
-        update: { label: ch.displayName ?? undefined }, // never clobber status / current campaign
+  const added = await withSystem(async (tx) => {
+    const existing = new Set((await tx.channel.findMany({ select: { channelId: true } })).map((c) => c.channelId));
+    const fresh = channels.filter((ch) => !existing.has(ch.channelId));
+    for (let i = 0; i < fresh.length; i += 500) {
+      await tx.channel.createMany({
+        data: fresh.slice(i, i + 500).map((ch) => ({
+          channelId: ch.channelId,
+          label: ch.displayName ?? null,
+          status: 'AVAILABLE' as const,
+        })),
+        skipDuplicates: true,
       });
     }
     await writeAudit(tx, {
@@ -175,10 +189,11 @@ export async function syncChannels(actor: AuthContext): Promise<{ synced: number
       action: 'adsense.channels.synced',
       entityType: 'channel',
       entityId: 'pool',
-      details: { synced: channels.length },
+      details: { discovered: channels.length, added: fresh.length },
     });
+    return fresh.length;
   });
-  return { synced: channels.length, account: conn.adsenseAccount };
+  return { synced: channels.length, added, account: conn.adsenseAccount };
 }
 
 export async function disconnect(actor: AuthContext): Promise<void> {

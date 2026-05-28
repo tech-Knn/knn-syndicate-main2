@@ -54,8 +54,8 @@ async function getJson<T>(url: string, token: string, deps: ListDeps): Promise<T
   return (await res.json()) as T;
 }
 
-/** Follow `nextPageToken` pagination, accumulating `key`'d arrays. */
-async function paged<T>(base: string, key: string, token: string, deps: ListDeps): Promise<T[]> {
+/** Follow `nextPageToken` pagination, accumulating `key`'d arrays (stops at `max`). */
+async function paged<T>(base: string, key: string, token: string, deps: ListDeps, max = Infinity): Promise<T[]> {
   const out: T[] = [];
   let pageToken: string | undefined;
   do {
@@ -65,8 +65,8 @@ async function paged<T>(base: string, key: string, token: string, deps: ListDeps
     const items = (json[key] as T[] | undefined) ?? [];
     out.push(...items);
     pageToken = json.nextPageToken as string | undefined;
-  } while (pageToken);
-  return out;
+  } while (pageToken && out.length < max);
+  return out.length > max ? out.slice(0, max) : out;
 }
 
 export async function listAccounts(accessToken: string, deps: ListDeps = defaultDeps): Promise<AdsenseAccount[]> {
@@ -91,31 +91,36 @@ export async function listCustomChannels(
   accessToken: string,
   adClient: string,
   deps: ListDeps = defaultDeps,
+  max = Infinity,
 ): Promise<AdsenseCustomChannel[]> {
   const raw = await paged<{ name: string; displayName?: string; reportingDimensionId?: string }>(
     `${deps.baseUrl}/${adClient}/customchannels`,
     'customChannels',
     accessToken,
     deps,
+    max,
   );
   return raw.map(toCustomChannel);
 }
 
 /**
- * Discover every custom channel across the account's ad clients (optionally only AFS).
- * Returns the channels we can seed into the pool.
+ * Discover custom channels across the account's ad clients (optionally only AFS), up
+ * to `max` total. AFS partner accounts can carry 10k+ channels, so the pool seed is
+ * capped — only a bounded set is needed (1 channel per concurrent campaign).
  */
 export async function discoverChannels(
   accessToken: string,
   account: string,
-  opts: { afsOnly?: boolean } = {},
+  opts: { afsOnly?: boolean; max?: number } = {},
   deps: ListDeps = defaultDeps,
 ): Promise<AdsenseCustomChannel[]> {
+  const max = opts.max ?? Infinity;
   const clients = await listAdClients(accessToken, account, deps);
   const wanted = opts.afsOnly ? clients.filter((c) => c.productCode === 'AFS') : clients;
   const all: AdsenseCustomChannel[] = [];
   for (const client of wanted) {
-    all.push(...(await listCustomChannels(accessToken, client.name, deps)));
+    if (all.length >= max) break;
+    all.push(...(await listCustomChannels(accessToken, client.name, deps, max - all.length)));
   }
-  return all;
+  return all.length > max ? all.slice(0, max) : all;
 }

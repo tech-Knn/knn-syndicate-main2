@@ -71,7 +71,7 @@ export default function PlatformPage() {
     setSyncing(true);
     try {
       const r = await adsense.sync();
-      setAdsNote(`Synced ${r.synced} channel${r.synced === 1 ? '' : 's'} from ${r.account ?? 'AdSense'}.`);
+      setAdsNote(`Synced ${r.synced} channel${r.synced === 1 ? '' : 's'} (${r.added} new) from ${r.account ?? 'AdSense'}.`);
       loadChannels();
     } catch {
       setAdsNote('Channel sync failed — confirm AFS access is granted, then retry.');

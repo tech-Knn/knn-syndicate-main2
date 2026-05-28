@@ -68,7 +68,6 @@ export async function liveAdsenseFetch(params: {
       channelIds: params.channelIds,
     });
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.error('[attribution] AdSense revenue pull failed:', String(err).slice(0, 200));
     return [];
   }

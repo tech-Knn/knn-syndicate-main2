@@ -9,6 +9,7 @@ import {
   applyRevenueCut,
   businessDay,
   toUsdMinor,
+  zonedStartOfDayUtc,
 } from '@knn/shared';
 import { liveAdsenseFetch } from './adsense-source.js';
 import { ensureFxRatesForDays, getUsdRate } from './fx.service.js';
@@ -170,7 +171,21 @@ export async function pullAdsenseRevenue(
 ): Promise<{ rows: number }> {
   if (!deps.fetchAdsense) return { rows: 0 };
 
-  const channels = await withSystem((tx) => tx.channel.findMany({ select: { id: true, channelId: true } }));
+  // Only channels that HELD a campaign during [since, until] need a report. This bounds
+  // the report's channel filter when the pool is large — an AFS partner account can have
+  // 10k+ custom channels, but only the handful assigned to live campaigns are relevant.
+  const sinceStartUtc = zonedStartOfDayUtc(since);
+  const assigned = await withSystem((tx) =>
+    tx.channelAssignment.findMany({
+      where: { forDay: { lte: until }, OR: [{ releasedAt: null }, { releasedAt: { gte: sinceStartUtc } }] },
+      select: { channelRef: true },
+      distinct: ['channelRef'],
+    }),
+  );
+  if (assigned.length === 0) return { rows: 0 };
+  const channels = await withSystem((tx) =>
+    tx.channel.findMany({ where: { id: { in: assigned.map((a) => a.channelRef) } }, select: { id: true, channelId: true } }),
+  );
   const channelRefByCh = new Map(channels.map((c) => [c.channelId, c.id]));
   const report = await deps.fetchAdsense({ since, until, channelIds: channels.map((c) => c.channelId) });
 

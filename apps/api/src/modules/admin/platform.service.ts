@@ -21,7 +21,8 @@ const SETTING_KEYS = {
 /** The global AdSense channel pool with the campaign currently holding each channel. */
 export async function listChannels(): Promise<ChannelRow[]> {
   return withSystem(async (tx) => {
-    const channels = await tx.channel.findMany({ orderBy: [{ status: 'asc' }, { createdAt: 'asc' }] });
+    // Cap the ops view — the pool can hold thousands of seeded AFS channels.
+    const channels = await tx.channel.findMany({ orderBy: [{ status: 'asc' }, { createdAt: 'asc' }], take: 1000 });
     const campIds = channels.map((c) => c.currentCampaignId).filter((x): x is string => Boolean(x));
     const camps = campIds.length
       ? await tx.campaign.findMany({ where: { id: { in: campIds } }, select: { id: true, name: true } })
