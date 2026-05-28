@@ -280,6 +280,13 @@ export async function submitCampaign(
       throw new AppError(409, 'Campaign is not a draft');
     }
     const issues = campaignSubmitIssues(toDraft(existing));
+    // A campaign monetizes through its offers (the websites it routes to). Without at
+    // least one PAID offer it has no destination + no channel to assign, so it would
+    // hang in QUEUED_NO_CHANNEL after approval — block it at submit with a clear reason.
+    const paidOffers = await tx.offer.count({ where: { campaignId: id, kind: 'PAID' } });
+    if (paidOffers === 0) {
+      issues.push('Add at least one paid offer (a website to send traffic to) before submitting');
+    }
     if (issues.length > 0) {
       throw new AppError(422, 'Campaign is not ready to submit', issues);
     }

@@ -17,6 +17,8 @@ let orgId = '';
 let adAccountId = '';
 let pageId = '';
 let pixelId = '';
+let afsId = '';
+let domainId = '';
 
 async function bearer(email: string): Promise<string> {
   const res = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email, password: PW } });
@@ -71,11 +73,18 @@ beforeAll(async () => {
     pageId = page.id;
     const pixel = await tx.fbPixel.create({ data: { orgId, adAccountId: acc.id, fbPixelId: 'px_1', name: 'Pixel' } });
     pixelId = pixel.id;
+    // A LIVE domain + AFS account so a campaign can carry a PAID offer (required to submit).
+    afsId = (await tx.googleConnection.create({ data: { accessTokenEnc: 'enc', tokenExpiresAt: new Date(Date.now() + 3_600_000), adsenseAccount: `acc-${slug}`, adsenseAdClient: `adc-${slug}`, afsPubId: `pp-${slug}`, label: 'AFS', status: 'ACTIVE' } })).id;
+    domainId = (await tx.domain.create({ data: { host: `camp-${slug}.example.com`, afsAccountId: afsId, status: 'LIVE', verifyToken: `v-${slug}` } })).id;
   });
 });
 
 afterAll(async () => {
-  await withSystem((tx) => tx.organization.deleteMany({ where: { id: orgId } }));
+  await withSystem(async (tx) => {
+    await tx.organization.deleteMany({ where: { id: orgId } });
+    await tx.domain.deleteMany({ where: { afsAccountId: afsId } });
+    await tx.googleConnection.deleteMany({ where: { id: afsId } });
+  });
   await app.close();
   await closeQueues();
   await prisma.$disconnect();
@@ -208,6 +217,8 @@ describe('campaigns + uploads', () => {
     // Each ad got a unique redirect id (D9).
     const redirectIds = campaign.adSets[0]?.ads.map((a) => a.redirectId) ?? [];
     expect(new Set(redirectIds).size).toBe(2);
+    // A campaign needs ≥1 PAID offer (a website to route to) to be submittable.
+    await withSystem((tx) => tx.offer.create({ data: { orgId, campaignId: draftId, domainId, weightPct: 100, kind: 'PAID' } }));
   });
 
   it('submits the completed campaign (DRAFT -> PENDING_APPROVAL)', async () => {

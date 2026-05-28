@@ -199,8 +199,11 @@ export async function deleteDomain(actor: AuthContext, id: string): Promise<void
   await withSystem(async (tx) => {
     const offers = await tx.offer.count({ where: { domainId: id } });
     if (offers > 0) throw new AppError(409, 'Domain is used by live offers — remove them first');
-    // Free this domain's channels (they go back to the unallocated/global pool).
-    await tx.channel.updateMany({ where: { domainId: id }, data: { domainId: null } });
+    // Drop this domain's channels from the pool. They belong to THIS website's AFS
+    // allocation, so they must NOT fall back to the global pool (a legacy campaign could
+    // grab them and attribution would look in the wrong AFS account). No offer references
+    // the domain here, so its channels are AVAILABLE; they can be re-imported if it returns.
+    await tx.channel.deleteMany({ where: { domainId: id, status: 'AVAILABLE' } });
     await tx.domain.delete({ where: { id } });
     await writeAudit(tx, { orgId: actor.orgId, actorId: actor.userId, action: 'domain.deleted', entityType: 'domain', entityId: id });
   });

@@ -22,6 +22,8 @@ let adAccountId = '';
 let pageId = '';
 let pixelId = '';
 let uploadId = '';
+let afsId = '';
+let domainId = '';
 
 async function bearer(email: string): Promise<string> {
   const res = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email, password: PW } });
@@ -35,6 +37,8 @@ function h(token: string): Record<string, string> {
 async function buildSubmittable(token: string, name: string): Promise<string> {
   const created = await app.inject({ method: 'POST', url: '/api/campaigns', headers: h(token), payload: { name } });
   const id = created.json<{ campaign: { id: string } }>().campaign.id;
+  // A submittable campaign needs ≥1 PAID offer (a website to route to).
+  await withSystem((tx) => tx.offer.create({ data: { orgId: orgAId, campaignId: id, domainId, weightPct: 100, kind: 'PAID' } }));
   const res = await app.inject({
     method: 'PATCH',
     url: `/api/campaigns/${id}`,
@@ -87,6 +91,9 @@ beforeAll(async () => {
     adAccountId = acc.id;
     pageId = (await tx.fbPage.create({ data: { orgId: orgAId, connectionId: conn.id, fbPageId: 'pg_a', name: 'Page' } })).id;
     pixelId = (await tx.fbPixel.create({ data: { orgId: orgAId, adAccountId: acc.id, fbPixelId: 'px_a', name: 'Pixel' } })).id;
+    // A LIVE domain + AFS account so campaigns can carry a PAID offer (required to submit).
+    afsId = (await tx.googleConnection.create({ data: { accessTokenEnc: 'enc', tokenExpiresAt: new Date(Date.now() + 3_600_000), adsenseAccount: `acc-${suffix}`, adsenseAdClient: `adc-${suffix}`, afsPubId: `pp-${suffix}`, label: 'AFS', status: 'ACTIVE' } })).id;
+    domainId = (await tx.domain.create({ data: { host: `appr-${suffix}.example.com`, afsAccountId: afsId, status: 'LIVE', verifyToken: `v-${suffix}` } })).id;
   });
   // Upload one creative as the buyer (reused by every ad).
   const boundary = '----knnapprtest';
@@ -105,6 +112,8 @@ afterAll(async () => {
   await withSystem(async (tx) => {
     await tx.auditLog.deleteMany({ where: { orgId: { in: [orgAId, orgBId] } } });
     await tx.organization.deleteMany({ where: { id: { in: [orgAId, orgBId] } } });
+    await tx.domain.deleteMany({ where: { afsAccountId: afsId } });
+    await tx.googleConnection.deleteMany({ where: { id: afsId } });
   });
   await app.close();
   await closeQueues();

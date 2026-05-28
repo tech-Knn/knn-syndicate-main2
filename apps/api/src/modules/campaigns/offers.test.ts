@@ -3,6 +3,8 @@ import { prisma, withSystem } from '@knn/db';
 import { closeQueues } from '@knn/queue';
 import { ROLES, USER_STATUS } from '@knn/shared';
 import { encryptToken } from '@knn/fb';
+import { AppError } from '../../lib/errors.js';
+import { submitCampaign } from './campaigns.service.js';
 import { listOffers, setOffers } from './offers.service.js';
 
 const suffix = Date.now().toString(36);
@@ -83,6 +85,19 @@ describe('campaign offers', () => {
   it('forbids another buyer from reading/editing the campaign offers', async () => {
     const otherAuth = { userId: otherBuyerId, orgId, role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE };
     await expect(listOffers(otherAuth, campaignId)).rejects.toThrow('not found');
+  });
+
+  it('blocks submit until the campaign has at least one paid offer', async () => {
+    const fresh = await withSystem((tx) => tx.campaign.create({ data: { orgId, buyerId, name: 'no-offers', status: 'DRAFT', keywords: [] } }));
+    try {
+      await submitCampaign(auth(), fresh.id);
+      throw new Error('expected submit to be rejected');
+    } catch (err) {
+      expect(err).toBeInstanceOf(AppError);
+      expect((err as AppError).statusCode).toBe(422);
+      expect((err as AppError).details).toEqual(expect.arrayContaining([expect.stringContaining('paid offer')]));
+    }
+    await withSystem((tx) => tx.campaign.deleteMany({ where: { id: fresh.id } }));
   });
 
   it('blocks editing once the campaign is past approval (ACTIVE)', async () => {
