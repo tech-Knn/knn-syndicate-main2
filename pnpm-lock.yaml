@@ -164,6 +164,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@knn/adsense':
+        specifier: workspace:*
+        version: link:../../packages/adsense
       '@knn/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -198,6 +201,15 @@ importers:
       tsup:
         specifier: ^8.3.5
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.15)(tsx@4.22.3)(typescript@5.9.3)
+
+  packages/adsense:
+    dependencies:
+      '@knn/config':
+        specifier: workspace:*
+        version: link:../config
+      '@knn/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/ai:
     dependencies:

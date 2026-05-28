@@ -2,6 +2,8 @@ import { Worker, type Job } from 'bullmq';
 import cron from 'node-cron';
 import { env } from '@knn/config';
 import { QUEUES, closeQueues, createConnection, getQueue } from '@knn/queue';
+import { FINALIZATION } from '@knn/shared';
+import { runFinalization, runHourlyAttribution } from './attribution/attribution.service.js';
 import {
   assignChannel,
   processQueue,
@@ -112,6 +114,20 @@ async function main(): Promise<void> {
     console.error(`[worker] ${QUEUES.META_REJECTION_CHECK} job ${job?.id} failed:`, err.message);
   });
 
+  // Revenue attribution (Phase 9, D8/D15): `hourly` re-pulls today's FB stats +
+  // AdSense revenue and re-allocates; `finalize` re-pulls the trailing FB/AdSense
+  // windows (§5.8). Single writer — it scans every launched campaign and writes the
+  // daily buckets via idempotent upserts, so re-runs never double-count.
+  const attributionWorker = new Worker(
+    QUEUES.ATTRIBUTION,
+    async (job: Job<{ kind: 'hourly' | 'finalize' }>) =>
+      job.data.kind === 'finalize' ? runFinalization() : runHourlyAttribution(),
+    { connection, concurrency: 1 },
+  );
+  attributionWorker.on('failed', (job, err) => {
+    console.error(`[worker] ${QUEUES.ATTRIBUTION} job ${job?.id} failed:`, err.message);
+  });
+
   // Repeatable heartbeat — visible in Bull-Board, proves the queue round-trips.
   await getQueue(QUEUES.HEALTH).add(
     'heartbeat',
@@ -156,6 +172,24 @@ async function main(): Promise<void> {
     { timezone: env.BUSINESS_TIMEZONE },
   );
 
+  // Hourly attribution refresh (:15 each hour): re-pull today's stats/revenue (D8).
+  const attributionCron = cron.schedule(
+    '15 * * * *',
+    () => {
+      void getQueue(QUEUES.ATTRIBUTION).add('hourly', { kind: 'hourly' }, { removeOnComplete: 50, removeOnFail: 50 });
+    },
+    { timezone: env.BUSINESS_TIMEZONE },
+  );
+
+  // Data finalization re-pull every REPULL_INTERVAL_HOURS (§5.8) — trailing FB/AdSense windows.
+  const finalizationCron = cron.schedule(
+    `0 */${FINALIZATION.REPULL_INTERVAL_HOURS} * * *`,
+    () => {
+      void getQueue(QUEUES.ATTRIBUTION).add('finalize', { kind: 'finalize' }, { removeOnComplete: 50, removeOnFail: 50 });
+    },
+    { timezone: env.BUSINESS_TIMEZONE },
+  );
+
   console.log(
     `[worker] started — processing ${QUEUES.HEALTH}; business tz=${env.BUSINESS_TIMEZONE}`,
   );
@@ -165,11 +199,14 @@ async function main(): Promise<void> {
     midnightCleanup.stop();
     metaRejectionCron.stop();
     tokenRefreshCron.stop();
+    attributionCron.stop();
+    finalizationCron.stop();
     await healthWorker.close();
     await tokenRefreshWorker.close();
     await channelWorker.close();
     await fbLaunchWorker.close();
     await metaRejectionWorker.close();
+    await attributionWorker.close();
     await closeQueues();
     await connection.quit();
     process.exit(0);

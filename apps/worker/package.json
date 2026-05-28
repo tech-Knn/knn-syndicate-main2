@@ -12,6 +12,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@knn/adsense": "workspace:*",
     "@knn/config": "workspace:*",
     "@knn/db": "workspace:*",
     "@knn/fb": "workspace:*",

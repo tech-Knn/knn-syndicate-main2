@@ -2,7 +2,26 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-28 — Phase 8 COMPLETE incl. the **auto-launch toggle (D19)**: approve → channel → (if `org.autoLaunch`) auto-create on FB via the worker→API internal endpoint; default = manual gate. Gate green (api 63, worker 20; full monorepo typecheck+lint+test+build clean). Phases 0–7 done; AFS/RSOC funnel + edge redirect (`go.10linesabout.com`) LIVE. Next: Phase 9 (stats & revenue attribution). **Live launch needs external deps:** a Cloudflare API token (Workers KV Edit) for the live redirect-config sync, an FB **test** ad account (D18), Anthropic/OpenAI keys for article generation, and `INTERNAL_API_TOKEN`/`INTERNAL_API_URL` set in the deployed env for auto-launch._
+_Last updated: 2026-05-28 — **Phase 9 (stats & revenue aggregation, D8/D15) CODE COMPLETE** (gate green: worker 30 incl. attribution 10, shared 50, adsense 6, fb 20; full monorepo typecheck+lint+test+build clean). Phases 0–8 done; legacy Node redirect retired (#18). Next: Phase 10 (dashboards). **Live revenue needs external deps:** AdSense AFS access + a Google OAuth token store (#4/#13) — the `@knn/adsense` client + attribution math are built & tested but the live AFS pull is DORMANT until then (FB cost stats still populate). Earlier deps still apply (CF KV token, FB test account, AI keys, INTERNAL_API_* for auto-launch)._
+
+## Phase 9 — Stats & revenue aggregation (code complete; gate green)
+
+Four IST-day-keyed tables (migration `20260528070534_phase9_stats_revenue`; pgvector DROP removed,
+RLS on the 3 org tables, `fx_rates` global): `ad_stats_daily` (FB insights per ad: imps/clicks/
+conversions + native & USD spend), `campaign_revenue_daily` (gross AFS revenue per campaign, native &
+USD, `afs_clicks`, `suppressed`), `ad_revenue_daily` (derived per-ad split: allocated/visible/margin +
+`basis`), `fx_rates` (daily USD-per-unit). **Math** in `@knn/shared/money.ts`: `allocateCampaignRevenue`
+(D8 conversion share → clicks → impressions → `unallocated`, largest-remainder exact-sum) +
+`applyRevenueCut` (buyer override ?? org default) + `toUsdMinor` (D15). **FB insights** =
+`@knn/fb/insights.ts` (`fetchAdInsights`/`extractConversions`, rate-limited). **AdSense** =
+`@knn/adsense` (`fetchChannelReport`/`parseChannelReport`) — built + tested, **dormant** (injected
+`fetchAdsense`, undefined by default; AFS access + Google OAuth pending, #4/#13). **Worker**
+`src/attribution/` (`attribution.service.ts` + `fx.service.ts`): `runHourlyAttribution` (today),
+`runFinalization` (trailing FB/AdSense windows §5.8); `ATTRIBUTION` queue + `:15`-hourly &
+`*/6h` crons. All writes are upserts keyed on (entity, day) → re-pulls idempotent. **Gate met:**
+worked examples ($50→1conv; $50→4conv=$12.50ea), zero-conversion fallback, EUR→USD conversion, `<10`
+AFS-click suppression, buyer-cut override, and finalization idempotency (`attribution.test.ts`, real PG).
+**Footgun fixed:** worker `vitest.config.ts` sets `fileParallelism:false` (global cross-org scans).
 
 ## Phase 8 — FB launch pipeline + meta-rejection (code complete; gate met vs mocked FB)
 

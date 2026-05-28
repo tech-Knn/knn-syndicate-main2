@@ -1,0 +1,128 @@
+import { AdsenseNotConfiguredError, AdsenseRequestError } from './errors.js';
+
+/**
+ * AdSense (AFS / Custom Search Ads) revenue client — Phase 9, the AFS source of
+ * truth for attribution (D8). Reads per-channel, per-day estimated earnings + AFS
+ * clicks from the AdSense Management API v2 `reports:generate` endpoint. Pure
+ * `parseChannelReport` does the row mapping (tested); `fetchChannelReport` adds the
+ * HTTP call. Revenue is returned in the report's native currency (minor units) — the
+ * caller converts to USD via the daily FxRate (D15).
+ *
+ * NOTE: AFS reporting access is invite/approval-gated by Google (OPEN_QUESTIONS #4)
+ * and the exact CUSTOM_CHANNEL_ID ↔ our `ch` value mapping + any AFS product filter
+ * must be confirmed against a live account. The real fetch path stays dormant until a
+ * Google OAuth token is wired; attribution is exercised with injected data until then.
+ */
+
+/** Per-channel, per-day revenue row (the unit attribution consumes). */
+export interface ChannelDayRevenue {
+  /** AdSense custom-channel id as reported (mapped to our Channel.channelId upstream). */
+  channelId: string;
+  /** Report day, YYYY-MM-DD. */
+  day: string;
+  /** Estimated earnings in `currency`, minor units (2-decimal assumption). */
+  revenueMinor: number;
+  currency: string;
+  /** AFS ad clicks for the day (drives the <10 suppression rule, §5.8.2). */
+  afsClicks: number;
+}
+
+/** Shape of the AdSense Management API v2 report response (the bits we read). */
+export interface AdsenseReportResponse {
+  headers?: { name: string; type?: string; currencyCode?: string }[];
+  rows?: { cells: { value?: string }[] }[];
+}
+
+const DIM_DATE = 'DATE';
+const DIM_CHANNEL = 'CUSTOM_CHANNEL_ID';
+const MET_EARNINGS = 'ESTIMATED_EARNINGS';
+const MET_CLICKS = 'CLICKS';
+
+/**
+ * Map a v2 report response → ChannelDayRevenue rows. Resolves columns by header
+ * name (order-independent). Earnings (a decimal in the header's currency) → minor
+ * units; currency from the earnings header's `currencyCode` (default USD). Rows
+ * missing a date or channel are skipped.
+ */
+export function parseChannelReport(report: AdsenseReportResponse): ChannelDayRevenue[] {
+  const headers = report.headers ?? [];
+  const idx = (name: string): number => headers.findIndex((h) => h.name === name);
+  const di = idx(DIM_DATE);
+  const ci = idx(DIM_CHANNEL);
+  const ei = idx(MET_EARNINGS);
+  const ki = idx(MET_CLICKS);
+  const currency = (ei >= 0 ? headers[ei]?.currencyCode : undefined) ?? 'USD';
+
+  const out: ChannelDayRevenue[] = [];
+  for (const row of report.rows ?? []) {
+    const cell = (i: number): string | undefined => (i >= 0 ? row.cells[i]?.value : undefined);
+    const day = cell(di);
+    const channelId = cell(ci);
+    if (!day || !channelId) continue;
+    out.push({
+      channelId,
+      day,
+      revenueMinor: Math.round((Number(cell(ei)) || 0) * 100),
+      currency,
+      afsClicks: Math.round(Number(cell(ki)) || 0),
+    });
+  }
+  return out;
+}
+
+export interface FetchChannelReportParams {
+  /** Google OAuth access token with AdSense Management scope. */
+  accessToken: string;
+  /** AdSense account resource id, e.g. `accounts/pub-1234567890`. */
+  account: string;
+  since: string; // YYYY-MM-DD
+  until: string; // YYYY-MM-DD
+  /** Optional: restrict to these custom-channel ids. */
+  channelIds?: string[];
+}
+
+export interface FetchDeps {
+  fetch: typeof fetch;
+  baseUrl: string;
+}
+const defaultDeps: FetchDeps = { fetch, baseUrl: 'https://adsense.googleapis.com/v2' };
+
+/** Build the `reports:generate` query string for a per-channel per-day report. */
+export function buildReportQuery(p: FetchChannelReportParams): string {
+  const [sy, sm, sd] = p.since.split('-');
+  const [uy, um, ud] = p.until.split('-');
+  const q = new URLSearchParams();
+  q.set('dateRange', 'CUSTOM');
+  q.set('startDate.year', sy ?? '');
+  q.set('startDate.month', String(Number(sm)));
+  q.set('startDate.day', String(Number(sd)));
+  q.set('endDate.year', uy ?? '');
+  q.set('endDate.month', String(Number(um)));
+  q.set('endDate.day', String(Number(ud)));
+  q.append('dimensions', DIM_DATE);
+  q.append('dimensions', DIM_CHANNEL);
+  q.append('metrics', MET_EARNINGS);
+  q.append('metrics', MET_CLICKS);
+  for (const id of p.channelIds ?? []) q.append('filters', `${DIM_CHANNEL}==${id}`);
+  return q.toString();
+}
+
+/**
+ * Fetch per-channel daily AFS revenue over [since, until]. Throws
+ * `AdsenseNotConfiguredError` when no access token is supplied (the dormant path),
+ * `AdsenseRequestError` on a non-OK response.
+ */
+export async function fetchChannelReport(
+  params: FetchChannelReportParams,
+  deps: FetchDeps = defaultDeps,
+): Promise<ChannelDayRevenue[]> {
+  if (!params.accessToken) throw new AdsenseNotConfiguredError();
+  const url = `${deps.baseUrl}/${params.account}/reports:generate?${buildReportQuery(params)}`;
+  const res = await deps.fetch(url, { headers: { Authorization: `Bearer ${params.accessToken}` } });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new AdsenseRequestError(`AdSense report failed (${res.status}): ${body.slice(0, 200)}`, res.status);
+  }
+  const json = (await res.json()) as AdsenseReportResponse;
+  return parseChannelReport(json);
+}

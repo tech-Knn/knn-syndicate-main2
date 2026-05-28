@@ -553,3 +553,105 @@ model CampaignQueue {
   @@index([status, enqueuedAt])
   @@map("campaign_queue")
 }
+
+// ---------------------------------------------------------------------------
+// Phase 9 — Stats & revenue aggregation (D8/D15). FB insights per ad and AdSense
+// revenue per channel are pulled (hourly cron) into per-IST-day rows, then the
+// campaign's gross AFS revenue is split across its ads by conversion share (D8,
+// largest-remainder) with a zero-conversion fallback (OPEN_QUESTIONS #1:
+// conversions → clicks → impressions → campaign-level "unallocated"). All money is
+// integer minor units; native amounts pair with a USD field (D15) via the daily
+// FxRate. The IST business day (D4) is the bucket key. Storage is DAILY (not the
+// plan's "ad_stats_hourly") — attribution + AFS reporting are daily and FB's hourly
+// breakdown is timezone-fragile; the cron PULLS hourly to keep "today" fresh.
+// ---------------------------------------------------------------------------
+
+/// Daily native-currency → USD rate (GLOBAL: no org_id / no RLS, like channels &
+/// platform_settings). `rate` = USD per 1 unit of `currency` on `day`; USD→USD = 1.
+model FxRate {
+  id        String   @id @default(uuid()) @db.Uuid
+  day       String
+  currency  String
+  rate      Decimal  @db.Decimal(20, 10)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([day, currency])
+  @@map("fx_rates")
+}
+
+/// Per-ad per-IST-day Facebook insights — the cost side + the D8 conversion signal.
+/// Refreshed by the hourly stats cron (idempotent upsert); re-pulled over the FB
+/// finalization window (FINALIZATION.FB_REPULL_DAYS) until `finalized`. Spend is the
+/// ad account's native currency (minor units) paired with a USD conversion (D15).
+model AdStatsDaily {
+  id            String   @id @default(uuid()) @db.Uuid
+  orgId         String   @map("org_id") @db.Uuid
+  adId          String   @map("ad_id") @db.Uuid
+  campaignId    String   @map("campaign_id") @db.Uuid
+  day           String
+  impressions   Int      @default(0)
+  clicks        Int      @default(0)
+  conversions   Int      @default(0)
+  spendMinor    Int      @default(0) @map("spend_minor")
+  spendUsdMinor Int      @default(0) @map("spend_usd_minor")
+  currency      String   @default("USD")
+  finalized     Boolean  @default(false)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@unique([adId, day])
+  @@index([orgId, day])
+  @@index([campaignId, day])
+  @@map("ad_stats_daily")
+}
+
+/// Per-campaign per-IST-day gross AdSense revenue — the AFS source of truth. One
+/// channel ↔ one campaign per day (D7), so AdSense per-channel revenue maps to the
+/// campaign holding that channel on `day` (ChannelAssignment.for_day). Native (AdSense
+/// account currency) paired with USD (D15). `afs_clicks < threshold` → `suppressed`
+/// (hidden from buyer display, spec §5.8.2). Re-pulled over ADSENSE_REPULL_DAYS.
+model CampaignRevenueDaily {
+  id              String   @id @default(uuid()) @db.Uuid
+  orgId           String   @map("org_id") @db.Uuid
+  campaignId      String   @map("campaign_id") @db.Uuid
+  channelRef      String   @map("channel_ref") @db.Uuid
+  day             String
+  afsClicks       Int      @default(0) @map("afs_clicks")
+  revenueMinor    Int      @default(0) @map("revenue_minor")
+  revenueUsdMinor Int      @default(0) @map("revenue_usd_minor")
+  currency        String   @default("USD")
+  suppressed      Boolean  @default(false)
+  finalized       Boolean  @default(false)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([campaignId, day])
+  @@index([orgId, day])
+  @@map("campaign_revenue_daily")
+}
+
+/// Derived per-ad per-IST-day revenue: the campaign's gross USD revenue split across
+/// its ads by conversion share (D8) with the OPEN_QUESTIONS #1 fallback. The platform
+/// revenue cut (User.revenueCutPct ?? Organization.defaultRevenueCutPct) splits the
+/// allocated amount into buyer-visible + platform margin. `basis` = what drove the
+/// split (conversions | clicks | impressions | unallocated). Recomputed idempotently
+/// whenever the campaign's stats/revenue change.
+model AdRevenueDaily {
+  id                String   @id @default(uuid()) @db.Uuid
+  orgId             String   @map("org_id") @db.Uuid
+  adId              String   @map("ad_id") @db.Uuid
+  campaignId        String   @map("campaign_id") @db.Uuid
+  day               String
+  conversions       Int      @default(0)
+  allocatedUsdMinor Int      @default(0) @map("allocated_usd_minor")
+  visibleUsdMinor   Int      @default(0) @map("visible_usd_minor")
+  marginUsdMinor    Int      @default(0) @map("margin_usd_minor")
+  basis             String   @default("conversions")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@unique([adId, day])
+  @@index([orgId, day])
+  @@index([campaignId, day])
+  @@map("ad_revenue_daily")
+}

@@ -63,3 +63,57 @@ export function applyRevenueCut(
   const marginCents = Math.round(grossCents * clamped);
   return { visibleCents: grossCents - marginCents, marginCents };
 }
+
+/** What drove a campaign→ad revenue split (DECISION D8 + OPEN_QUESTIONS #1 fallback). */
+export type AllocationBasis = 'conversions' | 'clicks' | 'impressions' | 'unallocated';
+
+/** Per-ad signals used to weight a campaign's revenue split. */
+export interface AdSignals {
+  conversions: number;
+  clicks: number;
+  impressions: number;
+}
+
+/**
+ * Pick the weighting basis for splitting a campaign's revenue across its ads
+ * (DECISION D8: by FB conversion share). Zero-conversion fallback
+ * (OPEN_QUESTIONS #1): if Σ conversions = 0 → split by clicks; if Σ clicks = 0 →
+ * by impressions; if all are 0 → `unallocated` (hold at the campaign level,
+ * admin-visible — no ad gets the revenue).
+ */
+export function chooseAllocationBasis(ads: AdSignals[]): AllocationBasis {
+  const sum = (key: keyof AdSignals): number => ads.reduce((a, x) => a + (x[key] || 0), 0);
+  if (sum('conversions') > 0) return 'conversions';
+  if (sum('clicks') > 0) return 'clicks';
+  if (sum('impressions') > 0) return 'impressions';
+  return 'unallocated';
+}
+
+/**
+ * Split a campaign's gross revenue (USD minor units) across its ads by conversion
+ * share (D8), applying the zero-conversion fallback chain (OPEN_QUESTIONS #1). The
+ * split uses largest-remainder so the parts sum EXACTLY to `grossCents` (unless the
+ * basis is `unallocated`, where every ad gets 0 and the whole amount stays unallocated
+ * at the campaign level). Order of `ads` is preserved in `allocations`.
+ */
+export function allocateCampaignRevenue(
+  grossCents: number,
+  ads: AdSignals[],
+): { basis: AllocationBasis; allocations: number[] } {
+  const basis = chooseAllocationBasis(ads);
+  if (basis === 'unallocated') {
+    return { basis, allocations: new Array(ads.length).fill(0) as number[] };
+  }
+  const weights = ads.map((a) => a[basis]);
+  return { basis, allocations: allocateByWeights(grossCents, weights) };
+}
+
+/**
+ * Convert a native minor-unit amount to USD minor units using `rate` = USD per 1
+ * unit of the native currency (D15). USD→USD uses rate 1. Minor units scale linearly,
+ * so multiply directly and round to the nearest USD cent.
+ */
+export function toUsdMinor(nativeMinor: number, rate: number): number {
+  if (!Number.isFinite(rate) || rate <= 0) return 0;
+  return Math.round(nativeMinor * rate);
+}

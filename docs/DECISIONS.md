@@ -228,3 +228,29 @@ the approved plan.
   for a manual retry. Resumable partial-failure launch is a Phase 11 hardening follow-up (OPEN_QUESTIONS #10).
 - **UX:** the auto-launch switch sits beside auto-approve on the Approvals page (company-admin only);
   approval/auto-approval notifications now say "will launch automatically" vs "ready to launch" per the mode.
+
+### 2026-05-28 — Phase 9 (stats & revenue aggregation, D8/D15)
+
+- **Four new tables (all IST-day keyed, D4):** `fx_rates` (global, no RLS — daily USD-per-unit rate),
+  `ad_stats_daily` (per-ad FB insights: impressions/clicks/conversions + native & USD spend),
+  `campaign_revenue_daily` (per-campaign gross AFS revenue, native & USD, `afs_clicks`, `suppressed`),
+  `ad_revenue_daily` (the derived per-ad split: allocated/visible/margin + `basis`). The three per-org
+  tables get the standard `tenant_isolation` RLS policy; the worker writes them under `withSystem`.
+- **Storage is DAILY, deviating from the plan's `ad_stats_hourly`.** Attribution + AFS reporting are
+  daily and FB's hourly breakdown is timezone-fragile; the cron PULLS hourly to keep "today" fresh.
+  FB day buckets use the ad-account reporting tz (= IST for IST accounts; OPEN_QUESTIONS #14).
+- **Allocation (D8 + OPEN_QUESTIONS #1)**: `allocateCampaignRevenue` (`@knn/shared/money.ts`) splits a
+  campaign's gross USD across its ads by conversion share (largest-remainder, exact-sum), falling back
+  conversions → clicks → impressions → `unallocated` (held at the campaign level). Then `applyRevenueCut`
+  (buyer `revenueCutPct` ?? org `defaultRevenueCutPct`) → buyer-visible + platform margin.
+- **Multi-currency (D15)**: native minor units + a USD field via `fx_rates`; `toUsdMinor` converts;
+  `getUsdRate` falls back to the most-recent rate then 1.0. Never sum across native currencies.
+- **AFS source (`@knn/adsense`) is built + tested but DORMANT** (AFS access + Google OAuth token are
+  external, OPEN_QUESTIONS #4/#13). Attribution consumes an **injected** `fetchAdsense` (undefined by
+  default → cleanly no-ops); FB insights (`@knn/fb/insights.ts`) run live through the rate limiter (D12).
+- **Idempotent finalization (§5.8)**: every write is an upsert keyed on (entity, day); the `ATTRIBUTION`
+  queue runs `hourly` (today) + `finalize` (re-pull trailing FB `FB_REPULL_DAYS` / AdSense
+  `ADSENSE_REPULL_DAYS` windows). Re-runs never double-count — proven in `attribution.test.ts`.
+- **Gate met:** attribution math (worked examples + zero-conversion fallback), currency conversion,
+  revenue-cut (buyer override), AFS `<10` suppression, and finalization re-pull idempotency — all green
+  against real Postgres (`apps/worker/src/attribution/attribution.test.ts`, 10 tests; `money.test.ts` 20).
