@@ -403,3 +403,48 @@ export async function setDomainChannels(actor: AuthContext, id: string, sel: Cha
     return { added, removed };
   });
 }
+
+/** Cap on a single "import all" so a slip on the 100k-channel account can't flood the pool. */
+const IMPORT_ALL_CAP = 2000;
+
+/**
+ * Import EVERY channel the AFS account returns (optionally filtered by name/id `q`) into
+ * the domain's pool, straight from the API — no ticking. For a dedicated account leave `q`
+ * empty (imports all, ≤cap); on the shared 100k account pass a team name as `q` so you only
+ * pull yours. Capped at {@link IMPORT_ALL_CAP}; `cappedAt` is set when more matched than imported.
+ */
+export async function importAllChannels(
+  actor: AuthContext,
+  id: string,
+  opts: { q?: string } = {},
+  deps: BrowseChannelsDeps = defaultBrowseDeps,
+): Promise<{ added: number; matched: number; scanned: number; cappedAt?: number }> {
+  const domain = await withSystem((tx) => tx.domain.findUnique({ where: { id }, include: { afsAccount: true } }));
+  if (!domain) throw new AppError(404, 'Domain not found');
+  if (!domain.afsAccount.adsenseAdClient) throw new AppError(409, "The domain's AFS account has no AFS ad client resolved — reconnect it");
+
+  const token = await freshTokenFor(domain.afsAccount);
+  const all = await deps.fetchChannels(token, domain.afsAccount.adsenseAdClient, CHANNEL_SCAN_CAP);
+  const q = (opts.q ?? '').trim().toLowerCase();
+  const matched = q ? all.filter((c) => (c.displayName ?? '').toLowerCase().includes(q) || c.channelId.includes(q)) : all;
+  const toImport = matched.slice(0, IMPORT_ALL_CAP);
+
+  const added = await withSystem(async (tx) => {
+    const seen = new Set(
+      (await tx.channel.findMany({ where: { channelId: { in: toImport.map((c) => c.channelId) } }, select: { channelId: true } })).map((c) => c.channelId),
+    );
+    const fresh = toImport.filter((c) => !seen.has(c.channelId));
+    let n = 0;
+    for (let i = 0; i < fresh.length; i += 500) {
+      const r = await tx.channel.createMany({
+        data: fresh.slice(i, i + 500).map((c) => ({ channelId: c.channelId, label: c.displayName ?? null, status: 'AVAILABLE' as const, domainId: id })),
+        skipDuplicates: true,
+      });
+      n += r.count;
+    }
+    await tx.domain.update({ where: { id }, data: { channelRanges: q ? `name:${q}` : 'all' } });
+    await writeAudit(tx, { orgId: actor.orgId, actorId: actor.userId, action: 'domain.channels.import_all', entityType: 'domain', entityId: id, details: { q, matched: matched.length, added: n } });
+    return n;
+  });
+  return { added, matched: matched.length, scanned: all.length, cappedAt: matched.length > IMPORT_ALL_CAP ? IMPORT_ALL_CAP : undefined };
+}

@@ -431,6 +431,8 @@ export const domains = {
     parse(await authedFetch(`/api/domains/${id}/afs-channels?q=${encodeURIComponent(q ?? '')}`)),
   setChannels: async (id: string, sel: { add?: { channelId: string; label?: string }[]; remove?: string[] }): Promise<{ added: number; removed: number }> =>
     parse(await authedFetch(`/api/domains/${id}/afs-channels`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(sel) })),
+  importAllChannels: async (id: string, q?: string): Promise<{ added: number; matched: number; scanned: number; cappedAt?: number }> =>
+    parse(await authedFetch(`/api/domains/${id}/afs-channels`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ importAll: true, q }) })),
   remove: async (id: string): Promise<void> => {
     await authedFetch(`/api/domains/${id}`, { method: 'DELETE' });
   },

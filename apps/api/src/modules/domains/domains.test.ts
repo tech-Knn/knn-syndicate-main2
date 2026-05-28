@@ -6,6 +6,7 @@ import { encryptToken } from '@knn/fb';
 import {
   createDomain,
   deleteDomain,
+  importAllChannels,
   isDomainRegistered,
   listDomainAfsChannels,
   listDomains,
@@ -155,6 +156,20 @@ describe('domain management', () => {
 
     // Cleanup (don't leak global channels into other suites).
     await withSystem((tx) => tx.channel.deleteMany({ where: { channelId: { in: ['70001', '70002', '70003'] } } }));
+  });
+
+  it('import-all pulls every (matching) channel from the API in one shot', async () => {
+    const fake = [
+      { channelId: '71001', displayName: 'Pihu A' },
+      { channelId: '71002', displayName: 'Pihu B' },
+      { channelId: '71003', displayName: 'Ajeet C' },
+    ];
+    const deps = { fetchChannels: async () => fake };
+    expect(await importAllChannels(auth(), domainId, { q: 'pihu' }, deps)).toMatchObject({ added: 2, matched: 2 });
+    expect((await importAllChannels(auth(), domainId, {}, deps)).added).toBe(1); // only the remaining 'Ajeet C'
+    const count = await withSystem((tx) => tx.channel.count({ where: { channelId: { in: ['71001', '71002', '71003'] } } }));
+    expect(count).toBe(3);
+    await withSystem((tx) => tx.channel.deleteMany({ where: { channelId: { in: ['71001', '71002', '71003'] } } }));
   });
 
   it('blocks delete while offers reference the domain, allows it after', async () => {

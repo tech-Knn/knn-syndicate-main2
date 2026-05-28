@@ -115,6 +115,27 @@ export default function DomainsPage() {
       return n;
     });
 
+  const importAll = async (): Promise<void> => {
+    if (!chDomain) return;
+    setChBusy(true);
+    setNote(null);
+    try {
+      const r = await domains.importAllChannels(chDomain.id, chQuery);
+      setNote(
+        `Imported ${r.added} channel${r.added === 1 ? '' : 's'} from the API${chQuery ? ` matching “${chQuery}”` : ''}` +
+          (r.cappedAt ? ` (capped at ${r.cappedAt} of ${r.matched} — narrow with search)` : '') +
+          '.',
+      );
+      setChSel(new Set());
+      await loadChannels(chDomain.id, chQuery);
+      load();
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'Could not import channels');
+    } finally {
+      setChBusy(false);
+    }
+  };
+
   const applyChannels = async (mode: 'add' | 'remove'): Promise<void> => {
     if (!chDomain || chSel.size === 0) return;
     setChBusy(true);
@@ -300,6 +321,9 @@ export default function DomainsPage() {
             />
             <Button type="submit" variant="ghost" loading={chBusy}>
               Search
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => void importAll()} disabled={chBusy}>
+              Import all{chQuery ? ' matching' : ''}
             </Button>
             <Button type="button" onClick={() => void applyChannels('add')} disabled={chSel.size === 0}>
               Import selected ({chSel.size})

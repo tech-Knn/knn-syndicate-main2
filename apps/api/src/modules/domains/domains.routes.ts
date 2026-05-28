@@ -8,6 +8,7 @@ import {
   createDomain,
   deleteDomain,
   dnsGuidance,
+  importAllChannels,
   isDomainRegistered,
   listDomainAfsChannels,
   listDomains,
@@ -133,13 +134,17 @@ export async function domainRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  // Import / remove selected channels for the domain's pool (label = the AFS name).
-  app.post<{ Params: { id: string }; Body: ChannelSelection }>(
+  // Import / remove selected channels (label = the AFS name), or `importAll` to pull
+  // every channel the API returns (optionally filtered by `q`) — no ticking.
+  app.post<{ Params: { id: string }; Body: ChannelSelection & { importAll?: boolean; q?: string } }>(
     '/:id/afs-channels',
     { preHandler: superOnly },
     async (req, reply) => {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
+        if (req.body?.importAll) {
+          return reply.send(await importAllChannels(req.auth, req.params.id, { q: req.body.q }));
+        }
         return reply.send(await setDomainChannels(req.auth, req.params.id, req.body ?? {}));
       } catch (err) {
         return handleRouteError(err, reply);
