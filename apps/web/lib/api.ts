@@ -2,6 +2,7 @@ import {
   type AdminOrg,
   type AdsenseStatus,
   type AfsAccountRow,
+  type AfsChannelRow,
   type Campaign,
   type ConnectionStatus,
   type DomainRow,
@@ -425,6 +426,11 @@ export const domains = {
     (await parse<{ domain: DomainRow }>(await authedFetch(`/api/domains/${id}/verify`, { method: 'POST' }))).domain,
   sync: async (id: string, ranges?: string): Promise<{ synced: number; added: number; ranges: string }> =>
     parse(await authedFetch(`/api/domains/${id}/sync`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ ranges }) })),
+  // Browse the AFS account's channels by name/id (pick which to use), then import/remove.
+  afsChannels: async (id: string, q?: string): Promise<{ channels: AfsChannelRow[]; scanned: number; total: number; truncated: boolean }> =>
+    parse(await authedFetch(`/api/domains/${id}/afs-channels?q=${encodeURIComponent(q ?? '')}`)),
+  setChannels: async (id: string, sel: { add?: { channelId: string; label?: string }[]; remove?: string[] }): Promise<{ added: number; removed: number }> =>
+    parse(await authedFetch(`/api/domains/${id}/afs-channels`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(sel) })),
   remove: async (id: string): Promise<void> => {
     await authedFetch(`/api/domains/${id}`, { method: 'DELETE' });
   },

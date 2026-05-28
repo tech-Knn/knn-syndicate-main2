@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { env } from '@knn/config';
 import { withSystem } from '@knn/db';
-import { discoverChannelsInRanges, parseChannelRanges, refreshGoogleToken } from '@knn/adsense';
+import { discoverChannelsInRanges, listCustomChannels, parseChannelRanges, refreshGoogleToken } from '@knn/adsense';
 import { decryptToken, encryptToken } from '@knn/fb';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
@@ -289,4 +289,117 @@ export async function syncDomainChannels(
     return fresh.length;
   });
   return { synced: channels.length, added, ranges: spec };
+}
+
+// ── Channel browser + selective import (pick channels by NAME, not just by range) ──
+
+export interface AfsChannelRow {
+  channelId: string;
+  /** The AdSense custom-channel name (human-friendly — what the admin selects by). */
+  displayName: string | null;
+  /** Already in our pool? */
+  imported: boolean;
+  /** Pool status if imported (AVAILABLE/ASSIGNED) — an ASSIGNED channel can't be removed. */
+  status: string | null;
+}
+
+export interface BrowseChannelsDeps {
+  /** List up to `max` of the ad client's custom channels (id + displayName). */
+  fetchChannels: (token: string, adClient: string, max: number) => Promise<{ channelId: string; displayName?: string }[]>;
+}
+const defaultBrowseDeps: BrowseChannelsDeps = {
+  fetchChannels: (token, adClient, max) => listCustomChannels(token, adClient, undefined, max),
+};
+
+/** How many of the account's channels to scan per browse (bounds the 100k-channel account). */
+const CHANNEL_SCAN_CAP = 20000;
+
+/**
+ * Browse a domain's AFS account custom channels by name/id (Phase: channel selection).
+ * AdSense channels have an arbitrary NAME + the real numeric channel id (the `ch` value);
+ * the admin searches by name and picks which ids to use, rather than guessing a range.
+ * `q` filters by name OR id substring; results are capped (`limit`) and flagged
+ * `imported` (already in our pool). Super-admin only.
+ */
+export async function listDomainAfsChannels(
+  actor: AuthContext,
+  id: string,
+  opts: { q?: string; limit?: number } = {},
+  deps: BrowseChannelsDeps = defaultBrowseDeps,
+): Promise<{ channels: AfsChannelRow[]; scanned: number; total: number; truncated: boolean }> {
+  void actor;
+  const domain = await withSystem((tx) => tx.domain.findUnique({ where: { id }, include: { afsAccount: true } }));
+  if (!domain) throw new AppError(404, 'Domain not found');
+  if (!domain.afsAccount.adsenseAdClient) throw new AppError(409, "The domain's AFS account has no AFS ad client resolved — reconnect it");
+
+  const token = await freshTokenFor(domain.afsAccount);
+  const all = await deps.fetchChannels(token, domain.afsAccount.adsenseAdClient, CHANNEL_SCAN_CAP);
+
+  const q = (opts.q ?? '').trim().toLowerCase();
+  const filtered = q
+    ? all.filter((c) => (c.displayName ?? '').toLowerCase().includes(q) || c.channelId.includes(q))
+    : all;
+  const limit = Math.min(Math.max(opts.limit ?? 300, 1), 1000);
+  const page = filtered.slice(0, limit);
+
+  // Mark which of the SHOWN ids are already in our pool (targeted query on ≤limit ids).
+  const ids = page.map((c) => c.channelId);
+  const existing = ids.length
+    ? await withSystem((tx) => tx.channel.findMany({ where: { channelId: { in: ids } }, select: { channelId: true, status: true } }))
+    : [];
+  const byId = new Map(existing.map((e) => [e.channelId, e.status]));
+
+  return {
+    channels: page.map((c) => ({
+      channelId: c.channelId,
+      displayName: c.displayName ?? null,
+      imported: byId.has(c.channelId),
+      status: byId.get(c.channelId) ?? null,
+    })),
+    scanned: all.length,
+    total: filtered.length,
+    truncated: filtered.length > limit || all.length >= CHANNEL_SCAN_CAP,
+  };
+}
+
+export interface ChannelSelection {
+  add?: { channelId: string; label?: string }[];
+  remove?: string[];
+}
+
+/**
+ * Apply a channel selection to a domain's pool: import the chosen ids (label = the AFS
+ * name) as AVAILABLE channels tagged to the domain, and/or remove ids — but only ones
+ * that are AVAILABLE for this domain (never an ASSIGNED channel a campaign is using).
+ */
+export async function setDomainChannels(actor: AuthContext, id: string, sel: ChannelSelection): Promise<{ added: number; removed: number }> {
+  const domain = await withSystem((tx) => tx.domain.findUnique({ where: { id }, select: { id: true } }));
+  if (!domain) throw new AppError(404, 'Domain not found');
+
+  return withSystem(async (tx) => {
+    let added = 0;
+    let removed = 0;
+    const adds = sel.add ?? [];
+    if (adds.length > 0) {
+      const seen = new Set(
+        (await tx.channel.findMany({ where: { channelId: { in: adds.map((a) => a.channelId) } }, select: { channelId: true } })).map((c) => c.channelId),
+      );
+      const fresh = adds.filter((a) => !seen.has(a.channelId));
+      for (let i = 0; i < fresh.length; i += 500) {
+        const r = await tx.channel.createMany({
+          data: fresh.slice(i, i + 500).map((a) => ({ channelId: a.channelId, label: a.label ?? null, status: 'AVAILABLE' as const, domainId: id })),
+          skipDuplicates: true,
+        });
+        added += r.count;
+      }
+    }
+    const removes = sel.remove ?? [];
+    if (removes.length > 0) {
+      // Only AVAILABLE channels of THIS domain — an ASSIGNED channel is in use.
+      const r = await tx.channel.deleteMany({ where: { channelId: { in: removes }, domainId: id, status: 'AVAILABLE' } });
+      removed = r.count;
+    }
+    await writeAudit(tx, { orgId: actor.orgId, actorId: actor.userId, action: 'domain.channels.selected', entityType: 'domain', entityId: id, details: { added, removed } });
+    return { added, removed };
+  });
 }

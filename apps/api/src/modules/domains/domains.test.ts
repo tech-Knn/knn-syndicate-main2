@@ -7,8 +7,10 @@ import {
   createDomain,
   deleteDomain,
   isDomainRegistered,
+  listDomainAfsChannels,
   listDomains,
   resolveSiteConfig,
+  setDomainChannels,
   syncDomainChannels,
   updateDomain,
   verifyDomain,
@@ -120,6 +122,39 @@ describe('domain management', () => {
     const cfg = await resolveSiteConfig(`HTTPS://${HOST.toUpperCase()}/`); // normalized
     expect(cfg).toMatchObject({ host: HOST, pubId: `partner-pub-${suffix}`, styleId: '9988776655', adsafe: 'low' });
     expect(await resolveSiteConfig(`nope-${suffix}.example.com`)).toBeNull();
+  });
+
+  it('browses AFS channels by name and selectively imports/removes them', async () => {
+    const fakeChannels = [
+      { channelId: '70001', displayName: 'Maximizer US' },
+      { channelId: '70002', displayName: 'Maximizer UK' },
+      { channelId: '70003', displayName: 'Mukul Team' },
+    ];
+    const deps = { fetchChannels: async () => fakeChannels };
+
+    const all = await listDomainAfsChannels(auth(), domainId, {}, deps);
+    expect(all.channels).toHaveLength(3);
+    expect(all.channels.every((c) => !c.imported)).toBe(true);
+
+    // Filter by name (the human-friendly selector).
+    const max = await listDomainAfsChannels(auth(), domainId, { q: 'maximizer' }, deps);
+    expect(max.channels.map((c) => c.channelId).sort()).toEqual(['70001', '70002']);
+
+    // Import the two selected (label = the AFS name).
+    expect((await setDomainChannels(auth(), domainId, { add: [{ channelId: '70001', label: 'Maximizer US' }, { channelId: '70002', label: 'Maximizer UK' }] })).added).toBe(2);
+    const imported = await withSystem((tx) => tx.channel.findUnique({ where: { channelId: '70001' }, select: { label: true, domainId: true } }));
+    expect(imported).toMatchObject({ label: 'Maximizer US', domainId });
+
+    // They now show as imported in the browser.
+    const after = await listDomainAfsChannels(auth(), domainId, { q: 'maximizer' }, deps);
+    expect(after.channels.every((c) => c.imported)).toBe(true);
+
+    // Remove an AVAILABLE one.
+    expect((await setDomainChannels(auth(), domainId, { remove: ['70001'] })).removed).toBe(1);
+    expect(await withSystem((tx) => tx.channel.findUnique({ where: { channelId: '70001' } }))).toBeNull();
+
+    // Cleanup (don't leak global channels into other suites).
+    await withSystem((tx) => tx.channel.deleteMany({ where: { channelId: { in: ['70001', '70002', '70003'] } } }));
   });
 
   it('blocks delete while offers reference the domain, allows it after', async () => {

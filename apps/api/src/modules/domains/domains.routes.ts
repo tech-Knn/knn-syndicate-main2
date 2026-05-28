@@ -3,13 +3,16 @@ import { ROLES } from '@knn/shared';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate, requireRole } from '../../middleware/authenticate.js';
 import {
+  type ChannelSelection,
   type CreateDomainInput,
   createDomain,
   deleteDomain,
   dnsGuidance,
   isDomainRegistered,
+  listDomainAfsChannels,
   listDomains,
   resolveSiteConfig,
+  setDomainChannels,
   syncDomainChannels,
   updateDomain,
   verifyDomain,
@@ -109,6 +112,35 @@ export async function domainRoutes(app: FastifyInstance): Promise<void> {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
         return reply.send(await syncDomainChannels(req.auth, req.params.id, req.body?.ranges));
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Browse the domain's AFS account custom channels by name/id (pick which to use).
+  app.get<{ Params: { id: string }; Querystring: { q?: string; limit?: string } }>(
+    '/:id/afs-channels',
+    { preHandler: superOnly },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const limit = req.query.limit ? Number(req.query.limit) : undefined;
+        return reply.send(await listDomainAfsChannels(req.auth, req.params.id, { q: req.query.q, limit }));
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Import / remove selected channels for the domain's pool (label = the AFS name).
+  app.post<{ Params: { id: string }; Body: ChannelSelection }>(
+    '/:id/afs-channels',
+    { preHandler: superOnly },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.send(await setDomainChannels(req.auth, req.params.id, req.body ?? {}));
       } catch (err) {
         return handleRouteError(err, reply);
       }

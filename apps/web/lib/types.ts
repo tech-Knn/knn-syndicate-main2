@@ -210,6 +210,14 @@ export interface OfferDomainOption {
   afsLabel: string | null;
 }
 
+/** An AFS custom channel as shown in the domain channel browser (pick by name). */
+export interface AfsChannelRow {
+  channelId: string;
+  displayName: string | null;
+  imported: boolean;
+  status: string | null;
+}
+
 export interface AdsenseStatus {
   connected: boolean;
   email?: string | null;

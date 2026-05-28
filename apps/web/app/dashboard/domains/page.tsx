@@ -4,7 +4,7 @@ import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Badge, Button, Card, Skeleton } from '@/components/ui';
 import { adsense, domains } from '@/lib/api';
-import { type AfsAccountRow, type DomainRow } from '@/lib/types';
+import { type AfsAccountRow, type AfsChannelRow, type DomainRow } from '@/lib/types';
 import { useAuth } from '../../providers';
 import styles from '../admin.module.css';
 
@@ -73,6 +73,70 @@ export default function DomainsPage() {
       setNote(err instanceof Error ? err.message : `${label} failed`);
     } finally {
       setBusy(null);
+    }
+  };
+
+  // ── Channel browser: pick AFS channels by name, import/remove them for a domain ──
+  const [chDomain, setChDomain] = useState<DomainRow | null>(null);
+  const [chQuery, setChQuery] = useState('');
+  const [chRows, setChRows] = useState<AfsChannelRow[] | null>(null);
+  const [chMeta, setChMeta] = useState<{ scanned: number; total: number; truncated: boolean } | null>(null);
+  const [chSel, setChSel] = useState<Set<string>>(new Set());
+  const [chBusy, setChBusy] = useState(false);
+
+  const loadChannels = useCallback(async (id: string, q: string): Promise<void> => {
+    setChBusy(true);
+    setNote(null);
+    try {
+      const r = await domains.afsChannels(id, q);
+      setChRows(r.channels);
+      setChMeta({ scanned: r.scanned, total: r.total, truncated: r.truncated });
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'Could not load channels');
+      setChRows([]);
+    } finally {
+      setChBusy(false);
+    }
+  }, []);
+
+  const openChannels = (d: DomainRow): void => {
+    setChDomain(d);
+    setChRows(null);
+    setChSel(new Set());
+    setChQuery('');
+    void loadChannels(d.id, '');
+  };
+
+  const toggleSel = (cid: string): void =>
+    setChSel((s) => {
+      const n = new Set(s);
+      if (n.has(cid)) n.delete(cid);
+      else n.add(cid);
+      return n;
+    });
+
+  const applyChannels = async (mode: 'add' | 'remove'): Promise<void> => {
+    if (!chDomain || chSel.size === 0) return;
+    setChBusy(true);
+    setNote(null);
+    try {
+      const byId = new Map((chRows ?? []).map((c) => [c.channelId, c]));
+      if (mode === 'add') {
+        const add = [...chSel]
+          .filter((id) => !byId.get(id)?.imported)
+          .map((id) => ({ channelId: id, label: byId.get(id)?.displayName ?? undefined }));
+        await domains.setChannels(chDomain.id, { add });
+      } else {
+        const remove = [...chSel].filter((id) => byId.get(id)?.imported && byId.get(id)?.status !== 'ASSIGNED');
+        await domains.setChannels(chDomain.id, { remove });
+      }
+      setChSel(new Set());
+      await loadChannels(chDomain.id, chQuery);
+      load(); // refresh the domain's channel count
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'Could not update channels');
+    } finally {
+      setChBusy(false);
     }
   };
 
@@ -186,6 +250,9 @@ export default function DomainsPage() {
                         <button type="button" className={styles.actionBtn} disabled={busy === d.id + 'Sync' || !d.channelRanges} onClick={() => void act(d.id, () => domains.sync(d.id), 'Sync')}>
                           Sync
                         </button>
+                        <button type="button" className={styles.actionBtn} onClick={() => openChannels(d)}>
+                          Channels
+                        </button>
                         <button type="button" className={`${styles.actionBtn} ${styles.actionDanger}`} disabled={busy === d.id + 'Remove'} onClick={() => void act(d.id, () => domains.remove(d.id), 'Remove')}>
                           Remove
                         </button>
@@ -198,6 +265,99 @@ export default function DomainsPage() {
           </div>
         )}
       </Card>
+
+      {/* Channel browser — pick AFS channels by name for the selected domain. */}
+      {chDomain && (
+        <Card className={styles.section}>
+          <div className={styles.sectionHead}>
+            <span className={styles.sectionTitle}>Channels — {chDomain.host}</span>
+            <button type="button" className={styles.actionBtn} onClick={() => setChDomain(null)}>
+              Close
+            </button>
+          </div>
+          <p className={styles.fieldHint}>
+            Browse this website&apos;s AFS account channels by name and pick which to use — the name is just a label,
+            the channel id is what monetizes.{' '}
+            {chMeta && (
+              <>
+                Scanned {chMeta.scanned}
+                {chMeta.truncated ? '+ (refine with search)' : ''}, {chMeta.total} match.
+              </>
+            )}
+          </p>
+          <form
+            className={styles.domainForm}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void loadChannels(chDomain.id, chQuery);
+            }}
+          >
+            <input
+              className={styles.rangeInput}
+              placeholder="search by channel name or id…"
+              value={chQuery}
+              onChange={(e) => setChQuery(e.target.value)}
+            />
+            <Button type="submit" variant="ghost" loading={chBusy}>
+              Search
+            </Button>
+            <Button type="button" onClick={() => void applyChannels('add')} disabled={chSel.size === 0}>
+              Import selected ({chSel.size})
+            </Button>
+            <button
+              type="button"
+              className={`${styles.actionBtn} ${styles.actionDanger}`}
+              disabled={chSel.size === 0}
+              onClick={() => void applyChannels('remove')}
+            >
+              Remove selected
+            </button>
+          </form>
+
+          {!chRows ? (
+            <div className={styles.rowsSkel}>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className={styles.rowSkel} />
+              ))}
+            </div>
+          ) : chRows.length === 0 ? (
+            <p className={styles.empty}>No channels found{chQuery ? ` for “${chQuery}”` : ''}.</p>
+          ) : (
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th className={styles.thLeft}></th>
+                    <th className={styles.thLeft}>Channel name</th>
+                    <th className={styles.thLeft}>Channel ID</th>
+                    <th className={styles.thLeft}>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {chRows.map((c) => (
+                    <tr key={c.channelId}>
+                      <td>
+                        <input type="checkbox" checked={chSel.has(c.channelId)} onChange={() => toggleSel(c.channelId)} />
+                      </td>
+                      <td className={styles.name}>
+                        {c.displayName ?? <span className={styles.subtle}>(unnamed)</span>}
+                      </td>
+                      <td className="mono">{c.channelId}</td>
+                      <td>
+                        {c.imported ? (
+                          <Badge tone={c.status === 'ASSIGNED' ? 'brand' : 'success'}>{(c.status ?? 'imported').toLowerCase()}</Badge>
+                        ) : (
+                          <span className={styles.subtle}>—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }
