@@ -313,3 +313,24 @@ the approved plan.
 - **Pixel frozen at ingest, token resolved at send (deliberate split):** the *pixel* is the ad set's
   promoted-object pixel captured on the `ConversionEvent`; the *token* is looked up fresh in the worker.
   Pixels don't rotate; tokens do (60-day churn, D13) — so freeze the stable one, resolve the volatile one late.
+
+### 2026-05-28 — D21: Dashboards extend the bespoke CSS-module design system (not Tailwind/shadcn)
+
+- **Decision:** build the Phase 10 dashboards on the **existing hand-crafted design system** (`apps/web`
+  CSS-modules + the `ui.tsx` primitives, driven by the KNN brand tokens in `globals.css`) rather than
+  introduce **Tailwind v4 + shadcn/ui** as the original plan named. Charts are **hand-rolled SVG**
+  (`components/charts.tsx`) and data-fetching is plain typed hooks over the existing `lib/api.ts`
+  client (no TanStack Query/Table, no Recharts).
+- **Why (deviation from the plan's named stack):** every shipped surface (login, FB connect, campaign
+  wizard, approvals) is already CSS-modules with the exact brand tokens (rust/gold/cream, serif display,
+  mono metrics) and hits the Stripe/Linear polish bar. Bolting on Tailwind+shadcn would create two
+  parallel styling systems, a large refactor, and regression risk on shipped pages — for no visual gain
+  on a *bespoke* dark theme we already control. Zero new heavy runtime deps keeps the buyer dashboard
+  lean (the `/dashboard` route is ~5 kB of page JS). The plan's stack was a suggestion; the *goal* was
+  density + motion + polish in the KNN theme, which the bespoke kit meets.
+- **What this adds to the kit:** `StatTile` (KPI), `Segmented` (range control), `Skeleton` (loading), and
+  `charts.tsx` (`RevenueChart` — dual-area revenue-vs-spend with a hover guide/tooltip; `Sparkline`).
+- **The dashboard data layer is the role-scoped `/api/stats` (D-10a)** — the same Overview serves all
+  three roles because the API scopes by actor (buyer→own, company-admin→org via RLS, super→platform).
+- **Revisit if** a third-party-heavy surface (e.g. a complex pivot table) ever needs TanStack Table, or
+  the design system is opened to non-KNN white-label themes — then shadcn's theming may earn its keep.
