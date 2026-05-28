@@ -290,6 +290,10 @@ export async function resync(auth: AuthContext, connectionId: string): Promise<S
   }
   const accessToken = decryptToken(conn.accessTokenEnc);
   try {
+    // Refresh the profile's display name too, so profiles connected before names
+    // were stored get their real name on a re-sync (no full reconnect needed).
+    const me = await getMe(accessToken);
+    await withSystem((tx) => tx.fbConnection.update({ where: { id: conn.id }, data: { fbName: me.name } }));
     return await syncFromFacebook({ connectionId: conn.id, orgId: conn.orgId, accessToken });
   } catch (err) {
     if (err instanceof FbConnectionBrokenError) {
