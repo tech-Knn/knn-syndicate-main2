@@ -9,6 +9,7 @@ import {
   dnsGuidance,
   isDomainRegistered,
   listDomains,
+  resolveSiteConfig,
   syncDomainChannels,
   updateDomain,
   verifyDomain,
@@ -31,6 +32,22 @@ export async function publicEdgeRoutes(app: FastifyInstance): Promise<void> {
     try {
       if (!(await isDomainRegistered(host))) return reply.code(404).send({ allowed: false });
       return reply.send({ allowed: true });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // Per-host AFS config for the article SSR (Phase D). Lets one article app serve
+  // many websites, each rendering under its OWN AFS account's pubId. 404 → the
+  // article app uses its build-time env defaults. Cacheable (config changes rarely).
+  app.get<{ Querystring: { host?: string } }>('/site-config', async (req, reply) => {
+    const host = req.query.host;
+    if (!host) return reply.code(400).send({ error: 'Missing host' });
+    try {
+      const cfg = await resolveSiteConfig(host);
+      if (!cfg) return reply.code(404).send({ error: 'Host not registered' });
+      void reply.header('cache-control', 'public, max-age=300');
+      return reply.send(cfg);
     } catch (err) {
       return handleRouteError(err, reply);
     }

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { articleBlocks, articleTeaser } from '@knn/shared';
+import { resolveSiteConfig } from '../../_afs/site-config';
 import { RelatedSearchUnit } from './related-search-unit';
 import styles from './article.module.css';
 
@@ -59,7 +60,7 @@ export default async function ArticlePage({
 }) {
   const { slug } = await params;
   const sp = await searchParams;
-  const article = await fetchArticle(slug);
+  const [article, site] = await Promise.all([fetchArticle(slug), resolveSiteConfig()]);
   if (!article) notFound();
 
   const teaser = articleTeaser(article.compliantContent);
@@ -84,7 +85,7 @@ export default async function ArticlePage({
         {teaser && <p className={styles.lead}>{teaser}</p>}
 
         {/* RSOC related-search unit (content-targeted). Clicks → /search results page. */}
-        <RelatedSearchUnit referrerAdCreative={referrerAdCreative} terms={terms} txid={txid} />
+        <RelatedSearchUnit referrerAdCreative={referrerAdCreative} terms={terms} txid={txid} site={site} />
 
         <div className={styles.body}>
           {bodyBlocks.map((block, i) => {

@@ -55,14 +55,28 @@ export function afsAdLoadedCallback(containerName: string, adsLoaded: boolean): 
   }
 }
 
-/** Shared page-level options from env (build-time NEXT_PUBLIC_*) + the results page URL. */
-export function basePageOptions(extra: Record<string, unknown> = {}): Record<string, unknown> {
+/**
+ * AFS monetization config for the CURRENT request's host (Phase D). Resolved
+ * server-side from the registered Domain → its AFS account's pubId (+ the domain's
+ * style/adsafe), so one article app serves many websites under their own accounts.
+ * See `_afs/site-config.ts#resolveSiteConfig`.
+ */
+export interface SiteConfig {
+  pubId: string;
+  styleId: string;
+  adsafe: string;
+  /** Test mode: renders without counting impressions/clicks or paying. */
+  adtest: boolean;
+}
+
+/** Shared page-level options from the resolved per-host config + the results page URL. */
+export function basePageOptions(config: SiteConfig, extra: Record<string, unknown> = {}): Record<string, unknown> {
   const options: Record<string, unknown> = {
-    pubId: process.env.NEXT_PUBLIC_AFS_PUB_ID ?? '',
-    styleId: process.env.NEXT_PUBLIC_AFS_STYLE_ID ?? '',
+    pubId: config.pubId,
+    styleId: config.styleId,
     hl: 'en',
     // adsafe: 'high' over-filters (fewer ads); arbitrage funnels run 'low'/'medium'.
-    adsafe: process.env.NEXT_PUBLIC_AFS_ADSAFE || 'medium',
+    adsafe: config.adsafe || 'medium',
     ivt: false,
     // The results page that related-search terms link to (same approved host).
     resultsPageBaseUrl: `${window.location.origin}/search`,
@@ -70,13 +84,12 @@ export function basePageOptions(extra: Record<string, unknown> = {}): Record<str
     ignoredPageParams: AFS_TRACKING_PARAMS,
     ...extra,
   };
-  // Test mode: renders without counting impressions/clicks or paying. Safe for
-  // verifying the integration (and avoids self-click policy issues). Flip off in prod.
-  if (process.env.NEXT_PUBLIC_AFS_ADTEST === 'on') options.adtest = 'on';
+  // Test mode: safe for verifying the integration (avoids self-click policy issues).
+  if (config.adtest) options.adtest = 'on';
   return options;
 }
 
-/** True when an AFS pubId is configured (only then do real units render). */
-export function afsConfigured(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_AFS_PUB_ID);
+/** True when an AFS pubId is resolved for this host (only then do real units render). */
+export function afsConfigured(config: SiteConfig): boolean {
+  return Boolean(config.pubId);
 }

@@ -8,7 +8,9 @@ import {
   deleteDomain,
   isDomainRegistered,
   listDomains,
+  resolveSiteConfig,
   syncDomainChannels,
+  updateDomain,
   verifyDomain,
 } from './domains.service.js';
 
@@ -111,6 +113,13 @@ describe('domain management', () => {
     expect(await isDomainRegistered(`HTTPS://${HOST.toUpperCase()}:443/`)).toBe(true); // normalized
     expect(await isDomainRegistered(`nope-${suffix}.example.com`)).toBe(false);
     expect(await isDomainRegistered('')).toBe(false);
+  });
+
+  it('site-config resolves per-host pubId + the domain style/adsafe; null for unknown', async () => {
+    await updateDomain(auth(), domainId, { styleId: '9988776655', adsafe: 'low' });
+    const cfg = await resolveSiteConfig(`HTTPS://${HOST.toUpperCase()}/`); // normalized
+    expect(cfg).toMatchObject({ host: HOST, pubId: `partner-pub-${suffix}`, styleId: '9988776655', adsafe: 'low' });
+    expect(await resolveSiteConfig(`nope-${suffix}.example.com`)).toBeNull();
   });
 
   it('blocks delete while offers reference the domain, allows it after', async () => {

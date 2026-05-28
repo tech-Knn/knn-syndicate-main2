@@ -1,7 +1,14 @@
 'use client';
 
 import { useEffect } from 'react';
-import { AFS_TRACKING_PARAMS, afsAdLoadedCallback, afsConfigured, basePageOptions, runCsa } from '../../_afs/csa';
+import {
+  AFS_TRACKING_PARAMS,
+  afsAdLoadedCallback,
+  afsConfigured,
+  basePageOptions,
+  runCsa,
+  type SiteConfig,
+} from '../../_afs/csa';
 import styles from './article.module.css';
 
 /**
@@ -17,13 +24,16 @@ export function RelatedSearchUnit({
   referrerAdCreative,
   terms,
   txid,
+  site,
 }: {
   referrerAdCreative?: string;
   terms?: string;
   /** The redirect click id — threaded onto /search so the conversion beacon can fire. */
   txid?: string;
+  /** Per-host AFS config resolved server-side (pubId/style/adsafe). */
+  site: SiteConfig;
 }) {
-  const live = afsConfigured();
+  const live = afsConfigured(site);
 
   useEffect(() => {
     if (!live) return;
@@ -34,7 +44,7 @@ export function RelatedSearchUnit({
     if (referrerAdCreative) rp.set('rc', referrerAdCreative);
     const resultsPageBaseUrl = `${window.location.origin}/search${rp.toString() ? `?${rp.toString()}` : ''}`;
 
-    const pageOptions = basePageOptions({
+    const pageOptions = basePageOptions(site, {
       relatedSearchTargeting: 'content',
       resultsPageBaseUrl,
       // On a content page the query params aren't the search query — ignore them too.
@@ -49,7 +59,7 @@ export function RelatedSearchUnit({
       relatedSearches: 10,
       adLoadedCallback: afsAdLoadedCallback,
     });
-  }, [live, referrerAdCreative, terms, txid]);
+  }, [live, referrerAdCreative, terms, txid, site]);
 
   return (
     <aside className={styles.afs} aria-label="Related searches">

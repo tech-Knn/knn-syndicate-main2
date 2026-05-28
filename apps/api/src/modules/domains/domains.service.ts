@@ -62,6 +62,31 @@ export async function isDomainRegistered(rawHost: string): Promise<boolean> {
   return row !== null;
 }
 
+/** Per-host AFS monetization config the article edge renders with (Phase D funnel). */
+export interface SiteConfig {
+  host: string;
+  pubId: string;
+  styleId: string | null;
+  adsafe: string | null;
+}
+
+/**
+ * Resolve a registered host → the AFS config its article pages should render with:
+ * the mapped AFS account's pubId plus the domain's own style/adsafe. This is what
+ * makes one article app serve many websites, each monetizing under its OWN AFS
+ * account. Returns null for an unregistered host (or one whose AFS account has no
+ * pubId yet) → the article app falls back to its build-time env defaults.
+ */
+export async function resolveSiteConfig(rawHost: string): Promise<SiteConfig | null> {
+  const host = normalizeHost(rawHost);
+  if (!host) return null;
+  const domain = await withSystem((tx) =>
+    tx.domain.findUnique({ where: { host }, include: { afsAccount: { select: { afsPubId: true } } } }),
+  );
+  if (!domain || !domain.afsAccount.afsPubId) return null;
+  return { host, pubId: domain.afsAccount.afsPubId, styleId: domain.styleId, adsafe: domain.adsafe };
+}
+
 /** DNS guidance shown to the admin: point the host at our article ingress. */
 export function dnsGuidance(): { cnameTarget: string } {
   // The article app's host is the canonical ingress; point new domains there.

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { resolveSiteConfig } from '../_afs/site-config';
 import { ConversionTracker } from './conversion-tracker';
 import { SearchAdsUnit } from './search-ads-unit';
 import styles from './search.module.css';
@@ -20,6 +21,7 @@ export default async function SearchPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
+  const site = await resolveSiteConfig();
   // `q` is the default CSA results param (resultsPageQueryParam); accept `query` too.
   const query = str(sp.q) || str(sp.query);
   const referrerAdCreative = str(sp.rc) || undefined;
@@ -39,7 +41,7 @@ export default async function SearchPage({
           </h1>
         )}
       </div>
-      <SearchAdsUnit query={query} referrerAdCreative={referrerAdCreative} />
+      <SearchAdsUnit query={query} referrerAdCreative={referrerAdCreative} site={site} />
       <ConversionTracker clickId={clickId} value={value} currency={currency} />
     </main>
   );

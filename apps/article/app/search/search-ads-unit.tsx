@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { afsAdLoadedCallback, afsConfigured, basePageOptions, runCsa } from '../_afs/csa';
+import { afsAdLoadedCallback, afsConfigured, basePageOptions, runCsa, type SiteConfig } from '../_afs/csa';
 import styles from './search.module.css';
 
 /**
@@ -14,16 +14,19 @@ import styles from './search.module.css';
 export function SearchAdsUnit({
   query,
   referrerAdCreative,
+  site,
 }: {
   query: string;
   referrerAdCreative?: string;
+  /** Per-host AFS config resolved server-side (pubId/style/adsafe). */
+  site: SiteConfig;
 }) {
-  const live = afsConfigured();
+  const live = afsConfigured(site);
 
   useEffect(() => {
     if (!live || !query) return;
     // linkTarget '_blank' opens ads in a new tab, keeping the results page open.
-    const pageOptions = basePageOptions({ query, linkTarget: '_blank' });
+    const pageOptions = basePageOptions(site, { query, linkTarget: '_blank' });
     if (referrerAdCreative) pageOptions.referrerAdCreative = referrerAdCreative;
     runCsa(
       'ads',
@@ -31,7 +34,7 @@ export function SearchAdsUnit({
       { container: 'afscontainer1', adLoadedCallback: afsAdLoadedCallback },
       { container: 'relatedsearches1', relatedSearches: 10, adLoadedCallback: afsAdLoadedCallback },
     );
-  }, [live, query, referrerAdCreative]);
+  }, [live, query, referrerAdCreative, site]);
 
   return (
     <>
