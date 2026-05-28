@@ -5,7 +5,7 @@ import { AppError } from '../../lib/errors.js';
 import { hashPassword } from '../../lib/password.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
-import type { CreateOrgInput, UserAction } from './admin.schemas.js';
+import type { AddOrgUserInput, CreateOrgInput, UserAction } from './admin.schemas.js';
 
 export interface PublicUser {
   id: string;
@@ -89,6 +89,32 @@ export interface OrgRow {
   adminCount: number;
   pendingCount: number;
   createdAt: string;
+}
+
+/** Add an ACTIVE user (admin or buyer) to an existing company. Super-admin only. */
+export async function addOrgUser(actor: AuthContext, orgId: string, input: AddOrgUserInput): Promise<PublicUser> {
+  const passwordHash = await hashPassword(input.password);
+  return withSystem(async (tx) => {
+    const org = await tx.organization.findUnique({ where: { id: orgId }, select: { id: true } });
+    if (!org) throw new AppError(404, 'Company not found');
+    if (await tx.user.findUnique({ where: { email: input.email } })) {
+      throw new AppError(409, 'Email already registered');
+    }
+    const user = await tx.user.create({
+      data: {
+        orgId,
+        name: input.name,
+        email: input.email,
+        passwordHash,
+        role: input.role,
+        status: USER_STATUS.ACTIVE,
+        approvedById: actor.userId,
+        approvedAt: new Date(),
+      },
+    });
+    await writeAudit(tx, { orgId, actorId: actor.userId, action: 'org.user.added', entityType: 'user', entityId: user.id, details: { role: input.role } });
+    return toPublicUser(user);
+  });
 }
 
 /** All companies (super-admin only — route-guarded) with their user counts + modes. */

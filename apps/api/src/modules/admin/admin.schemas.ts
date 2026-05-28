@@ -19,6 +19,15 @@ export const userActionSchema = z.object({
 });
 export type UserAction = z.infer<typeof userActionSchema>['action'];
 
+/** Add an (active) user to an existing company — super-admin only. */
+export const addOrgUserSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  email: z.string().trim().toLowerCase().email(),
+  password: z.string().min(8).max(200),
+  role: z.enum(['COMPANY_ADMIN', 'MEDIA_BUYER']).default('COMPANY_ADMIN'),
+});
+export type AddOrgUserInput = z.infer<typeof addOrgUserSchema>;
+
 export const autoApproveSchema = z.object({
   autoApprove: z.boolean(),
 });

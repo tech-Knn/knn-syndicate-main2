@@ -3,6 +3,7 @@ import { ROLES } from '@knn/shared';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate, requireRole } from '../../middleware/authenticate.js';
 import {
+  addOrgUserSchema,
   autoApproveSchema,
   autoLaunchSchema,
   createOrgSchema,
@@ -11,6 +12,7 @@ import {
   userActionSchema,
 } from './admin.schemas.js';
 import {
+  addOrgUser,
   createOrganization,
   getActingOrg,
   listOrganizations,
@@ -50,6 +52,20 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     async (req, reply) => {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       return reply.send({ organizations: await listOrganizations() });
+    },
+  );
+
+  // Add an admin/buyer to an existing company (super-admin only).
+  app.post<{ Params: { id: string } }>(
+    '/organizations/:id/users',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.code(201).send({ user: await addOrgUser(req.auth, req.params.id, addOrgUserSchema.parse(req.body)) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
     },
   );
 

@@ -324,6 +324,8 @@ export const admin = {
     (await parse<{ organizations: OrgRow[] }>(await authedFetch('/api/admin/organizations'))).organizations,
   createOrganization: async (input: CreateOrgInput): Promise<{ orgId: string; adminId: string }> =>
     parse(await authedFetch('/api/admin/organizations', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(input) })),
+  addOrgUser: async (orgId: string, input: { name: string; email: string; password: string; role: 'COMPANY_ADMIN' | 'MEDIA_BUYER' }): Promise<PublicUser> =>
+    (await parse<{ user: PublicUser }>(await authedFetch(`/api/admin/organizations/${orgId}/users`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(input) }))).user,
   setAutoApprove: async (orgId: string, autoApprove: boolean): Promise<AdminOrg> =>
     (
       await parse<{ organization: AdminOrg }>(

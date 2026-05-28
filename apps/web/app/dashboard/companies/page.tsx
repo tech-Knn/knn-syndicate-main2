@@ -71,6 +71,34 @@ export default function CompaniesPage() {
     }
   };
 
+  // Add an admin/buyer to an existing company.
+  const [addTo, setAddTo] = useState<OrgRow | null>(null);
+  const [userForm, setUserForm] = useState({ name: '', email: '', password: '', role: 'COMPANY_ADMIN' as 'COMPANY_ADMIN' | 'MEDIA_BUYER' });
+  const [addingUser, setAddingUser] = useState(false);
+
+  const openAddUser = (o: OrgRow): void => {
+    setAddTo(o);
+    setUserForm({ name: '', email: '', password: '', role: 'COMPANY_ADMIN' });
+    setNote(null);
+  };
+
+  const addUser = async (e: FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (!addTo) return;
+    setAddingUser(true);
+    setNote(null);
+    try {
+      await admin.addOrgUser(addTo.id, { name: userForm.name.trim(), email: userForm.email.trim(), password: userForm.password, role: userForm.role });
+      setNote(`Added ${userForm.role === 'COMPANY_ADMIN' ? 'admin' : 'buyer'} ${userForm.email.trim()} to ${addTo.name} (active — they can sign in now).`);
+      setAddTo(null);
+      load();
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'Could not add the user');
+    } finally {
+      setAddingUser(false);
+    }
+  };
+
   const canCreate = form.name.trim() && /^[a-z0-9-]+$/.test(form.slug.trim()) && form.adminName.trim() && form.adminEmail.trim() && form.adminPassword.length >= 8;
 
   return (
@@ -128,6 +156,7 @@ export default function CompaniesPage() {
                   <th>Pending</th>
                   <th className={styles.thLeft}>Approval</th>
                   <th className={styles.thLeft}>Launch</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -151,6 +180,13 @@ export default function CompaniesPage() {
                         {o.autoLaunch ? 'Auto-launch' : 'Manual launch'}
                       </button>
                     </td>
+                    <td>
+                      <div className={styles.actions}>
+                        <button type="button" className={styles.actionBtn} onClick={() => openAddUser(o)}>
+                          Add user
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -160,8 +196,33 @@ export default function CompaniesPage() {
         <p className={styles.fieldHint}>
           A buyer joins a company at <strong>/signup</strong> using its <strong>signup slug</strong>; the company admin (or super-admin) approves
           them on the <strong>Team</strong> page. &ldquo;Approval&rdquo; / &ldquo;Launch&rdquo; toggle whether campaigns auto-approve / auto-launch.
+          Use <strong>Add user</strong> to create an admin (or buyer) for a company directly — they&apos;re active immediately, no approval needed.
         </p>
       </Card>
+
+      {/* Add a user (admin/buyer) to a company */}
+      {addTo && (
+        <Card className={styles.section}>
+          <div className={styles.sectionHead}>
+            <span className={styles.sectionTitle}>Add a user — {addTo.name}</span>
+            <button type="button" className={styles.actionBtn} onClick={() => setAddTo(null)}>
+              Close
+            </button>
+          </div>
+          <form className={styles.domainForm} onSubmit={(e) => void addUser(e)}>
+            <select className={styles.select} value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value as 'COMPANY_ADMIN' | 'MEDIA_BUYER' })}>
+              <option value="COMPANY_ADMIN">Company admin</option>
+              <option value="MEDIA_BUYER">Media buyer</option>
+            </select>
+            <input className={styles.rangeInput} placeholder="name" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} />
+            <input className={styles.rangeInput} type="email" placeholder="email" value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} />
+            <input className={styles.rangeInput} type="password" placeholder="password (8+)" value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} />
+            <Button type="submit" loading={addingUser} disabled={!userForm.name.trim() || !userForm.email.trim() || userForm.password.length < 8}>
+              Add user
+            </Button>
+          </form>
+        </Card>
+      )}
     </div>
   );
 }
