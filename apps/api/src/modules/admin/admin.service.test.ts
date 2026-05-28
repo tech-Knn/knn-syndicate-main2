@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { prisma, withSystem } from '@knn/db';
 import { ROLES, USER_STATUS } from '@knn/shared';
 import type { AppError } from '../../lib/errors.js';
-import { addOrgUser, deleteUser, listOrganizations, listUsers } from './admin.service.js';
+import { addOrgUser, deleteUser, listAuditLog, listOrgUsers, listOrganizations, listUsers } from './admin.service.js';
 
 // Tenant-isolation regression: a COMPANY_ADMIN must never see — or be able to act
 // on — a SUPER_ADMIN, even when one shares their org (e.g. the platform org). And
@@ -81,6 +81,31 @@ describe('listOrganizations', () => {
     const orgs = await listOrganizations();
     expect(orgs.some((o) => o.id === platformOrgId)).toBe(false);
     expect(orgs.some((o) => o.id === clientOrgId)).toBe(true);
+  });
+});
+
+describe('listOrgUsers', () => {
+  it('returns only the given org members and never super-admins', async () => {
+    const email = `svc-member-${suffix}@a.com`;
+    await addOrgUser(superAuth(), clientOrgId, { name: 'Member', email, password: PW, role: ROLES.COMPANY_ADMIN });
+    const members = await listOrgUsers(clientOrgId);
+    expect(members.every((m) => m.orgId === clientOrgId)).toBe(true);
+    expect(members.some((m) => m.role === ROLES.SUPER_ADMIN)).toBe(false);
+    expect(members.some((m) => m.email === email)).toBe(true);
+    // Platform org's company-admin is in a different org → not returned here.
+    expect(members.some((m) => m.id === platformAdminId)).toBe(false);
+  });
+});
+
+describe('listAuditLog', () => {
+  it('records user-add events with resolved actor email + org name', async () => {
+    const email = `svc-audit-${suffix}@a.com`;
+    await addOrgUser(superAuth(), clientOrgId, { name: 'Audited', email, password: PW, role: ROLES.MEDIA_BUYER });
+    const entries = await listAuditLog({ limit: 200 });
+    const added = entries.find((e) => e.action === 'org.user.added' && (e.details as { email?: string })?.email === email);
+    expect(added).toBeTruthy();
+    expect(added?.orgName).toBe('Client');
+    expect(added?.actorEmail).toBeTruthy();
   });
 });
 

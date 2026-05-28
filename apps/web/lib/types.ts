@@ -227,6 +227,19 @@ export interface OrgRow {
   createdAt: string;
 }
 
+export interface AuditRow {
+  id: string;
+  orgId: string | null;
+  orgName: string | null;
+  actorId: string | null;
+  actorEmail: string | null;
+  action: string;
+  entityType: string | null;
+  entityId: string | null;
+  details: unknown;
+  createdAt: string;
+}
+
 export interface CreateOrgInput {
   name: string;
   slug: string;

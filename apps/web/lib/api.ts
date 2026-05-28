@@ -2,6 +2,7 @@ import {
   type AdminOrg,
   type AdsenseStatus,
   type AfsAccountRow,
+  type AuditRow,
   type AfsChannelRow,
   type Campaign,
   type ConnectionStatus,
@@ -360,6 +361,15 @@ export const admin = {
     ).user,
   deleteUser: async (id: string): Promise<{ id: string }> =>
     parse<{ id: string }>(await authedFetch(`/api/admin/users/${id}`, { method: 'DELETE' })),
+  orgUsers: async (orgId: string): Promise<PublicUser[]> =>
+    (await parse<{ users: PublicUser[] }>(await authedFetch(`/api/admin/organizations/${orgId}/users`))).users,
+  audit: async (opts?: { limit?: number; actions?: string[] }): Promise<AuditRow[]> => {
+    const q = new URLSearchParams();
+    if (opts?.limit) q.set('limit', String(opts.limit));
+    if (opts?.actions?.length) q.set('actions', opts.actions.join(','));
+    const qs = q.toString();
+    return (await parse<{ entries: AuditRow[] }>(await authedFetch(`/api/admin/audit${qs ? `?${qs}` : ''}`))).entries;
+  },
   channels: async (): Promise<ChannelRow[]> =>
     (await parse<{ channels: ChannelRow[] }>(await authedFetch('/api/admin/channels'))).channels,
   channelSummary: async (): Promise<ChannelSummary> => parse(await authedFetch('/api/admin/channel-summary')),

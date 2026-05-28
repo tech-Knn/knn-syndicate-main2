@@ -16,6 +16,8 @@ import {
   createOrganization,
   deleteUser,
   getActingOrg,
+  listAuditLog,
+  listOrgUsers,
   listOrganizations,
   listUsers,
   setOrgAutoApprove,
@@ -67,6 +69,28 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       } catch (err) {
         return handleRouteError(err, reply);
       }
+    },
+  );
+
+  // Members of one company (super-admin only) — emails/roles/status for the Companies page.
+  app.get<{ Params: { id: string } }>(
+    '/organizations/:id/users',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      return reply.send({ users: await listOrgUsers(req.params.id) });
+    },
+  );
+
+  // Platform activity log (super-admin only) — recent events (user add/remove, approvals, …).
+  app.get<{ Querystring: { limit?: string; actions?: string } }>(
+    '/audit',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      const actions = req.query.actions ? req.query.actions.split(',').filter(Boolean) : undefined;
+      return reply.send({ entries: await listAuditLog({ limit, actions }) });
     },
   );
 

@@ -118,7 +118,7 @@ export async function addOrgUser(actor: AuthContext, orgId: string, input: AddOr
         approvedAt: new Date(),
       },
     });
-    await writeAudit(tx, { orgId, actorId: actor.userId, action: 'org.user.added', entityType: 'user', entityId: user.id, details: { role: input.role } });
+    await writeAudit(tx, { orgId, actorId: actor.userId, action: 'org.user.added', entityType: 'user', entityId: user.id, details: { email: user.email, role: input.role } });
     return toPublicUser(user);
   });
 }
@@ -150,6 +150,63 @@ export async function listOrganizations(): Promise<OrgRow[]> {
       adminCount: adminByOrg.get(o.id) ?? 0,
       pendingCount: pendingByOrg.get(o.id) ?? 0,
       createdAt: o.createdAt.toISOString(),
+    }));
+  });
+}
+
+/** Members of a specific company (super-admin only — route-guarded). Excludes super-admins. */
+export async function listOrgUsers(orgId: string): Promise<PublicUser[]> {
+  return withSystem(async (tx) => {
+    const users = await tx.user.findMany({
+      where: { orgId, role: { not: ROLES.SUPER_ADMIN } },
+      orderBy: { createdAt: 'asc' },
+    });
+    return users.map(toPublicUser);
+  });
+}
+
+/** One row of the platform activity log, with actor email + company name resolved. */
+export interface AuditRow {
+  id: string;
+  orgId: string | null;
+  orgName: string | null;
+  actorId: string | null;
+  actorEmail: string | null;
+  action: string;
+  entityType: string | null;
+  entityId: string | null;
+  details: unknown;
+  createdAt: string;
+}
+
+/** Recent activity (super-admin only — route-guarded). Newest first; capped. */
+export async function listAuditLog(opts?: { limit?: number; actions?: string[] }): Promise<AuditRow[]> {
+  const take = Math.min(Math.max(opts?.limit ?? 100, 1), 500);
+  return withSystem(async (tx) => {
+    const rows = await tx.auditLog.findMany({
+      where: opts?.actions && opts.actions.length > 0 ? { action: { in: opts.actions } } : undefined,
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+    const actorIds = [...new Set(rows.map((r) => r.actorId).filter((x): x is string => !!x))];
+    const orgIds = [...new Set(rows.map((r) => r.orgId).filter((x): x is string => !!x))];
+    const [actors, orgs] = await Promise.all([
+      tx.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, email: true } }),
+      tx.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } }),
+    ]);
+    const actorMap = new Map(actors.map((a) => [a.id, a.email]));
+    const orgMap = new Map(orgs.map((o) => [o.id, o.name]));
+    return rows.map((r) => ({
+      id: r.id,
+      orgId: r.orgId,
+      orgName: r.orgId ? (orgMap.get(r.orgId) ?? null) : null,
+      actorId: r.actorId,
+      actorEmail: r.actorId ? (actorMap.get(r.actorId) ?? null) : null,
+      action: r.action,
+      entityType: r.entityType,
+      entityId: r.entityId,
+      details: r.details,
+      createdAt: r.createdAt.toISOString(),
     }));
   });
 }
