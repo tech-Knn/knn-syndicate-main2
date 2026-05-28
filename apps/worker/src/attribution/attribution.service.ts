@@ -10,6 +10,7 @@ import {
   businessDay,
   toUsdMinor,
 } from '@knn/shared';
+import { liveAdsenseFetch } from './adsense-source.js';
 import { ensureFxRatesForDays, getUsdRate } from './fx.service.js';
 
 /**
@@ -36,6 +37,9 @@ export interface AttributionDeps {
 
 const defaultDeps: AttributionDeps = {
   fetchInsights: fetchAdInsights,
+  // Live AFS source: a no-op until a SUPER_ADMIN connects AdSense (and AFS access lands),
+  // so production auto-activates while tests/dormant deployments stay revenue-empty.
+  fetchAdsense: liveAdsenseFetch,
   getRate: getUsdRate,
   ensureFx: ensureFxRatesForDays,
 };
