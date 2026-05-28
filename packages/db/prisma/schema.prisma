@@ -309,6 +309,7 @@ model Campaign {
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   buyer        User         @relation(fields: [buyerId], references: [id], onDelete: Cascade)
   adSets       AdSet[]
+  offers       Offer[]
 
   @@index([orgId, status])
   @@index([buyerId])
@@ -516,6 +517,9 @@ model Channel {
   status            ChannelStatus @default(AVAILABLE)
   /// The campaign currently holding this channel (null when AVAILABLE).
   currentCampaignId String?       @map("current_campaign_id") @db.Uuid
+  /// The Domain (website) whose allocation this channel belongs to (Phase A). Null for
+  /// legacy/global channels; populated as channels are imported per-domain.
+  domainId          String?       @map("domain_id") @db.Uuid
   /// IST business day (YYYY-MM-DD) the current assignment is locked for.
   lockedForDay      String?       @map("locked_for_day")
   assignedAt        DateTime?     @map("assigned_at")
@@ -523,6 +527,7 @@ model Channel {
   updatedAt         DateTime      @updatedAt @map("updated_at")
 
   @@index([status])
+  @@index([domainId])
   @@map("channels")
 }
 
@@ -717,19 +722,25 @@ model ConversionEvent {
 // encrypted at rest (same TOKEN_ENCRYPTION_KEY as FbConnection). The worker refreshes
 // the short-lived access token on demand and feeds the AdSense revenue pull (D8).
 // ---------------------------------------------------------------------------
+/// An AFS / AdSense account = a revenue source (the doc's "AfsAccount"). Global (no
+/// org scope / no RLS — like channels). The platform can connect SEVERAL (AFS 1/2/3),
+/// each with its own AFS pubId + OAuth token. The legacy single row keeps id "platform".
 model GoogleConnection {
-  /// Fixed singleton id — there is one platform AdSense connection.
-  id              String   @id @default("platform")
+  id              String   @id @default(uuid())
+  /// Human label for the super-admin (e.g. "AFS 1 — Oarex").
+  label           String?
+  /// The AFS code's pubId for this account (`partner-pub-…`) — what the CSA unit renders.
+  afsPubId        String?  @map("afs_pub_id")
   googleEmail     String?  @map("google_email")
   accessTokenEnc  String   @map("access_token_enc")
   refreshTokenEnc String?  @map("refresh_token_enc")
   tokenExpiresAt  DateTime @map("token_expires_at")
   scopes          String   @default("")
-  /// AdSense resource ids discovered at connect (e.g. accounts/pub-X, .../adclients/ca-pub-X).
+  /// AdSense resource ids discovered at connect (e.g. accounts/pub-X, .../adclients/partner-pub-X).
   adsenseAccount  String?  @map("adsense_account")
   adsenseAdClient String?  @map("adsense_ad_client")
-  /// Admin-selected channel-id series this platform may use (e.g. "03700-05000").
-  /// AFS accounts hold 100k+ channels split across teams — only these are imported.
+  /// DEPRECATED (Phase A): channel allocation moved to the Domain (per-website). Kept
+  /// for the legacy single-account flow until Phase C migrates it.
   channelRanges   String?  @map("channel_ranges")
   /// ACTIVE | CONNECTION_BROKEN (string, not the FB enum, to avoid coupling).
   status          String   @default("ACTIVE")
@@ -738,5 +749,68 @@ model GoogleConnection {
   connectedAt     DateTime @default(now()) @map("connected_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
+  domains Domain[]
+
   @@map("google_connections")
+}
+
+enum DomainStatus {
+  PENDING_DNS
+  VERIFYING
+  LIVE
+  ERROR
+}
+
+/// A monetized article website (the doc's "Domain"). Maps to ONE AFS account → that's
+/// the pubId it renders. Has its own channel-id allocation (which ids this site may use).
+/// Global (platform-level, super-admin managed; buyers read it to pick offers). No RLS.
+model Domain {
+  id            String       @id @default(uuid()) @db.Uuid
+  host          String       @unique
+  afsAccountId  String       @map("afs_account_id")
+  /// Channel-id series this website owns (e.g. "09000-09500"); rest are other teams'.
+  channelRanges String?      @map("channel_ranges")
+  styleId       String?      @map("style_id")
+  adsafe        String?
+  status        DomainStatus @default(PENDING_DNS)
+  /// Token served at /.well-known to prove control on verify.
+  verifyToken   String       @map("verify_token")
+  verifiedAt    DateTime?    @map("verified_at")
+  lastCheck     String?      @map("last_check")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  afsAccount GoogleConnection @relation(fields: [afsAccountId], references: [id], onDelete: Cascade)
+  offers     Offer[]
+
+  @@index([afsAccountId])
+  @@map("domains")
+}
+
+enum OfferKind {
+  PAID
+  ORGANIC
+}
+
+/// An offer = one destination of a campaign's traffic: a website (→ AFS pubId) + a
+/// weight + an assigned channel (from the website's allocation) for revenue attribution.
+/// A campaign has many offers (offer testing). Org-scoped (RLS) — it's per-campaign.
+model Offer {
+  id         String    @id @default(uuid()) @db.Uuid
+  orgId      String    @map("org_id") @db.Uuid
+  campaignId String    @map("campaign_id") @db.Uuid
+  domainId   String    @map("domain_id") @db.Uuid
+  weightPct  Int       @default(0) @map("weight_pct")
+  kind       OfferKind @default(PAID)
+  /// The Channel (pool row) assigned to this offer for attribution; null until assigned.
+  channelRef String?   @map("channel_ref") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  domain   Domain   @relation(fields: [domainId], references: [id], onDelete: Restrict)
+
+  @@index([campaignId])
+  @@index([orgId])
+  @@map("offers")
 }
