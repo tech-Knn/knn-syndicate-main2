@@ -187,9 +187,10 @@ describe('facebook integration', () => {
     expect(res.json<{ pages: { fbPageId: string }[] }>().pages.some((p) => p.fbPageId === 'pg_promote')).toBe(true);
   });
 
-  it('returns only what the ad account can promote — never the other connection pages', async () => {
-    // A fresh account that can promote nothing must return [] (not a misleading list);
-    // promote_pages is Facebook's authoritative "pages this account may advertise".
+  it('still offers the managed pages when promote_pages is empty (avoids false negatives)', async () => {
+    // promote_pages can be empty even when the account CAN advertise a managed page
+    // (Facebook's own Ads Manager offers it), so we return the union — here, the
+    // connection's synced page_1 — rather than wrongly showing nothing.
     const emptyPromote = vi.fn(async (input: unknown) => {
       const url = String(input);
       const json = (b: unknown): Response => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -202,7 +203,7 @@ describe('facebook integration', () => {
     const accountId = accounts.json<{ accounts: { id: string }[] }>().accounts[0]?.id ?? '';
     const res = await app.inject({ method: 'GET', url: `/api/facebook/accounts/${accountId}/pages`, headers: h(token) });
     expect(res.statusCode).toBe(200);
-    expect(res.json<{ pages: unknown[] }>().pages).toEqual([]);
+    expect(res.json<{ pages: { fbPageId: string }[] }>().pages.some((p) => p.fbPageId === 'page_1')).toBe(true);
     vi.unstubAllGlobals();
   });
 

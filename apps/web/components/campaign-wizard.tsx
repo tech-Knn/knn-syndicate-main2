@@ -665,7 +665,7 @@ function OfferStep({ form, patch, accounts, pages }: { form: CampaignForm; patch
             disabled={!form.adAccountId}
             placeholder={form.adAccountId ? 'Search pages…' : 'Pick an ad account first'}
             options={pages.map((p) => ({ value: p.id, label: p.name, sublabel: p.fbPageId }))}
-            emptyText="This ad account can't promote any Page yet. In Meta Business Settings, connect a Page to this ad account (Business settings → Ad accounts → Connected assets), then click Re-sync on the Facebook tab."
+            emptyText="No Pages found for this profile. Make sure your Facebook profile/Business manages a Page, then click Re-sync on the Facebook tab."
           />
         </div>
         <div className={styles.field}>

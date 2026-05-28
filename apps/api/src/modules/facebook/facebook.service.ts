@@ -375,9 +375,13 @@ async function loadOwnedAccount(auth: AuthContext, adAccountId: string) {
 }
 
 /**
- * Pages promotable by a specific ad account (live from FB via `promote_pages`),
- * upserted into fb_pages so a campaign can reference them. Scopes the page picker
- * to the chosen ad account instead of the whole connection.
+ * Pages selectable for a campaign on this ad account: the UNION of the account's
+ * `promote_pages` (which may include client pages the user doesn't directly manage)
+ * and the profile's own managed pages (from `/me/accounts`). `promote_pages` ALONE
+ * gives false negatives — Facebook's Ads Manager lets you pick any page you manage in
+ * the same Business Manager even when `promote_pages` is empty — so restricting to it
+ * wrongly blocked usable pages. Facebook still validates the exact page↔account pairing
+ * at launch. The live promote pages are upserted so client-only pages are captured too.
  */
 export async function listAccountPages(auth: AuthContext, adAccountId: string) {
   const account = await loadOwnedAccount(auth, adAccountId);
@@ -397,23 +401,21 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
   }
 
   const connectionId = account.connection.id;
-  // `promote_pages` is Facebook's authoritative list of pages THIS ad account may
-  // advertise — we deliberately do NOT fall back to the connection's other pages,
-  // because a page the account can't promote would fail at launch. An empty result
-  // means the page isn't linked to the account yet (the UI guides the buyer to fix it).
   return runScoped(auth, async (tx) => {
-    const rows = [];
+    // Capture any promote-only (client) pages into fb_pages…
     for (const p of pages) {
-      rows.push(
-        await tx.fbPage.upsert({
-          where: { connectionId_fbPageId: { connectionId, fbPageId: p.fbPageId } },
-          create: { orgId: auth.orgId, connectionId, fbPageId: p.fbPageId, name: p.name, instagramId: p.instagramId },
-          update: { name: p.name },
-          select: { id: true, fbPageId: true, name: true, instagramId: true },
-        }),
-      );
+      await tx.fbPage.upsert({
+        where: { connectionId_fbPageId: { connectionId, fbPageId: p.fbPageId } },
+        create: { orgId: auth.orgId, connectionId, fbPageId: p.fbPageId, name: p.name, instagramId: p.instagramId },
+        update: { name: p.name },
+      });
     }
-    return rows;
+    // …then return the union (the synced managed pages now include the promote pages).
+    return tx.fbPage.findMany({
+      where: { connectionId },
+      orderBy: { name: 'asc' },
+      select: { id: true, fbPageId: true, name: true, instagramId: true },
+    });
   });
 }
 
