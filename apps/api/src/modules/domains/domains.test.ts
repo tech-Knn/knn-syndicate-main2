@@ -192,6 +192,26 @@ describe('domain management', () => {
     await withSystem((tx) => tx.channel.deleteMany({ where: { channelId: { in: ['71001', '71002', '71003'] } } }));
   });
 
+  it('bulk imports a numeric channel-id RANGE in one shot (the 1000-channel case)', async () => {
+    // A block of contiguous ids 72000..72004 + one outside the range.
+    const fake = [
+      ...Array.from({ length: 5 }, (_, i) => ({ channelId: String(72000 + i), displayName: `Block ${i}` })),
+      { channelId: '79999', displayName: 'Outside' },
+    ];
+    const deps = { fetchChannels: async () => fake };
+    // Browse the range → only the 5 in-range show.
+    const browse = await listDomainAfsChannels(auth(), domainId, { range: '72000-72004' }, deps);
+    expect(browse.channels.map((c) => c.channelId).sort()).toEqual(['72000', '72001', '72002', '72003', '72004']);
+    // Import the whole range in one call.
+    const r = await importAllChannels(auth(), domainId, { range: '72000-72004' }, deps);
+    expect(r).toMatchObject({ added: 5, matched: 5 });
+    const inPool = await withSystem((tx) => tx.channel.count({ where: { channelId: { in: ['72000', '72001', '72002', '72003', '72004'] } } }));
+    expect(inPool).toBe(5);
+    const outside = await withSystem((tx) => tx.channel.findUnique({ where: { channelId: '79999' } }));
+    expect(outside).toBeNull(); // out-of-range id not imported
+    await withSystem((tx) => tx.channel.deleteMany({ where: { channelId: { in: ['72000', '72001', '72002', '72003', '72004', '79999'] } } }));
+  });
+
   it('blocks delete while offers reference the domain, allows it after', async () => {
     await withSystem((tx) => tx.offer.create({ data: { orgId, campaignId, domainId, weightPct: 100, kind: 'PAID' } }));
     await expect(deleteDomain(auth(), domainId)).rejects.toThrow('live offers');

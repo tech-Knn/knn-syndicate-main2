@@ -79,16 +79,17 @@ export default function DomainsPage() {
   // ── Channel browser: pick AFS channels by name, import/remove them for a domain ──
   const [chDomain, setChDomain] = useState<DomainRow | null>(null);
   const [chQuery, setChQuery] = useState('');
+  const [chRange, setChRange] = useState('');
   const [chRows, setChRows] = useState<AfsChannelRow[] | null>(null);
   const [chMeta, setChMeta] = useState<{ scanned: number; total: number; truncated: boolean } | null>(null);
   const [chSel, setChSel] = useState<Set<string>>(new Set());
   const [chBusy, setChBusy] = useState(false);
 
-  const loadChannels = useCallback(async (id: string, q: string): Promise<void> => {
+  const loadChannels = useCallback(async (id: string, q: string, range: string): Promise<void> => {
     setChBusy(true);
     setNote(null);
     try {
-      const r = await domains.afsChannels(id, q);
+      const r = await domains.afsChannels(id, q, range);
       setChRows(r.channels);
       setChMeta({ scanned: r.scanned, total: r.total, truncated: r.truncated });
     } catch (err) {
@@ -104,7 +105,8 @@ export default function DomainsPage() {
     setChRows(null);
     setChSel(new Set());
     setChQuery('');
-    void loadChannels(d.id, '');
+    setChRange('');
+    void loadChannels(d.id, '', '');
   };
 
   const toggleSel = (cid: string): void =>
@@ -115,6 +117,14 @@ export default function DomainsPage() {
       return n;
     });
 
+  // Select / clear all currently-shown rows (the visible page) at once.
+  const toggleSelAll = (): void =>
+    setChSel((s) => {
+      const ids = (chRows ?? []).map((c) => c.channelId);
+      const allSelected = ids.length > 0 && ids.every((id) => s.has(id));
+      return allSelected ? new Set() : new Set(ids);
+    });
+
   const syncCatalog = async (): Promise<void> => {
     if (!chDomain) return;
     setChBusy(true);
@@ -122,7 +132,7 @@ export default function DomainsPage() {
     try {
       const r = await adsense.syncCatalog(chDomain.afsAccountId);
       setNote(`Synced ${r.synced.toLocaleString()} channels from AdSense — browsing is now instant.`);
-      await loadChannels(chDomain.id, chQuery);
+      await loadChannels(chDomain.id, chQuery, chRange);
     } catch (err) {
       setNote(err instanceof Error ? err.message : 'Could not sync the channel catalog');
     } finally {
@@ -135,14 +145,15 @@ export default function DomainsPage() {
     setChBusy(true);
     setNote(null);
     try {
-      const r = await domains.importAllChannels(chDomain.id, chQuery);
+      const r = await domains.importAllChannels(chDomain.id, chQuery, chRange);
+      const filterDesc = chRange.trim() ? ` in range ${chRange.trim()}` : chQuery ? ` matching “${chQuery}”` : '';
       setNote(
-        `Imported ${r.added} channel${r.added === 1 ? '' : 's'} from the API${chQuery ? ` matching “${chQuery}”` : ''}` +
-          (r.cappedAt ? ` (capped at ${r.cappedAt} of ${r.matched} — narrow with search)` : '') +
+        `Imported ${r.added} channel${r.added === 1 ? '' : 's'} from the API${filterDesc}` +
+          (r.cappedAt ? ` (capped at ${r.cappedAt} of ${r.matched} — split into smaller ranges)` : '') +
           '.',
       );
       setChSel(new Set());
-      await loadChannels(chDomain.id, chQuery);
+      await loadChannels(chDomain.id, chQuery, chRange);
       load();
     } catch (err) {
       setNote(err instanceof Error ? err.message : 'Could not import channels');
@@ -167,7 +178,7 @@ export default function DomainsPage() {
         await domains.setChannels(chDomain.id, { remove });
       }
       setChSel(new Set());
-      await loadChannels(chDomain.id, chQuery);
+      await loadChannels(chDomain.id, chQuery, chRange);
       load(); // refresh the domain's channel count
     } catch (err) {
       setNote(err instanceof Error ? err.message : 'Could not update channels');
@@ -312,12 +323,14 @@ export default function DomainsPage() {
             </button>
           </div>
           <p className={styles.fieldHint}>
-            Browse this website&apos;s AFS account channels by name and pick which to use — the name is just a label,
-            the channel id is what monetizes.{' '}
+            Pick which channels this website uses — the name is just a label, the channel id is what monetizes.
+            To bulk-assign a block, enter an <strong>id range</strong> (e.g. <span className="mono">00500-01499</span>)
+            and click <strong>Import range</strong>. The table previews the first {chMeta ? Math.min(chMeta.total, 300) : 300};
+            &ldquo;Import range&rdquo; imports <em>all</em> matches, not just the shown rows.{' '}
             {chMeta && (
               <>
-                Scanned {chMeta.scanned}
-                {chMeta.truncated ? '+ (refine with search)' : ''}, {chMeta.total} match.
+                Scanned {chMeta.scanned.toLocaleString()}
+                {chMeta.truncated ? '+' : ''} · <strong>{chMeta.total.toLocaleString()} match</strong>.
               </>
             )}
           </p>
@@ -325,23 +338,29 @@ export default function DomainsPage() {
             className={styles.domainForm}
             onSubmit={(e) => {
               e.preventDefault();
-              void loadChannels(chDomain.id, chQuery);
+              void loadChannels(chDomain.id, chQuery, chRange);
             }}
           >
             <input
               className={styles.rangeInput}
-              placeholder="search by channel name or id…"
+              placeholder="id range, e.g. 00500-01499"
+              value={chRange}
+              onChange={(e) => setChRange(e.target.value)}
+            />
+            <input
+              className={styles.rangeInput}
+              placeholder="or search by name / id…"
               value={chQuery}
               onChange={(e) => setChQuery(e.target.value)}
             />
             <Button type="submit" variant="ghost" loading={chBusy}>
-              Search
+              Preview
             </Button>
             <Button type="button" variant="ghost" onClick={() => void syncCatalog()} disabled={chBusy} title="Pull the account's full channel list from AdSense for instant browsing">
               Sync from AdSense
             </Button>
-            <Button type="button" variant="ghost" onClick={() => void importAll()} disabled={chBusy}>
-              Import all{chQuery ? ' matching' : ''}
+            <Button type="button" onClick={() => void importAll()} disabled={chBusy || (!chRange.trim() && !chQuery.trim())} title="Import every channel matching the range/search above">
+              {chRange.trim() ? 'Import range' : 'Import all matching'}
             </Button>
             <Button type="button" onClick={() => void applyChannels('add')} disabled={chSel.size === 0}>
               Import selected ({chSel.size})
@@ -369,7 +388,14 @@ export default function DomainsPage() {
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    <th className={styles.thLeft}></th>
+                    <th className={styles.thLeft}>
+                      <input
+                        type="checkbox"
+                        title="Select all shown"
+                        checked={chRows.length > 0 && chRows.every((c) => chSel.has(c.channelId))}
+                        onChange={toggleSelAll}
+                      />
+                    </th>
                     <th className={styles.thLeft}>Channel name</th>
                     <th className={styles.thLeft}>Channel ID</th>
                     <th className={styles.thLeft}>Status</th>

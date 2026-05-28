@@ -317,6 +317,28 @@ const defaultBrowseDeps: BrowseChannelsDeps = {
 /** How many of the account's channels to scan per LIVE browse (bounds the 100k account). */
 const CHANNEL_SCAN_CAP = 20000;
 
+/**
+ * Filter channels by an optional name/id substring (`q`) AND an optional numeric id
+ * range spec (`range`, e.g. "00500-01499, 02000-02100"). The range is how an admin bulk-
+ * selects a contiguous block of ~1000 ids without ticking each one.
+ */
+function filterChannels(
+  all: { channelId: string; displayName?: string }[],
+  q?: string,
+  range?: string,
+): { channelId: string; displayName?: string }[] {
+  const needle = (q ?? '').trim().toLowerCase();
+  const ranges = parseChannelRanges((range ?? '').trim());
+  return all.filter((c) => {
+    if (needle && !(c.displayName ?? '').toLowerCase().includes(needle) && !c.channelId.includes(needle)) return false;
+    if (ranges.length > 0) {
+      const n = /^\d+$/.test(c.channelId) ? Number(c.channelId) : null;
+      if (n === null || !ranges.some((r) => n >= r.start && n <= r.end)) return false;
+    }
+    return true;
+  });
+}
+
 interface AfsAccountConn {
   id: string;
   adsenseAdClient: string | null;
@@ -356,7 +378,7 @@ async function accountChannelSource(
 export async function listDomainAfsChannels(
   actor: AuthContext,
   id: string,
-  opts: { q?: string; limit?: number } = {},
+  opts: { q?: string; range?: string; limit?: number } = {},
   deps: BrowseChannelsDeps = defaultBrowseDeps,
 ): Promise<{ channels: AfsChannelRow[]; scanned: number; total: number; truncated: boolean }> {
   void actor;
@@ -365,10 +387,7 @@ export async function listDomainAfsChannels(
 
   const all = await accountChannelSource(domain.afsAccount, deps);
 
-  const q = (opts.q ?? '').trim().toLowerCase();
-  const filtered = q
-    ? all.filter((c) => (c.displayName ?? '').toLowerCase().includes(q) || c.channelId.includes(q))
-    : all;
+  const filtered = filterChannels(all, opts.q, opts.range);
   const limit = Math.min(Math.max(opts.limit ?? 300, 1), 1000);
   const page = filtered.slice(0, limit);
 
@@ -446,15 +465,14 @@ const IMPORT_ALL_CAP = 2000;
 export async function importAllChannels(
   actor: AuthContext,
   id: string,
-  opts: { q?: string } = {},
+  opts: { q?: string; range?: string } = {},
   deps: BrowseChannelsDeps = defaultBrowseDeps,
 ): Promise<{ added: number; matched: number; scanned: number; cappedAt?: number }> {
   const domain = await withSystem((tx) => tx.domain.findUnique({ where: { id }, include: { afsAccount: true } }));
   if (!domain) throw new AppError(404, 'Domain not found');
 
   const all = await accountChannelSource(domain.afsAccount, deps);
-  const q = (opts.q ?? '').trim().toLowerCase();
-  const matched = q ? all.filter((c) => (c.displayName ?? '').toLowerCase().includes(q) || c.channelId.includes(q)) : all;
+  const matched = filterChannels(all, opts.q, opts.range);
   const toImport = matched.slice(0, IMPORT_ALL_CAP);
 
   const added = await withSystem(async (tx) => {
@@ -470,8 +488,9 @@ export async function importAllChannels(
       });
       n += r.count;
     }
-    await tx.domain.update({ where: { id }, data: { channelRanges: q ? `name:${q}` : 'all' } });
-    await writeAudit(tx, { orgId: actor.orgId, actorId: actor.userId, action: 'domain.channels.import_all', entityType: 'domain', entityId: id, details: { q, matched: matched.length, added: n } });
+    const tag = (opts.range ?? '').trim() || (opts.q ? `name:${opts.q}` : 'all');
+    await tx.domain.update({ where: { id }, data: { channelRanges: tag } });
+    await writeAudit(tx, { orgId: actor.orgId, actorId: actor.userId, action: 'domain.channels.import_all', entityType: 'domain', entityId: id, details: { q: opts.q, range: opts.range, matched: matched.length, added: n } });
     return n;
   });
   return { added, matched: matched.length, scanned: all.length, cappedAt: matched.length > IMPORT_ALL_CAP ? IMPORT_ALL_CAP : undefined };

@@ -120,14 +120,14 @@ export async function domainRoutes(app: FastifyInstance): Promise<void> {
   );
 
   // Browse the domain's AFS account custom channels by name/id (pick which to use).
-  app.get<{ Params: { id: string }; Querystring: { q?: string; limit?: string } }>(
+  app.get<{ Params: { id: string }; Querystring: { q?: string; range?: string; limit?: string } }>(
     '/:id/afs-channels',
     { preHandler: superOnly },
     async (req, reply) => {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
         const limit = req.query.limit ? Number(req.query.limit) : undefined;
-        return reply.send(await listDomainAfsChannels(req.auth, req.params.id, { q: req.query.q, limit }));
+        return reply.send(await listDomainAfsChannels(req.auth, req.params.id, { q: req.query.q, range: req.query.range, limit }));
       } catch (err) {
         return handleRouteError(err, reply);
       }
@@ -136,14 +136,14 @@ export async function domainRoutes(app: FastifyInstance): Promise<void> {
 
   // Import / remove selected channels (label = the AFS name), or `importAll` to pull
   // every channel the API returns (optionally filtered by `q`) — no ticking.
-  app.post<{ Params: { id: string }; Body: ChannelSelection & { importAll?: boolean; q?: string } }>(
+  app.post<{ Params: { id: string }; Body: ChannelSelection & { importAll?: boolean; q?: string; range?: string } }>(
     '/:id/afs-channels',
     { preHandler: superOnly },
     async (req, reply) => {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
         if (req.body?.importAll) {
-          return reply.send(await importAllChannels(req.auth, req.params.id, { q: req.body.q }));
+          return reply.send(await importAllChannels(req.auth, req.params.id, { q: req.body.q, range: req.body.range }));
         }
         return reply.send(await setDomainChannels(req.auth, req.params.id, req.body ?? {}));
       } catch (err) {
