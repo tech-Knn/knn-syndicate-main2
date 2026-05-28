@@ -6,6 +6,15 @@ import { env } from '@knn/config';
  * (`redirect:{redirectId}`); the Worker reads it on the hot path. The value shape
  * is the contract with `apps/redirect/src/resolve.ts#RedirectConfig` (plain JSON).
  */
+/** One weighted destination — an A/B split or (Phase E) a campaign PAID offer
+ *  carrying its own AFS channel + offer id. Mirrors `resolve.ts#RedirectSplit`. */
+export interface RedirectSplitPayload {
+  url: string;
+  weight: number;
+  channel?: string;
+  offerId?: string;
+}
+
 export interface RedirectConfigPayload {
   campaignId: string;
   active: boolean;
@@ -15,7 +24,7 @@ export interface RedirectConfigPayload {
   adCreative?: string;
   styleId?: string;
   fallbackUrl?: string;
-  splits?: { url: string; weight: number }[];
+  splits?: RedirectSplitPayload[];
 }
 
 export class KvNotConfiguredError extends Error {
@@ -55,6 +64,8 @@ export async function writeRedirectConfigs(
 export interface ClickRecord {
   redirectId: string;
   fbclid?: string;
+  /** The offer the click was routed to (Phase E) — the per-offer attribution key. */
+  offerId?: string;
   /** Click timestamp (unix ms) — used for the `fbc` identifier. */
   ts: number;
 }

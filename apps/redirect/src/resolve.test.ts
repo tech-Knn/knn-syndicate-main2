@@ -35,10 +35,10 @@ describe('pickSplit', () => {
       { url: 'A', weight: 70 },
       { url: 'B', weight: 30 },
     ];
-    expect(pickSplit(splits, 0)).toBe('A'); // 0   → first band
-    expect(pickSplit(splits, 0.69)).toBe('A'); // <0.70
-    expect(pickSplit(splits, 0.70)).toBe('B'); // ≥0.70
-    expect(pickSplit(splits, 0.999)).toBe('B');
+    expect(pickSplit(splits, 0)?.url).toBe('A'); // 0   → first band
+    expect(pickSplit(splits, 0.69)?.url).toBe('A'); // <0.70
+    expect(pickSplit(splits, 0.70)?.url).toBe('B'); // ≥0.70
+    expect(pickSplit(splits, 0.999)?.url).toBe('B');
   });
   it('roughly honors the distribution over many draws', () => {
     const splits = [
@@ -47,7 +47,7 @@ describe('pickSplit', () => {
     ];
     let a = 0;
     const n = 10_000;
-    for (let i = 0; i < n; i++) if (pickSplit(splits, i / n) === 'A') a += 1;
+    for (let i = 0; i < n; i++) if (pickSplit(splits, i / n)?.url === 'A') a += 1;
     expect(a / n).toBeGreaterThan(0.75);
     expect(a / n).toBeLessThan(0.85);
   });
@@ -94,5 +94,32 @@ describe('resolveRedirect', () => {
     };
     const d = resolveRedirect(cfg, { fbclid: 'x' }, { txid: 'tx-5', rand: 0.5 });
     expect(new URL(d.location).pathname).toBe('/a/variant-a');
+  });
+
+  it('routes paid traffic to a PAID offer: its host, its channel, and reports the offerId', () => {
+    const cfg: RedirectConfig = {
+      ...base,
+      splits: [
+        { url: 'https://site-a.com/a/slug', weight: 60, channel: 'ch-a', offerId: 'offer-a' },
+        { url: 'https://site-b.com/a/slug', weight: 40, channel: 'ch-b', offerId: 'offer-b' },
+      ],
+    };
+    const a = resolveRedirect(cfg, { fbclid: 'x' }, { txid: 'tx-6', rand: 0.1 });
+    const ua = new URL(a.location);
+    expect(ua.host).toBe('site-a.com');
+    expect(ua.searchParams.get('ch')).toBe('ch-a'); // the offer's channel beats config.channel
+    expect(a.offerId).toBe('offer-a');
+
+    const b = resolveRedirect(cfg, { fbclid: 'x' }, { txid: 'tx-7', rand: 0.99 });
+    expect(new URL(b.location).host).toBe('site-b.com');
+    expect(new URL(b.location).searchParams.get('ch')).toBe('ch-b');
+    expect(b.offerId).toBe('offer-b');
+  });
+
+  it('sends organic traffic to the ORGANIC offer destination (fallbackUrl)', () => {
+    const cfg: RedirectConfig = { ...base, fallbackUrl: 'https://organic-site.com/a/slug' };
+    const d = resolveRedirect(cfg, { utm_source: 'google' }, { txid: 'tx-8' });
+    expect(d.location).toBe('https://organic-site.com/a/slug');
+    expect(d.offerId).toBeUndefined();
   });
 });

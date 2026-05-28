@@ -233,7 +233,18 @@ export async function launchCampaign(
   });
 
   if (campaign.fbCampaignId) return { status: 'ACTIVE', fbCampaignId: campaign.fbCampaignId };
-  if (!campaign.channelId) throw new AppError(409, 'Campaign has no channel assigned yet');
+
+  // A campaign routes its traffic across PAID offers (Phase E) — each offer's website +
+  // its own AFS channel — or, legacy, a single channel + the platform article domain.
+  const offers = await runScoped(auth, (tx) =>
+    tx.offer.findMany({ where: { campaignId }, include: { domain: { select: { host: true } } } }),
+  );
+  const paidOffers = offers.filter((o) => o.kind === 'PAID');
+  if (paidOffers.length > 0) {
+    if (paidOffers.some((o) => !o.channelRef)) throw new AppError(409, 'Offers have no channels assigned yet');
+  } else if (!campaign.channelId) {
+    throw new AppError(409, 'Campaign has no channel assigned yet');
+  }
 
   // 1. Ensure the article exists; get its slug.
   let slug: string;
@@ -247,11 +258,36 @@ export async function launchCampaign(
     slug = (await deps.generateArticle(auth, campaignId)).slug;
   }
 
-  // 2. Resolve the AdSense channel (`ch`) for this campaign (global pool, no RLS).
-  const channel = await runScoped(auth, (tx) =>
-    tx.channel.findUnique({ where: { id: campaign.channelId! }, select: { channelId: true } }),
-  );
-  const articleUrl = `${env.ARTICLE_DOMAIN}/a/${slug}`;
+  // 2. Resolve the routing: offer splits (each offer's website host + its own AFS channel)
+  //    for an offers campaign, or the single legacy channel + the platform article domain.
+  let articleUrl = `${env.ARTICLE_DOMAIN}/a/${slug}`;
+  let channel: string | undefined;
+  let splits: RedirectConfigPayload['splits'];
+  let organicFallbackUrl: string | undefined;
+
+  if (paidOffers.length > 0) {
+    const chRows = await runScoped(auth, (tx) =>
+      tx.channel.findMany({ where: { id: { in: paidOffers.map((o) => o.channelRef!) } }, select: { id: true, channelId: true } }),
+    );
+    const chById = new Map(chRows.map((c) => [c.id, c.channelId]));
+    splits = paidOffers.map((o) => ({
+      url: `https://${o.domain.host}/a/${slug}`,
+      weight: o.weightPct,
+      channel: chById.get(o.channelRef!),
+      offerId: o.id,
+    }));
+    // The ORGANIC offer (if configured) is where non-ad traffic goes.
+    const organic = offers.find((o) => o.kind === 'ORGANIC');
+    organicFallbackUrl = organic ? `https://${organic.domain.host}/a/${slug}` : undefined;
+    // articleUrl is only a safety net when splits is empty (it isn't here); point at the
+    // first offer so a malformed config still lands on a monetized page.
+    articleUrl = splits[0]?.url ?? articleUrl;
+  } else {
+    const channelRow = await runScoped(auth, (tx) =>
+      tx.channel.findUnique({ where: { id: campaign.channelId! }, select: { channelId: true } }),
+    );
+    channel = channelRow?.channelId;
+  }
 
   // 3. Write each ad's redirect config to edge KV (so go.* resolves once ads go live).
   const entries = campaign.adSets.flatMap((set) =>
@@ -261,10 +297,11 @@ export async function launchCampaign(
         campaignId: campaign.id,
         active: true,
         articleUrl,
-        channel: channel?.channelId,
+        channel,
+        splits,
         rac: campaign.racValue ?? undefined,
         adCreative: buildAdCreativeText(ad),
-        fallbackUrl: ad.fallbackUrl ?? campaign.fallbackUrl ?? undefined,
+        fallbackUrl: organicFallbackUrl ?? ad.fallbackUrl ?? campaign.fallbackUrl ?? undefined,
       } satisfies RedirectConfigPayload,
     })),
   );

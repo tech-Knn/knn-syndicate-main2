@@ -57,7 +57,13 @@ worker.get('/go/:id', async (c) => {
   // the later conversion beacon can resolve the ad's pixel + the buyer's token and the
   // fbclid for attribution. Fire-and-forget (waitUntil) — never blocks the 302.
   if (decision.paid && config.active) {
-    const record = JSON.stringify({ redirectId: c.req.param('id'), fbclid: query.fbclid, ts: Date.now() });
+    // Include the chosen offer (Phase E) so revenue/conversions attribute per-offer.
+    const record = JSON.stringify({
+      redirectId: c.req.param('id'),
+      fbclid: query.fbclid,
+      offerId: decision.offerId,
+      ts: Date.now(),
+    });
     c.executionCtx.waitUntil(c.env.REDIRECTS.put(`click:${decision.txid}`, record, { expirationTtl: 604_800 }));
   }
 

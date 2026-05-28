@@ -34,6 +34,11 @@ let pageId = '';
 let pixelId = '';
 let channelRef = '';
 let uploadId = '';
+let afsId = '';
+let domA = '';
+let domB = '';
+const domAHost = `la-${suffix}.example.com`;
+const domBHost = `lb-${suffix}.example.com`;
 
 function auth(): AuthContext {
   return { userId: buyerId, orgId, role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE };
@@ -89,6 +94,9 @@ beforeAll(async () => {
     pixelId = (await tx.fbPixel.create({ data: { orgId, adAccountId: acc.id, fbPixelId: 'px', name: 'X' } })).id;
     channelRef = (await tx.channel.create({ data: { channelId: `ch-launch-${suffix}`, status: 'ASSIGNED' } })).id;
     uploadId = (await tx.upload.create({ data: { orgId, buyerId, kind: 'IMAGE', filename: 'c.png', mimeType: 'image/png', sizeBytes: 4, storageKey } })).id;
+    afsId = (await tx.googleConnection.create({ data: { accessTokenEnc: 'enc', tokenExpiresAt: new Date(Date.now() + 3_600_000), adsenseAccount: `acc-${suffix}`, adsenseAdClient: `adc-${suffix}`, afsPubId: `partner-pub-${suffix}`, label: 'AFS', status: 'ACTIVE' } })).id;
+    domA = (await tx.domain.create({ data: { host: domAHost, afsAccountId: afsId, status: 'LIVE', verifyToken: `a-${suffix}` } })).id;
+    domB = (await tx.domain.create({ data: { host: domBHost, afsAccountId: afsId, status: 'LIVE', verifyToken: `b-${suffix}` } })).id;
   });
 });
 
@@ -98,7 +106,11 @@ afterEach(() => {
 
 afterAll(async () => {
   await withSystem(async (tx) => {
+    await tx.campaign.deleteMany({ where: { orgId } }); // cascades offers
     await tx.channel.deleteMany({ where: { channelId: { startsWith: `ch-launch-${suffix}` } } });
+    await tx.channel.deleteMany({ where: { channelId: { startsWith: `oc-` } } });
+    await tx.domain.deleteMany({ where: { afsAccountId: afsId } });
+    await tx.googleConnection.deleteMany({ where: { id: afsId } });
     await tx.organization.deleteMany({ where: { id: orgId } });
   });
   await prisma.$disconnect();
@@ -160,6 +172,33 @@ describe('launchCampaign (Phase 8)', () => {
     const result = await launchCampaign(auth(), campaignId, { generateArticle, writeRedirectConfigs: vi.fn(async () => undefined) });
     expect(result).toEqual({ status: 'ACTIVE', fbCampaignId: 'existing' });
     expect(generateArticle).not.toHaveBeenCalled();
+  });
+
+  it('an offers campaign builds a weighted split: per-offer host + channel + offerId, organic fallback', async () => {
+    const campaignId = await makeCampaign();
+    let offerAId = '';
+    await withSystem(async (tx) => {
+      // Offers campaign: clear the legacy single channel; give each PAID offer its own channel.
+      await tx.campaign.update({ where: { id: campaignId }, data: { channelId: null } });
+      const chA = await tx.channel.create({ data: { channelId: `oc-a-${suffix}`, domainId: domA, status: 'ASSIGNED', currentCampaignId: campaignId } });
+      const chB = await tx.channel.create({ data: { channelId: `oc-b-${suffix}`, domainId: domB, status: 'ASSIGNED', currentCampaignId: campaignId } });
+      offerAId = (await tx.offer.create({ data: { orgId, campaignId, domainId: domA, weightPct: 60, kind: 'PAID', channelRef: chA.id } })).id;
+      await tx.offer.create({ data: { orgId, campaignId, domainId: domB, weightPct: 40, kind: 'PAID', channelRef: chB.id } });
+      await tx.offer.create({ data: { orgId, campaignId, domainId: domA, weightPct: 0, kind: 'ORGANIC' } });
+    });
+
+    const writeRedirectConfigs = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {});
+    const result = await launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 'health-2026' })), writeRedirectConfigs });
+    expect(result.status).toBe('ACTIVE');
+
+    const cfg = writeRedirectConfigs.mock.calls[0]![0][0]!.config;
+    expect(cfg.channel).toBeUndefined(); // offers campaign: no single campaign-level channel
+    expect(cfg.splits).toHaveLength(2);
+    const byHost = Object.fromEntries((cfg.splits ?? []).map((s) => [new URL(s.url).host, s]));
+    expect(byHost[domAHost]).toMatchObject({ weight: 60, channel: `oc-a-${suffix}`, offerId: offerAId, url: `https://${domAHost}/a/health-2026` });
+    expect(byHost[domBHost]).toMatchObject({ weight: 40, channel: `oc-b-${suffix}` });
+    // The ORGANIC offer is the non-ad fallback destination.
+    expect(cfg.fallbackUrl).toBe(`https://${domAHost}/a/health-2026`);
   });
 
   it('refuses to launch a campaign with no channel (409)', async () => {

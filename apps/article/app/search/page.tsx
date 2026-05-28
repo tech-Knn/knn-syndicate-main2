@@ -25,6 +25,8 @@ export default async function SearchPage({
   // `q` is the default CSA results param (resultsPageQueryParam); accept `query` too.
   const query = str(sp.q) || str(sp.query);
   const referrerAdCreative = str(sp.rc) || undefined;
+  // The offer's AFS channel (per-offer attribution) — forwarded here from the content page.
+  const channel = str(sp.ch) || undefined;
   // Conversion attribution: the redirect threads the click id (txid) + optional
   // value (cv) / currency (ccy) here via the content page's results-page URL.
   const clickId = str(sp.txid) || undefined;
@@ -41,7 +43,7 @@ export default async function SearchPage({
           </h1>
         )}
       </div>
-      <SearchAdsUnit query={query} referrerAdCreative={referrerAdCreative} site={site} />
+      <SearchAdsUnit query={query} referrerAdCreative={referrerAdCreative} channel={channel} site={site} />
       <ConversionTracker clickId={clickId} value={value} currency={currency} />
     </main>
   );

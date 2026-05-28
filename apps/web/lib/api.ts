@@ -8,6 +8,9 @@ import {
   type FbAccount,
   type FbPage,
   type FbPixel,
+  type OfferDomainOption,
+  type OfferInput,
+  type OfferRow,
   type PublicUser,
   type SessionUser,
   type SyncResult,
@@ -291,6 +294,17 @@ export const campaigns = {
     parse(await authedFetch(`/api/campaigns/${id}`, { method: 'DELETE' })),
   testLaunch: async (id: string): Promise<{ fbCampaignId: string; adSets: { fbAdSetId: string; ads: { fbAdId: string }[] }[] }> =>
     parse(await authedFetch(`/api/campaigns/${id}/test-launch`, { method: 'POST' })),
+  // Phase E — campaign offers (the websites a campaign's traffic routes across).
+  offers: async (id: string): Promise<OfferRow[]> =>
+    (await parse<{ offers: OfferRow[] }>(await authedFetch(`/api/campaigns/${id}/offers`))).offers,
+  setOffers: async (id: string, offers: OfferInput[]): Promise<OfferRow[]> =>
+    (
+      await parse<{ offers: OfferRow[] }>(
+        await authedFetch(`/api/campaigns/${id}/offers`, { method: 'PUT', headers: jsonHeaders(), body: JSON.stringify({ offers }) }),
+      )
+    ).offers,
+  offerDomains: async (): Promise<OfferDomainOption[]> =>
+    (await parse<{ domains: OfferDomainOption[] }>(await authedFetch('/api/campaigns/offer-domains'))).domains,
 };
 
 export const admin = {

@@ -72,6 +72,8 @@ export default async function ArticlePage({
   // FB ads); the redirect passes the originating ad creative as `rc`.
   const referrerAdCreative = str(sp.rc) || undefined;
   const txid = str(sp.txid) || undefined;
+  // The offer's AFS channel (per-offer attribution); forwarded to /search by the unit.
+  const channel = str(sp.ch) || undefined;
   // Publisher-provided related-search terms. Preference: explicit `terms` from the
   // redirect → the article's AI-generated high-CPC related searches → campaign
   // keywords. Only sent alongside referrerAdCreative, which Google requires.
@@ -85,7 +87,7 @@ export default async function ArticlePage({
         {teaser && <p className={styles.lead}>{teaser}</p>}
 
         {/* RSOC related-search unit (content-targeted). Clicks → /search results page. */}
-        <RelatedSearchUnit referrerAdCreative={referrerAdCreative} terms={terms} txid={txid} site={site} />
+        <RelatedSearchUnit referrerAdCreative={referrerAdCreative} terms={terms} txid={txid} channel={channel} site={site} />
 
         <div className={styles.body}>
           {bodyBlocks.map((block, i) => {

@@ -8,6 +8,22 @@
  * `styleId`) + our `txid` for attribution; organic/bot/paused → the fallback.
  */
 
+/**
+ * A weighted destination for a paid click. Plain A/B splits carry just `url` +
+ * `weight`; Phase-E **offers** additionally carry the offer's own `channel` (its
+ * AdSense channel, for per-offer attribution — overrides `config.channel`) and
+ * `offerId` (logged so revenue can be attributed back to the offer).
+ */
+export interface RedirectSplit {
+  /** The destination article URL on the offer's website (e.g. https://site2.com/a/slug). */
+  url: string;
+  weight: number;
+  /** The offer's AFS channel; sets `ch` for this destination (overrides config.channel). */
+  channel?: string;
+  /** The offer this destination routes to (logged for per-offer attribution, Phase F). */
+  offerId?: string;
+}
+
 /** Per-ad redirect config (stored in KV as `redirect:{redirectId}`). */
 export interface RedirectConfig {
   campaignId: string;
@@ -15,16 +31,19 @@ export interface RedirectConfig {
   active: boolean;
   /** Full content-page URL, precomputed by the origin (e.g. https://articles.x/a/slug). */
   articleUrl: string;
-  /** AdSense channel for this campaign (the `ch` value → per-campaign attribution). */
+  /** AdSense channel for this campaign (the `ch` value → per-campaign attribution).
+   *  Used when the picked split has no channel of its own (legacy / single-offer). */
   channel?: string;
   rac?: string;
   /** This ad's creative text — `referrerAdCreative` (required for paid traffic). */
   adCreative?: string;
   styleId?: string;
-  /** Where non-ad (organic/bot) traffic goes; defaults to the article page itself. */
+  /** Where non-ad (organic/bot) traffic goes; defaults to the article page itself.
+   *  Phase E: the campaign's ORGANIC offer destination, when one is configured. */
   fallbackUrl?: string;
-  /** Optional weighted destinations for A/B traffic split (weights need not sum to 100). */
-  splits?: { url: string; weight: number }[];
+  /** Weighted destinations: A/B splits or the campaign's PAID offers (Phase E).
+   *  Weights need not sum to 100 (normalized at pick time). */
+  splits?: RedirectSplit[];
 }
 
 export type QueryParams = Record<string, string | undefined>;
@@ -39,30 +58,30 @@ export function isPaidTraffic(query: QueryParams): boolean {
 }
 
 /** Weighted-random pick from `splits` using `rand` ∈ [0,1). Returns undefined if none. */
-export function pickSplit(
-  splits: { url: string; weight: number }[] | undefined,
-  rand: number,
-): string | undefined {
+export function pickSplit(splits: RedirectSplit[] | undefined, rand: number): RedirectSplit | undefined {
   if (!splits || splits.length === 0) return undefined;
   const total = splits.reduce((sum, s) => sum + Math.max(0, s.weight), 0);
-  if (total <= 0) return splits[0]?.url;
+  if (total <= 0) return splits[0];
   let r = rand * total;
   for (const s of splits) {
     r -= Math.max(0, s.weight);
-    if (r < 0) return s.url;
+    if (r < 0) return s;
   }
-  return splits[splits.length - 1]?.url;
+  return splits[splits.length - 1];
 }
 
 export interface RedirectDecision {
   location: string;
   paid: boolean;
   txid: string;
+  /** The offer the click was routed to (Phase E), when splits carry offer ids. */
+  offerId?: string;
 }
 
 /**
- * Decide where a click goes. Paid + active → the (possibly split-selected) content
- * page with AFS params + txid. Organic/bot or inactive → the fallback.
+ * Decide where a click goes. Paid + active → the weighted-picked offer/split content
+ * page with AFS params + txid (the picked offer's channel wins over config.channel).
+ * Organic/bot or inactive → the fallback (the ORGANIC offer, when configured).
  */
 export function resolveRedirect(
   config: RedirectConfig,
@@ -74,12 +93,14 @@ export function resolveRedirect(
     return { location: config.fallbackUrl || config.articleUrl, paid, txid: opts.txid };
   }
 
-  const base = pickSplit(config.splits, opts.rand ?? Math.random()) ?? config.articleUrl;
-  const url = new URL(base);
+  const picked = pickSplit(config.splits, opts.rand ?? Math.random());
+  const url = new URL(picked?.url ?? config.articleUrl);
   if (config.adCreative) url.searchParams.set('rc', config.adCreative);
-  if (config.channel) url.searchParams.set('ch', config.channel);
+  // The picked offer's channel takes precedence over the campaign-level channel.
+  const channel = picked?.channel ?? config.channel;
+  if (channel) url.searchParams.set('ch', channel);
   if (config.rac) url.searchParams.set('rac', config.rac);
   if (config.styleId) url.searchParams.set('styleId', config.styleId);
   url.searchParams.set('txid', opts.txid);
-  return { location: url.toString(), paid, txid: opts.txid };
+  return { location: url.toString(), paid, txid: opts.txid, offerId: picked?.offerId };
 }

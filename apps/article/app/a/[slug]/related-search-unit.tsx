@@ -24,12 +24,15 @@ export function RelatedSearchUnit({
   referrerAdCreative,
   terms,
   txid,
+  channel,
   site,
 }: {
   referrerAdCreative?: string;
   terms?: string;
   /** The redirect click id — threaded onto /search so the conversion beacon can fire. */
   txid?: string;
+  /** The offer's AFS channel (`ch`) — tags ad requests for per-offer revenue attribution. */
+  channel?: string;
   /** Per-host AFS config resolved server-side (pubId/style/adsafe). */
   site: SiteConfig;
 }) {
@@ -37,11 +40,12 @@ export function RelatedSearchUnit({
 
   useEffect(() => {
     if (!live) return;
-    // Carry the click id (+ ad creative) onto the results page so /search can attribute
-    // the conversion. CSA appends the query term as `q`.
+    // Carry the click id (+ ad creative + channel) onto the results page so /search can
+    // attribute conversion + AFS revenue. CSA appends the query term as `q`.
     const rp = new URLSearchParams();
     if (txid) rp.set('txid', txid);
     if (referrerAdCreative) rp.set('rc', referrerAdCreative);
+    if (channel) rp.set('ch', channel);
     const resultsPageBaseUrl = `${window.location.origin}/search${rp.toString() ? `?${rp.toString()}` : ''}`;
 
     const pageOptions = basePageOptions(site, {
@@ -54,12 +58,14 @@ export function RelatedSearchUnit({
     if (referrerAdCreative) pageOptions.referrerAdCreative = referrerAdCreative;
     // Publisher-provided terms are only valid alongside referrerAdCreative (Google's rule).
     if (terms && referrerAdCreative) pageOptions.terms = terms;
+    // The AdSense custom channel (per-offer attribution) — tags the ad request.
+    if (channel) pageOptions.channel = channel;
     runCsa('relatedsearch', pageOptions, {
       container: 'relatedsearches1',
       relatedSearches: 10,
       adLoadedCallback: afsAdLoadedCallback,
     });
-  }, [live, referrerAdCreative, terms, txid, site]);
+  }, [live, referrerAdCreative, terms, txid, channel, site]);
 
   return (
     <aside className={styles.afs} aria-label="Related searches">

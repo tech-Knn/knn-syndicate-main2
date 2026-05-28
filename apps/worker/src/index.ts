@@ -6,7 +6,7 @@ import { FINALIZATION } from '@knn/shared';
 import { runFinalization, runHourlyAttribution } from './attribution/attribution.service.js';
 import { type CapiDispatchJob, dispatchConversion } from './capi-dispatch.js';
 import {
-  assignChannel,
+  assignForCampaign,
   processQueue,
   releaseChannelForCampaign,
   rolloverChannels,
@@ -68,7 +68,8 @@ async function main(): Promise<void> {
       switch (action) {
         case 'assign': {
           if (!campaignId) return { skipped: true };
-          const result = await assignChannel(campaignId);
+          // Dispatches to per-offer assignment (Phase E) or the legacy single-channel path.
+          const result = await assignForCampaign(campaignId);
           if (result.assigned) await triggerAutoLaunch(campaignId);
           return result;
         }

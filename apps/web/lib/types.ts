@@ -186,6 +186,30 @@ export interface AfsAccountRow {
   connectedAt: string;
 }
 
+/** A campaign offer (Phase E): one website the campaign's traffic routes to. */
+export interface OfferRow {
+  id: string;
+  domainId: string;
+  host: string;
+  afsLabel: string | null;
+  weightPct: number;
+  kind: 'PAID' | 'ORGANIC';
+  channelId: string | null;
+  domainStatus: string;
+}
+
+export interface OfferInput {
+  domainId: string;
+  weightPct: number;
+  kind: 'PAID' | 'ORGANIC';
+}
+
+export interface OfferDomainOption {
+  id: string;
+  host: string;
+  afsLabel: string | null;
+}
+
 export interface AdsenseStatus {
   connected: boolean;
   email?: string | null;

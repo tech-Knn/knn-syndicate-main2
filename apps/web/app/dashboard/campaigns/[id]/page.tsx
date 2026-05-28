@@ -5,6 +5,7 @@ import { CampaignWizard } from '@/components/campaign-wizard';
 import { Spinner } from '@/components/ui';
 import { campaigns } from '@/lib/api';
 import { type Campaign } from '@/lib/types';
+import { OffersEditor } from './offers-editor';
 
 export default function EditCampaignPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -31,5 +32,10 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
       </div>
     );
   }
-  return <CampaignWizard campaign={campaign} />;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <CampaignWizard campaign={campaign} />
+      <OffersEditor campaignId={campaign.id} status={campaign.status} />
+    </div>
+  );
 }

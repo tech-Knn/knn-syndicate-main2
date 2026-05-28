@@ -15,6 +15,8 @@ import {
   updateCampaign,
 } from './campaigns.service.js';
 import { launchCampaign, testLaunchCampaign } from './launch.service.js';
+import { listOfferDomains, listOffers, setOffers } from './offers.service.js';
+import { offerSetSchema } from './offers.schemas.js';
 
 const adminOnly = [authenticate, requireRole(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)];
 
@@ -29,6 +31,12 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
   app.get('/pending', { preHandler: adminOnly }, async (req, reply) => {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     return reply.send({ campaigns: await listPendingApprovals(req.auth) });
+  });
+
+  // LIVE domains a buyer can attach as offers (Phase E). Static path → before `/:id`.
+  app.get('/offer-domains', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    return reply.send({ domains: await listOfferDomains(req.auth) });
   });
 
   app.post('/', { preHandler: [authenticate] }, async (req, reply) => {
@@ -131,6 +139,27 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
       }
     },
   );
+
+  // Campaign offers (Phase E): the websites a campaign's traffic routes across, each
+  // with a weight + kind. Owner/admin scoped in the service; editable pre-approval.
+  app.get<{ Params: { id: string } }>('/:id/offers', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ offers: await listOffers(req.auth, req.params.id) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  app.put<{ Params: { id: string } }>('/:id/offers', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      const { offers } = offerSetSchema.parse(req.body);
+      return reply.send({ offers: await setOffers(req.auth, req.params.id, offers) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
 
   // Generate (or reuse) + attach the campaign's monetized article (Phase 5, D16).
   // Owner/admin scoped in the service. Normally driven by the post-approval pipeline

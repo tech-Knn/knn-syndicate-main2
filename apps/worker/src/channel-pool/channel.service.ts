@@ -23,8 +23,14 @@ const HOLDING_STATUSES: readonly CampaignStatus[] = [
 
 export interface AssignResult {
   assigned: boolean;
+  /** The single channel (legacy / non-offer campaigns). */
   channelRef?: string;
+  /** The per-offer channels (Phase E offers campaigns) — one per PAID offer. */
+  channelRefs?: string[];
 }
+
+/** Internal sentinel: a PAID offer's domain pool was exhausted → roll back + queue. */
+class OfferPoolExhausted extends Error {}
 
 /**
  * Optional hook fired (best-effort) right after a campaign acquires a channel —
@@ -52,9 +58,11 @@ export async function assignChannel(campaignId: string): Promise<AssignResult> {
     if (campaign.channelId) return { assigned: true, channelRef: campaign.channelId };
 
     const day = currentBusinessDay();
-    // Atomically claim one available channel; concurrent claims skip locked rows.
+    // Atomically claim one available GLOBAL channel (domain_id IS NULL); concurrent claims
+    // skip locked rows. Domain-tagged channels are reserved for per-offer assignment (Phase E)
+    // so a legacy single-channel campaign can't grab a specific website's allocation.
     const rows = await tx.$queryRawUnsafe<{ id: string }[]>(
-      `SELECT id FROM channels WHERE status = 'AVAILABLE'
+      `SELECT id FROM channels WHERE status = 'AVAILABLE' AND domain_id IS NULL
        ORDER BY created_at ASC, id ASC
        FOR UPDATE SKIP LOCKED LIMIT 1`,
     );
@@ -96,28 +104,107 @@ export async function assignChannel(campaignId: string): Promise<AssignResult> {
   });
 }
 
-/** Release the channel a campaign holds (→ AVAILABLE, close the assignment span). */
-async function releaseInTx(tx: TxClient, campaignId: string): Promise<boolean> {
-  const campaign = await tx.campaign.findUnique({ where: { id: campaignId }, select: { channelId: true } });
-  if (!campaign?.channelId) return false;
-  await tx.channel.update({
-    where: { id: campaign.channelId },
-    data: { status: 'AVAILABLE', currentCampaignId: null, lockedForDay: null, assignedAt: null },
-  });
-  await tx.channelAssignment.updateMany({
-    where: { channelRef: campaign.channelId, campaignId, releasedAt: null },
-    data: { releasedAt: new Date() },
-  });
-  await tx.campaign.update({ where: { id: campaignId }, data: { channelId: null } });
-  return true;
+/**
+ * Per-offer channel assignment (Phase E). A campaign's PAID offers each get a channel
+ * from THEIR OWN domain's allocation, so AFS revenue attributes per offer/website. Claims
+ * are atomic + concurrency-safe (`FOR UPDATE SKIP LOCKED` per domain pool) and
+ * **all-or-nothing**: if any PAID offer's domain pool is exhausted, the whole txn rolls
+ * back and the campaign is queued (QUEUED_NO_CHANNEL) — never partially assigned.
+ * Idempotent: offers that already hold a channel are left untouched.
+ */
+export async function assignOfferChannels(campaignId: string): Promise<AssignResult> {
+  try {
+    return await withSystem(async (tx) => {
+      const campaign = await tx.campaign.findUnique({ where: { id: campaignId }, select: { orgId: true, status: true } });
+      if (!campaign) return { assigned: false };
+
+      const paidOffers = await tx.offer.findMany({ where: { campaignId, kind: 'PAID' }, select: { id: true, domainId: true, channelRef: true } });
+      if (paidOffers.length === 0) return { assigned: false };
+      const needing = paidOffers.filter((o) => !o.channelRef);
+      if (needing.length === 0) return { assigned: true, channelRefs: paidOffers.map((o) => o.channelRef!).filter(Boolean) };
+
+      const day = currentBusinessDay();
+      const claimedRefs: string[] = [];
+      for (const offer of needing) {
+        // Atomically claim one available channel FROM THIS OFFER'S DOMAIN; concurrent
+        // claims skip each other's locked rows (zero double-assignment across offers).
+        const rows = await tx.$queryRawUnsafe<{ id: string }[]>(
+          `SELECT id FROM channels WHERE status = 'AVAILABLE' AND domain_id = $1::uuid
+           ORDER BY created_at ASC, id ASC
+           FOR UPDATE SKIP LOCKED LIMIT 1`,
+          offer.domainId,
+        );
+        const claimed = rows[0];
+        if (!claimed) throw new OfferPoolExhausted(); // roll back every claim in this txn
+        await tx.channel.update({
+          where: { id: claimed.id },
+          data: { status: 'ASSIGNED', currentCampaignId: campaignId, lockedForDay: day, assignedAt: new Date() },
+        });
+        await tx.channelAssignment.create({ data: { orgId: campaign.orgId, channelRef: claimed.id, campaignId, forDay: day } });
+        await tx.offer.update({ where: { id: offer.id }, data: { channelRef: claimed.id } });
+        claimedRefs.push(claimed.id);
+      }
+      if (canTransitionCampaign(campaign.status, CAMPAIGN_STATUS.PROCESSING)) {
+        await tx.campaign.update({ where: { id: campaignId }, data: { status: CAMPAIGN_STATUS.PROCESSING } });
+      }
+      await tx.campaignQueue.updateMany({ where: { campaignId }, data: { status: 'ASSIGNED', assignedAt: new Date() } });
+      return { assigned: true, channelRefs: claimedRefs };
+    });
+  } catch (err) {
+    if (!(err instanceof OfferPoolExhausted)) throw err;
+    // A domain pool was exhausted → the assign txn rolled back; enqueue for a retry.
+    await withSystem(async (tx) => {
+      const c = await tx.campaign.findUnique({ where: { id: campaignId }, select: { orgId: true, status: true } });
+      if (!c) return;
+      await tx.campaignQueue.upsert({ where: { campaignId }, create: { orgId: c.orgId, campaignId, status: 'WAITING' }, update: { status: 'WAITING' } });
+      if (canTransitionCampaign(c.status, CAMPAIGN_STATUS.QUEUED_NO_CHANNEL)) {
+        await tx.campaign.update({ where: { id: campaignId }, data: { status: CAMPAIGN_STATUS.QUEUED_NO_CHANNEL } });
+      }
+    });
+    return { assigned: false };
+  }
 }
 
-/** Release a campaign's channel, then hand the freed channel to the next waiter. */
+/**
+ * Dispatch assignment by campaign shape: a campaign with PAID offers (Phase E) gets a
+ * channel per offer from each offer's domain pool; a legacy campaign gets one channel
+ * from the global pool. Both paths are concurrency-safe and idempotent.
+ */
+export async function assignForCampaign(campaignId: string): Promise<AssignResult> {
+  const paidCount = await withSystem((tx) => tx.offer.count({ where: { campaignId, kind: 'PAID' } }));
+  return paidCount > 0 ? assignOfferChannels(campaignId) : assignChannel(campaignId);
+}
+
+/**
+ * Release one channel row → AVAILABLE: close its open attribution span, clear the offer
+ * that pointed at it (Phase E) and the legacy `campaign.channelId` that held it. Used by
+ * both the explicit release path and the midnight rollover (per channel).
+ */
+async function releaseChannelRow(tx: TxClient, channelId: string): Promise<void> {
+  await tx.channel.update({
+    where: { id: channelId },
+    data: { status: 'AVAILABLE', currentCampaignId: null, lockedForDay: null, assignedAt: null },
+  });
+  await tx.channelAssignment.updateMany({ where: { channelRef: channelId, releasedAt: null }, data: { releasedAt: new Date() } });
+  await tx.offer.updateMany({ where: { channelRef: channelId }, data: { channelRef: null } });
+  await tx.campaign.updateMany({ where: { channelId }, data: { channelId: null } });
+}
+
+/** Release EVERY channel a campaign holds (legacy single + all offer channels). */
+async function releaseAllForCampaign(tx: TxClient, campaignId: string): Promise<boolean> {
+  const held = await tx.channel.findMany({ where: { currentCampaignId: campaignId }, select: { id: true } });
+  for (const ch of held) await releaseChannelRow(tx, ch.id);
+  // Defensive: clear a dangling legacy ref even if its channel row was already freed.
+  await tx.campaign.updateMany({ where: { id: campaignId }, data: { channelId: null } });
+  return held.length > 0;
+}
+
+/** Release a campaign's channel(s), then hand the freed channel(s) to the next waiter(s). */
 export async function releaseChannelForCampaign(
   campaignId: string,
   onAssigned?: OnAssigned,
 ): Promise<{ released: boolean }> {
-  const released = await withSystem((tx) => releaseInTx(tx, campaignId));
+  const released = await withSystem((tx) => releaseAllForCampaign(tx, campaignId));
   if (released) await processQueue(onAssigned);
   return { released };
 }
@@ -136,7 +223,7 @@ export async function processQueue(onAssigned?: OnAssigned): Promise<number> {
       tx.campaignQueue.findFirst({ where: { status: 'WAITING' }, orderBy: { enqueuedAt: 'asc' }, select: { campaignId: true } }),
     );
     if (!next) break;
-    const result = await assignChannel(next.campaignId);
+    const result = await assignForCampaign(next.campaignId);
     if (!result.assigned) break; // pool exhausted — leave the rest queued
     assigned += 1;
     if (onAssigned) {
@@ -174,8 +261,8 @@ export async function rolloverChannels(
       const holds = campaign != null && HOLDING_STATUSES.includes(campaign.status);
 
       if (!holds) {
-        if (ch.currentCampaignId) await releaseInTx(tx, ch.currentCampaignId);
-        else await tx.channel.update({ where: { id: ch.id }, data: { status: 'AVAILABLE', lockedForDay: null, assignedAt: null } });
+        // Release THIS channel row (handles multi-channel offers campaigns per-channel).
+        await releaseChannelRow(tx, ch.id);
         released += 1;
       } else if (ch.lockedForDay !== today && ch.currentCampaignId && campaign) {
         // New IST day: close yesterday's span, open today's, renew the lock.
