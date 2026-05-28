@@ -35,7 +35,7 @@ import {
 } from '@knn/shared';
 import { ApiError, campaigns as campaignsApi, facebook, uploads as uploadsApi } from '@/lib/api';
 import { type Campaign, type FbAccount, type FbPage, type FbPixel } from '@/lib/types';
-import { Button, Card, Spinner } from './ui';
+import { Button, Card, SearchSelect, Spinner } from './ui';
 import styles from './campaign-wizard.module.css';
 
 interface AdForm {
@@ -650,25 +650,23 @@ function OfferStep({ form, patch, accounts, pages }: { form: CampaignForm; patch
         </div>
         <div className={styles.field}>
           <label className={styles.label}>Ad account</label>
-          <select className={styles.select} value={form.adAccountId} onChange={(e) => patch({ adAccountId: e.target.value, pageId: '' })}>
-            <option value="">Select an ad account…</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name} ({a.currency})
-              </option>
-            ))}
-          </select>
+          <SearchSelect
+            value={form.adAccountId}
+            onChange={(v) => patch({ adAccountId: v, pageId: '' })}
+            placeholder="Search ad accounts…"
+            options={accounts.map((a) => ({ value: a.id, label: a.name, sublabel: `${a.fbAccountId} · ${a.currency}` }))}
+          />
         </div>
         <div className={styles.field}>
           <label className={styles.label}>Page</label>
-          <select className={styles.select} value={form.pageId} onChange={(e) => patch({ pageId: e.target.value })} disabled={!form.adAccountId}>
-            <option value="">{form.adAccountId ? 'Select a page…' : 'Pick an ad account first'}</option>
-            {pages.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+          <SearchSelect
+            value={form.pageId}
+            onChange={(v) => patch({ pageId: v })}
+            disabled={!form.adAccountId}
+            placeholder={form.adAccountId ? 'Search pages…' : 'Pick an ad account first'}
+            options={pages.map((p) => ({ value: p.id, label: p.name, sublabel: p.fbPageId }))}
+            emptyText="This ad account can't promote any Page yet. In Meta Business Settings, connect a Page to this ad account (Business settings → Ad accounts → Connected assets), then click Re-sync on the Facebook tab."
+          />
         </div>
         <div className={styles.field}>
           <label className={styles.label}>RAC (Related Ad Category)</label>

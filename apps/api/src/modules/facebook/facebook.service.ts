@@ -392,6 +392,10 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
   }
 
   const connectionId = account.connection.id;
+  // `promote_pages` is Facebook's authoritative list of pages THIS ad account may
+  // advertise — we deliberately do NOT fall back to the connection's other pages,
+  // because a page the account can't promote would fail at launch. An empty result
+  // means the page isn't linked to the account yet (the UI guides the buyer to fix it).
   return runScoped(auth, async (tx) => {
     const rows = [];
     for (const p of pages) {
@@ -403,16 +407,6 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
           select: { id: true, fbPageId: true, name: true, instagramId: true },
         }),
       );
-    }
-    // Fresh ad accounts often expose no `promote_pages` even though the profile
-    // manages pages — fall back to the connection's synced pages so the buyer can
-    // still pick one (Facebook validates the page↔account pairing at launch).
-    if (rows.length === 0) {
-      return tx.fbPage.findMany({
-        where: { connectionId },
-        orderBy: { name: 'asc' },
-        select: { id: true, fbPageId: true, name: true, instagramId: true },
-      });
     }
     return rows;
   });
