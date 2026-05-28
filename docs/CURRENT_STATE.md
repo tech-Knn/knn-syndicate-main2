@@ -2,9 +2,9 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-28 — **Conversion tracking (D20) CODE COMPLETE** (full monorepo typecheck+lint+test+build green; NOT yet committed/deployed). The funnel is now end-to-end: `/search` infers the AFS final-ad click → beacons `POST /api/events` → resolves click→pixel+buyer-token → fires **Facebook CAPI S2S** via the worker. Also done this session: **Phase 9 (stats & revenue, D8/D15) + OpenAI article generator** (deployed to staging). Phases 0–8 done; legacy Node redirect retired (#18). Articles generate via **OpenAI `gpt-4.1-mini`**; needs `OPENAI_API_KEY`. Next: Phase 10 (dashboards). **Live deps:** AdSense AFS + Google OAuth (#4/#13, `@knn/adsense` dormant); CF KV token (click-log + redirect sync), FB test account, `NEXT_PUBLIC_EVENTS_URL` (conversion beacon), OPENAI/INTERNAL_API_* envs._
+_Last updated: 2026-05-28 — **Conversion tracking (D20) DEPLOYED to staging** (commit `8eae32e`; gate green; `conversion_events` migration applied on the box, `/api/events` live + returns 204, article rebuilt with `NEXT_PUBLIC_EVENTS_URL` baked into the `/search` bundle, worker CAPI_DISPATCH consumer running). The funnel is now end-to-end: `/search` infers the AFS final-ad click → beacons `POST /api/events` → resolves click→pixel+buyer-token → fires **Facebook CAPI S2S** via the worker. **Back-end click resolution is inert on staging until `CLOUDFLARE_*` (KV) is set + the edge Worker is redeployed via wrangler** (verified: the beacon 204s and logs `KvNotConfiguredError`, as designed). Also done this session: **Phase 9 (stats & revenue, D8/D15) + OpenAI article generator** (deployed to staging). Phases 0–8 done; legacy Node redirect retired (#18). Articles generate via **OpenAI `gpt-4.1-mini`**; needs `OPENAI_API_KEY`. Next: Phase 10 (dashboards). **Live deps:** AdSense AFS + Google OAuth (#4/#13, `@knn/adsense` dormant); CF KV token (click-log + redirect sync), FB test account, `NEXT_PUBLIC_EVENTS_URL` (conversion beacon), OPENAI/INTERNAL_API_* envs._
 
-## Conversion tracking — D20 (code complete; gate green; NOT yet committed/deployed)
+## Conversion tracking — D20 (committed `8eae32e`; DEPLOYED to staging; back-end inert pending CF KV token)
 
 End-to-end FB conversion signal. The final ads sit in a cross-origin Google iframe so we **infer** the
 click the way production AFS trackers (ClickFlare) do, then fire **Facebook Conversions API (CAPI) S2S**.
@@ -35,8 +35,15 @@ click the way production AFS trackers (ClickFlare) do, then fire **Facebook Conv
 - **New code:** `@knn/shared/conversions.ts` (`pxeToFbEvent`, `buildFbc`), `@knn/fb/capi.ts`,
   `QUEUES.CAPI_DISPATCH`. **Gate green:** typecheck 12 ✓, lint 12 ✓, test (worker 35 incl. capi-dispatch 5,
   api 67 incl. events 4, fb 23 incl. capi 3, shared 57 incl. conversions 4), build 4 ✓.
-- **To go live (deploy):** set `NEXT_PUBLIC_EVENTS_URL=https://app.staging.rsoc.app/api/events` (build arg,
-  rebuild article), and `CLOUDFLARE_*`/`CF_KV_NAMESPACE_ID` on the edge so the click-log KV write lands.
+- **Deployed (2026-05-28):** shipped `8eae32e` to the box, set `NEXT_PUBLIC_EVENTS_URL=https://app.staging.rsoc.app/api/events`
+  in `.env.staging`, rebuilt the image (article bundle confirmed to inline the URL), `up -d` ran the
+  `conversion_events` migration (RLS=true, pgvector index intact). Smoke: `POST /api/events` → 204;
+  `/api/internal` still 403; worker boots the CAPI consumer cleanly.
+- **Remaining to actually FIRE conversions on staging (external/secret — user's step):** (1) create a
+  Cloudflare API token (Workers KV: Edit) + set `CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_API_TOKEN`/`CF_KV_NAMESPACE_ID`
+  in `.env.staging` and recreate `api`+`worker` (so `readClick`/launch KV-sync work); (2) `wrangler deploy`
+  the edge redirect Worker (`apps/redirect`) so it writes `click:{txid}` to KV. Until both, the beacon 204s
+  but the server can't resolve the click (logs `KvNotConfiguredError`) → no CAPI fires.
 
 ## Article generation — OpenAI (Phase 9.5, amends D16)
 
