@@ -46,3 +46,7 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
 meta-rejection, attribution), so `vitest.config.ts` sets `fileParallelism: false` — don't re-enable
 it or files will leak fixtures into each other's scans. (Cross-*package* concurrency can still surface
 a caught "FB stats pull failed" log from a foreign campaign — benign; per-campaign errors are caught.)
+**Never assert on a GLOBAL aggregate** (e.g. `rolloverChannels().released`, the `processQueue()` count) —
+the api package's tests run concurrently against the same DB and can inflate it. Assert your own fixtures'
+observable state instead (your channel's `currentCampaignId`/status, your campaign's `channelId`, your
+attribution spans). Phase 11 relaxed the rollover/queue tests this way; the api+worker concurrent run is green.

@@ -37,6 +37,10 @@ const EnvSchema = z.object({
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),
 
+  // Rate limiting (Phase 11) — per-IP/min. Auth endpoints get a tighter cap (brute-force).
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(200),
+  RATE_LIMIT_AUTH_MAX: z.coerce.number().int().positive().default(20),
+
   // Ports
   API_PORT: z.coerce.number().int().positive().default(3000),
   ARTICLE_PORT: z.coerce.number().int().positive().default(3001),

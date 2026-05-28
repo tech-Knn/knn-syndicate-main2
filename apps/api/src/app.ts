@@ -1,8 +1,11 @@
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import multipart from '@fastify/multipart';
+import rateLimit, { type RateLimitPluginOptions } from '@fastify/rate-limit';
 import sensible from '@fastify/sensible';
-import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from 'fastify';
+import type { Redis } from 'ioredis';
+import { createConnection } from '@knn/queue';
 import { env, rootVersion } from '@knn/config';
 import { adminRoutes } from './modules/admin/admin.routes.js';
 import { adsenseRoutes } from './modules/adsense/adsense.routes.js';
@@ -31,6 +34,36 @@ function loggerOptions(): FastifyServerOptions['logger'] {
   return { level: env.LOG_LEVEL };
 }
 
+/** Paths exempt from rate limiting: infra/edge callers (Caddy on-demand-TLS ask + the
+ *  article SSR site-config, the worker's internal launch, health, Bull-Board). */
+export function isRateLimitExempt(req: FastifyRequest): boolean {
+  const path = req.url.split('?')[0] ?? '';
+  return (
+    path === '/' ||
+    path.startsWith('/health') ||
+    path.startsWith('/admin/queues') ||
+    path.startsWith('/api/public') ||
+    path.startsWith('/api/internal')
+  );
+}
+
+/**
+ * Global rate-limit config (Phase 11). `skipOnError` fails OPEN — a Redis blip never
+ * takes the API down. With no `redis` (tests) it uses the in-memory store. Sensitive
+ * auth routes tighten the cap per-route (see auth.routes.ts).
+ */
+export function rateLimitOptions(redis?: Redis): RateLimitPluginOptions {
+  return {
+    global: true,
+    max: env.RATE_LIMIT_MAX,
+    timeWindow: '1 minute',
+    ...(redis ? { redis } : {}),
+    nameSpace: 'knn-rl:',
+    skipOnError: true,
+    allowList: (req) => isRateLimitExempt(req),
+  };
+}
+
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: loggerOptions(),
@@ -42,6 +75,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(cors, { origin: [env.WEB_DOMAIN], credentials: true });
   await app.register(sensible);
   await app.register(multipart, { limits: { fileSize: 200 * 1024 * 1024, files: 1 } });
+
+  // Per-IP rate limiting (Phase 11), Redis-backed so it's shared across API replicas.
+  // Skipped under `test` so the integration suite (many logins from one IP) isn't
+  // throttled; the behaviour itself is covered by rate-limit.test.ts.
+  if (env.NODE_ENV !== 'test') {
+    await app.register(rateLimit, rateLimitOptions(createConnection()));
+  }
 
   app.get('/', async () => ({
     name: 'knn-api',

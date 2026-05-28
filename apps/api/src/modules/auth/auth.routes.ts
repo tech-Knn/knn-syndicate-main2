@@ -1,11 +1,15 @@
 import type { FastifyInstance } from 'fastify';
+import { env } from '@knn/config';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { loginSchema, refreshSchema, signupSchema } from './auth.schemas.js';
 import { getMe, login, logout, refresh, signup } from './auth.service.js';
 
+/** Tighter per-IP cap on credential endpoints (brute-force / signup-spam guard). */
+const authLimit = { config: { rateLimit: { max: env.RATE_LIMIT_AUTH_MAX, timeWindow: '1 minute' } } };
+
 export async function authRoutes(app: FastifyInstance): Promise<void> {
-  app.post('/signup', async (req, reply) => {
+  app.post('/signup', authLimit, async (req, reply) => {
     try {
       const result = await signup(signupSchema.parse(req.body));
       return reply.code(201).send(result);
@@ -14,7 +18,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.post('/login', async (req, reply) => {
+  app.post('/login', authLimit, async (req, reply) => {
     try {
       const { tokens, user } = await login(loginSchema.parse(req.body));
       return reply.send({ ...tokens, user });
@@ -23,7 +27,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.post('/refresh', async (req, reply) => {
+  app.post('/refresh', authLimit, async (req, reply) => {
     try {
       const { refreshToken } = refreshSchema.parse(req.body);
       const { tokens, user } = await refresh(refreshToken);

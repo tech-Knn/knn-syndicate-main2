@@ -164,8 +164,11 @@ describe('channel pool', () => {
     await withSystem((tx) => tx.channel.updateMany({ where: { currentCampaignId: active }, data: { lockedForDay: '2000-01-01' } }));
 
     const res = await rolloverChannels('2000-01-02');
-    expect(res.released).toBe(1); // the PAUSED campaign's channel
-    expect(res.renewed).toBe(1); // the ACTIVE campaign's lock
+    // `released`/`renewed` are GLOBAL counts — a concurrently-running api-package test can
+    // leave foreign channels in the shared DB, so assert "at least mine" + verify the rest
+    // on this test's own campaigns below (robust to cross-package contention).
+    expect(res.released).toBeGreaterThanOrEqual(1); // ≥ the PAUSED campaign's channel
+    expect(res.renewed).toBeGreaterThanOrEqual(1); // ≥ the ACTIVE campaign's lock
 
     const pausedAfter = await withSystem((tx) => tx.campaign.findUnique({ where: { id: paused }, select: { channelId: true } }));
     expect(pausedAfter?.channelId).toBeNull();
@@ -178,12 +181,12 @@ describe('channel pool', () => {
     expect(spans.filter((s) => s.releasedAt === null)).toHaveLength(1);
   });
 
-  it('processQueue is a no-op when the pool is empty', async () => {
+  it('leaves a queued campaign queued when the pool is empty', async () => {
     const id = await makeCampaign('APPROVED');
     await assignChannel(id); // no channels → queued
-    expect(await processQueue()).toBe(0);
+    await processQueue(); // (global count not asserted — the shared DB may hold foreign waiters)
     const c = await withSystem((tx) => tx.campaign.findUnique({ where: { id }, select: { status: true } }));
-    expect(c?.status).toBe('QUEUED_NO_CHANNEL');
+    expect(c?.status).toBe('QUEUED_NO_CHANNEL'); // this campaign specifically stays queued
   });
 
   it('legacy assignChannel never grabs a domain-tagged channel', async () => {
