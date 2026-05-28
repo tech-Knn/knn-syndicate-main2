@@ -164,7 +164,7 @@ export default function CompaniesPage() {
                   <tr key={o.id}>
                     <td>
                       <div className={styles.name}>{o.name}</div>
-                      <div className={styles.subtle}>{o.status.toLowerCase()}</div>
+                      <div className={styles.subtle}>{o.isPlatform ? 'platform (KNN staff)' : o.status.toLowerCase()}</div>
                     </td>
                     <td className="mono">{o.slug}</td>
                     <td className={styles.num}>{o.adminCount}</td>
@@ -182,9 +182,13 @@ export default function CompaniesPage() {
                     </td>
                     <td>
                       <div className={styles.actions}>
-                        <button type="button" className={styles.actionBtn} onClick={() => openAddUser(o)}>
-                          Add user
-                        </button>
+                        {o.isPlatform ? (
+                          <span className={styles.subtle}>—</span>
+                        ) : (
+                          <button type="button" className={styles.actionBtn} onClick={() => openAddUser(o)}>
+                            Add user
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

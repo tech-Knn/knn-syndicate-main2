@@ -83,6 +83,7 @@ export interface OrgRow {
   name: string;
   slug: string;
   status: string;
+  isPlatform: boolean;
   autoApprove: boolean;
   autoLaunch: boolean;
   buyerCount: number;
@@ -95,8 +96,13 @@ export interface OrgRow {
 export async function addOrgUser(actor: AuthContext, orgId: string, input: AddOrgUserInput): Promise<PublicUser> {
   const passwordHash = await hashPassword(input.password);
   return withSystem(async (tx) => {
-    const org = await tx.organization.findUnique({ where: { id: orgId }, select: { id: true } });
+    const org = await tx.organization.findUnique({ where: { id: orgId }, select: { id: true, isPlatform: true } });
     if (!org) throw new AppError(404, 'Company not found');
+    if (org.isPlatform) {
+      // The platform org holds SUPER_ADMIN staff only — never client admins/buyers.
+      // Create a real company (its own org + slug) for clients instead.
+      throw new AppError(400, 'Cannot add company users to the platform organization. Create a company instead.');
+    }
     if (await tx.user.findUnique({ where: { email: input.email } })) {
       throw new AppError(409, 'Email already registered');
     }
@@ -135,6 +141,7 @@ export async function listOrganizations(): Promise<OrgRow[]> {
       name: o.name,
       slug: o.slug,
       status: o.status,
+      isPlatform: o.isPlatform,
       autoApprove: o.autoApprove,
       autoLaunch: o.autoLaunch,
       buyerCount: buyerByOrg.get(o.id) ?? 0,
@@ -220,7 +227,11 @@ export async function setOrgAutoLaunch(
 
 export async function listUsers(actor: AuthContext): Promise<PublicUser[]> {
   return runScoped(actor, async (tx) => {
-    const users = await tx.user.findMany({ orderBy: { createdAt: 'desc' } });
+    // Super-admins are platform staff, not org members: a COMPANY_ADMIN must never
+    // see (or be offered actions on) a super-admin, even if one happens to share
+    // their org. Only super-admins can see other super-admins.
+    const where = actor.role === ROLES.SUPER_ADMIN ? {} : { role: { not: ROLES.SUPER_ADMIN } };
+    const users = await tx.user.findMany({ where, orderBy: { createdAt: 'desc' } });
     return users.map(toPublicUser);
   });
 }

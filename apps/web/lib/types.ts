@@ -218,6 +218,7 @@ export interface OrgRow {
   name: string;
   slug: string;
   status: string;
+  isPlatform: boolean;
   autoApprove: boolean;
   autoLaunch: boolean;
   buyerCount: number;
