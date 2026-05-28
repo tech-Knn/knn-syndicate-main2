@@ -9,7 +9,23 @@ import {
   type SyncResult,
   type UploadResult,
 } from './types';
-import { type CampaignDraftInput } from '@knn/shared';
+import {
+  type CampaignBreakdown,
+  type CampaignDraftInput,
+  type CampaignPerf,
+  type StatsSummary,
+} from '@knn/shared';
+
+type RangeArg = { from?: string; to?: string } | undefined;
+
+function rangeQs(range: RangeArg): string {
+  if (!range) return '';
+  const p = new URLSearchParams();
+  if (range.from) p.set('from', range.from);
+  if (range.to) p.set('to', range.to);
+  const s = p.toString();
+  return s ? `?${s}` : '';
+}
 
 // Empty base = same-origin (staging: Caddy routes /api/* to the API). For local
 // dev against the API on :3000, set NEXT_PUBLIC_API_BASE=http://localhost:3000.
@@ -290,6 +306,16 @@ export const admin = {
         }),
       )
     ).organization,
+};
+
+export const stats = {
+  summary: async (range?: RangeArg): Promise<StatsSummary> =>
+    parse(await authedFetch(`/api/stats/summary${rangeQs(range)}`)),
+  campaigns: async (range?: RangeArg): Promise<CampaignPerf[]> =>
+    (await parse<{ campaigns: CampaignPerf[] }>(await authedFetch(`/api/stats/campaigns${rangeQs(range)}`)))
+      .campaigns,
+  campaignBreakdown: async (id: string, range?: RangeArg): Promise<CampaignBreakdown> =>
+    parse(await authedFetch(`/api/stats/campaigns/${id}${rangeQs(range)}`)),
 };
 
 export const uploads = {

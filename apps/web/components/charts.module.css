@@ -1,0 +1,74 @@
+.chartWrap {
+  position: relative;
+  width: 100%;
+}
+
+.svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+.spark {
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: 0.85;
+}
+
+.tip {
+  position: absolute;
+  top: 4px;
+  pointer-events: none;
+  background: rgba(20, 20, 24, 0.92);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(8px);
+  z-index: 5;
+}
+
+.tipDay {
+  font-family: var(--font-mono);
+  color: var(--muted);
+  margin-bottom: 4px;
+  letter-spacing: 0.02em;
+}
+
+.tipRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.tipRow strong {
+  color: var(--cream);
+  margin-left: auto;
+  font-family: var(--font-mono);
+}
+
+.dotRev,
+.dotSpend {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.dotRev {
+  background: var(--gold);
+}
+.dotSpend {
+  background: var(--rust);
+}
+
+.pos {
+  color: var(--green) !important;
+}
+.neg {
+  color: var(--red) !important;
+}

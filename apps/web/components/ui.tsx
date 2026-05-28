@@ -74,6 +74,68 @@ export function Badge({
   );
 }
 
+const subTone: Record<'pos' | 'neg' | 'neutral', string> = {
+  pos: styles['sub-pos'] ?? '',
+  neg: styles['sub-neg'] ?? '',
+  neutral: '',
+};
+
+export function StatTile({
+  label,
+  value,
+  sub,
+  tone = 'neutral',
+  spark,
+}: {
+  label: string;
+  value: ReactNode;
+  sub?: ReactNode;
+  tone?: 'pos' | 'neg' | 'neutral';
+  spark?: ReactNode;
+}) {
+  return (
+    <div className={styles.stat}>
+      <span className={styles.statLabel}>{label}</span>
+      <span className={styles.statValue}>{value}</span>
+      <div className={styles.statFoot}>
+        {sub != null && <span className={`${styles.statSub} ${subTone[tone]}`}>{sub}</span>}
+        {spark && <span className={styles.statSpark}>{spark}</span>}
+      </div>
+    </div>
+  );
+}
+
+export function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: { label: string; value: T }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className={styles.segmented} role="tablist">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="tab"
+          aria-selected={o.value === value}
+          className={`${styles.segItem} ${o.value === value ? styles.segActive : ''}`}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function Skeleton({ className }: { className?: string }) {
+  return <span className={`${styles.skeleton} ${className ?? ''}`} aria-hidden />;
+}
+
 type TextFieldProps = InputHTMLAttributes<HTMLInputElement> & { label: string };
 
 export function TextField({ label, id, ...rest }: TextFieldProps) {
