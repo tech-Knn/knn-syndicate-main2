@@ -63,6 +63,15 @@ $C run --rm migrate   # re-run migrations/bootstrap/seed only
 $C down               # stop (keeps volumes/data)
 ```
 
+**Caddyfile changes:** after a deploy overwrites `deploy/Caddyfile`, a `caddy reload`
+or `docker compose restart caddy` does **not** reliably pick up the change (the running
+config stays stale). Validate, then **force-recreate** the container:
+```bash
+$C exec -T caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+$C up -d --force-recreate caddy
+```
+Certs persist in the `knn_caddydata` volume, so recreate doesn't re-issue TLS.
+
 **Backups:** `docker compose ... exec -T postgres pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" | gzip > backup-$(date +%F).sql.gz` (schedule daily, 7-day retention — Phase 11). **Restore:** `gunzip -c backup.sql.gz | docker compose ... exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"`.
 
 ## Security notes
