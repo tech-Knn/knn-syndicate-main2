@@ -431,7 +431,7 @@ export const domains = {
     parse(await authedFetch(`/api/domains/${id}/sync`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ ranges }) })),
   // Browse the AFS account's channels by name/id (pick which to use), then import/remove.
   afsChannels: async (id: string, q?: string, range?: string): Promise<{ channels: AfsChannelRow[]; scanned: number; total: number; truncated: boolean }> =>
-    parse(await authedFetch(`/api/domains/${id}/afs-channels?q=${encodeURIComponent(q ?? '')}&range=${encodeURIComponent(range ?? '')}`)),
+    parse(await authedFetch(`/api/domains/${id}/afs-channels?q=${encodeURIComponent(q ?? '')}&range=${encodeURIComponent(range ?? '')}&limit=2000`)),
   setChannels: async (id: string, sel: { add?: { channelId: string; label?: string }[]; remove?: string[] }): Promise<{ added: number; removed: number }> =>
     parse(await authedFetch(`/api/domains/${id}/afs-channels`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(sel) })),
   importAllChannels: async (id: string, q?: string, range?: string): Promise<{ added: number; matched: number; scanned: number; cappedAt?: number }> =>

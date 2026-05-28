@@ -324,13 +324,14 @@ export default function DomainsPage() {
           </div>
           <p className={styles.fieldHint}>
             Pick which channels this website uses — the name is just a label, the channel id is what monetizes.
-            To bulk-assign a block, enter an <strong>id range</strong> (e.g. <span className="mono">00500-01499</span>)
-            and click <strong>Import range</strong>. The table previews the first {chMeta ? Math.min(chMeta.total, 300) : 300};
-            &ldquo;Import range&rdquo; imports <em>all</em> matches, not just the shown rows.{' '}
+            To bulk-assign a block, enter an <strong>id range</strong> (e.g. <span className="mono">00500-01499</span>) →{' '}
+            <strong>Preview</strong> → <strong>Import range</strong> (imports the whole range in one go). Up to 2,000 rows
+            load at once, so &ldquo;select all&rdquo; covers them all; for a larger block, split into ranges.{' '}
             {chMeta && (
               <>
                 Scanned {chMeta.scanned.toLocaleString()}
-                {chMeta.truncated ? '+' : ''} · <strong>{chMeta.total.toLocaleString()} match</strong>.
+                {chMeta.truncated ? '+' : ''} · <strong>{chMeta.total.toLocaleString()} match</strong>
+                {chMeta.truncated ? ' (showing first 2,000 — narrow the range)' : ''}.
               </>
             )}
           </p>

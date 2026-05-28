@@ -388,7 +388,8 @@ export async function listDomainAfsChannels(
   const all = await accountChannelSource(domain.afsAccount, deps);
 
   const filtered = filterChannels(all, opts.q, opts.range);
-  const limit = Math.min(Math.max(opts.limit ?? 300, 1), 1000);
+  // Show up to the import cap so the table == what select-all / import will act on.
+  const limit = Math.min(Math.max(opts.limit ?? 300, 1), 2000);
   const page = filtered.slice(0, limit);
 
   // Mark which of the SHOWN ids are already in our pool (targeted query on ≤limit ids).
