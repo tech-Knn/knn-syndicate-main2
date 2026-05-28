@@ -1,5 +1,6 @@
 import {
   type AdminOrg,
+  type AdsenseStatus,
   type Campaign,
   type ConnectionStatus,
   type FbAccount,
@@ -363,6 +364,14 @@ export const stats = {
   byCompany: async (range?: RangeArg): Promise<CompanyRollup[]> =>
     (await parse<{ companies: CompanyRollup[] }>(await authedFetch(`/api/stats/by-company${rangeQs(range)}`)))
       .companies,
+};
+
+export const adsense = {
+  status: async (): Promise<AdsenseStatus> => parse(await authedFetch('/api/adsense/status')),
+  authUrl: async (): Promise<{ url: string }> => parse(await authedFetch('/api/adsense/auth-url')),
+  sync: async (): Promise<{ synced: number; account: string | null }> =>
+    parse(await authedFetch('/api/adsense/sync', { method: 'POST' })),
+  disconnect: async (): Promise<void> => parse(await authedFetch('/api/adsense/connection', { method: 'DELETE' })),
 };
 
 export const uploads = {

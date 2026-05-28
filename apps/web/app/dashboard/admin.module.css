@@ -185,6 +185,35 @@
   font-size: 0.8rem;
 }
 
+/* AdSense connect card */
+.adsNote {
+  font-size: 0.82rem;
+  color: var(--gold);
+  margin-bottom: 0.7rem;
+}
+.adsBody {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.adsMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--cream);
+}
+.adsMeta .mono {
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+.adsActions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .empty {
   color: var(--muted);
   font-size: 0.9rem;

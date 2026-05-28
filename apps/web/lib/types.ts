@@ -159,6 +159,17 @@ export interface PublicUser {
 
 export type UserAction = 'approve' | 'reject' | 'suspend' | 'reactivate';
 
+export interface AdsenseStatus {
+  connected: boolean;
+  email?: string | null;
+  account?: string | null;
+  adClient?: string | null;
+  status?: string;
+  scopes?: string[];
+  connectedAt?: string;
+  tokenExpiresAt?: string;
+}
+
 export interface UploadResult {
   id: string;
   filename: string;

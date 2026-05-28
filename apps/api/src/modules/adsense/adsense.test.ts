@@ -105,7 +105,7 @@ describe('AdSense connect', () => {
     expect(status.account).toBe('accounts/pub-1');
     expect(status.adClient).toBe('accounts/pub-1/adclients/ca-pub-1');
 
-    const result = await syncChannels({ userId: superId, orgId, role: ROLES.SUPER_ADMIN });
+    const result = await syncChannels({ userId: superId, orgId, role: ROLES.SUPER_ADMIN, status: USER_STATUS.ACTIVE });
     expect(result.synced).toBe(1);
     const ch = await withSystem((tx) => tx.channel.findUnique({ where: { channelId: TEST_CH } }));
     expect(ch?.label).toBe('Auto US');

@@ -11,7 +11,8 @@ import {
   formatUsd,
 } from '@knn/shared';
 import { Badge, Button, Card, Segmented, Skeleton } from '@/components/ui';
-import { admin, stats } from '@/lib/api';
+import { adsense, admin, stats } from '@/lib/api';
+import { type AdsenseStatus } from '@/lib/types';
 import { useAuth } from '../../providers';
 import styles from '../admin.module.css';
 
@@ -37,10 +38,53 @@ export default function PlatformPage() {
   const [cuts, setCuts] = useState<Record<string, string>>({});
   const [savingSettings, setSavingSettings] = useState(false);
   const [savedAt, setSavedAt] = useState(false);
+  const [ads, setAds] = useState<AdsenseStatus | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [adsNote, setAdsNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (user && user.role !== 'SUPER_ADMIN') router.replace('/dashboard');
   }, [user, router]);
+
+  // Surface the OAuth return (?adsense=connected / ?adsense_error=…).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('adsense') === 'connected') setAdsNote('AdSense connected. Sync channels to populate the pool.');
+    else if (p.get('adsense_error')) setAdsNote(`AdSense connect failed: ${p.get('adsense_error')}`);
+  }, []);
+
+  const loadChannels = useCallback(() => {
+    void admin.channels().then(setChannels).catch(() => setChannels([]));
+  }, []);
+
+  const connectAdsense = async (): Promise<void> => {
+    try {
+      const { url } = await adsense.authUrl();
+      window.location.href = url;
+    } catch {
+      setAdsNote('Google/AdSense is not configured on the server yet.');
+    }
+  };
+
+  const syncAdsense = async (): Promise<void> => {
+    setSyncing(true);
+    try {
+      const r = await adsense.sync();
+      setAdsNote(`Synced ${r.synced} channel${r.synced === 1 ? '' : 's'} from ${r.account ?? 'AdSense'}.`);
+      loadChannels();
+    } catch {
+      setAdsNote('Channel sync failed — confirm AFS access is granted, then retry.');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const disconnectAdsense = async (): Promise<void> => {
+    await adsense.disconnect().catch(() => undefined);
+    setAds({ connected: false });
+    setAdsNote('AdSense disconnected.');
+  };
 
   const loadCompanies = useCallback(async (key: string) => {
     setCompanies(null);
@@ -57,9 +101,10 @@ export default function PlatformPage() {
     void loadCompanies(rangeKey);
   }, [rangeKey, loadCompanies]);
   useEffect(() => {
-    void admin.channels().then(setChannels).catch(() => setChannels([]));
+    loadChannels();
     void admin.settings().then(setSettings).catch(() => setSettings({ compliancePrompt: '', articleDomain: '', redirectDomain: '' }));
-  }, []);
+    void adsense.status().then(setAds).catch(() => setAds({ connected: false }));
+  }, [loadChannels]);
 
   const persistCut = async (orgId: string): Promise<void> => {
     const pct = Number(cuts[orgId]);
@@ -158,6 +203,50 @@ export default function PlatformPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </Card>
+
+      {/* AdSense connection */}
+      <Card className={styles.section}>
+        <div className={styles.sectionHead}>
+          <span className={styles.sectionTitle}>AdSense connection</span>
+          {ads?.connected ? (
+            <Badge tone={ads.status === 'CONNECTION_BROKEN' ? 'danger' : 'success'} dot>
+              {ads.status === 'CONNECTION_BROKEN' ? 'Reconnect needed' : 'Connected'}
+            </Badge>
+          ) : (
+            <Badge tone="neutral">Not connected</Badge>
+          )}
+        </div>
+        {adsNote && <p className={styles.adsNote}>{adsNote}</p>}
+        {ads?.connected ? (
+          <div className={styles.adsBody}>
+            <div className={styles.adsMeta}>
+              {ads.email && (
+                <span>
+                  <span className={styles.subtle}>Account</span> {ads.email}
+                </span>
+              )}
+              {ads.account && <span className="mono">{ads.account}</span>}
+              {!ads.account && <span className={styles.subtle}>No AFS account resolved — reconnect once AFS access is granted.</span>}
+            </div>
+            <div className={styles.adsActions}>
+              <Button onClick={() => void syncAdsense()} loading={syncing} disabled={!ads.account}>
+                Sync channels
+              </Button>
+              <Button variant="ghost" onClick={() => void disconnectAdsense()}>
+                Disconnect
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className={styles.adsBody}>
+            <p className={styles.subtle}>
+              Connect the platform&apos;s Google / AdSense account to pull AFS revenue and seed the channel pool
+              with real channel ids.
+            </p>
+            <Button onClick={() => void connectAdsense()}>Connect AdSense</Button>
           </div>
         )}
       </Card>
