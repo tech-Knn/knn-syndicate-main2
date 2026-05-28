@@ -4,6 +4,7 @@ import { env } from '@knn/config';
 import { QUEUES, closeQueues, createConnection, getQueue } from '@knn/queue';
 import { FINALIZATION } from '@knn/shared';
 import { runFinalization, runHourlyAttribution } from './attribution/attribution.service.js';
+import { type CapiDispatchJob, dispatchConversion } from './capi-dispatch.js';
 import {
   assignChannel,
   processQueue,
@@ -101,6 +102,19 @@ async function main(): Promise<void> {
   });
   fbLaunchWorker.on('failed', (job, err) => {
     console.error(`[worker] ${QUEUES.FB_LAUNCH} job ${job?.id} failed:`, err.message);
+  });
+
+  // Conversion → Facebook CAPI (S2S). Each job takes a pending ConversionEvent,
+  // resolves the buyer's token (campaign → buyer → connection), and fires the
+  // Conversions API to the ad's pixel. Retries with backoff on rate-limit/transient
+  // errors; a broken connection is terminal. Deduped by event_id (the click txid).
+  const capiWorker = new Worker(
+    QUEUES.CAPI_DISPATCH,
+    async (job: Job<CapiDispatchJob>) => dispatchConversion(job.data),
+    { connection, concurrency: 4 },
+  );
+  capiWorker.on('failed', (job, err) => {
+    console.error(`[worker] ${QUEUES.CAPI_DISPATCH} job ${job?.id} failed:`, err.message);
   });
 
   // Meta-rejection polling (D14): FB has no reliable disapproval webhook, so poll
@@ -205,6 +219,7 @@ async function main(): Promise<void> {
     await tokenRefreshWorker.close();
     await channelWorker.close();
     await fbLaunchWorker.close();
+    await capiWorker.close();
     await metaRejectionWorker.close();
     await attributionWorker.close();
     await closeQueues();

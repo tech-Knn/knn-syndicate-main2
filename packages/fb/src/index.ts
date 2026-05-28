@@ -6,3 +6,4 @@ export * from './oauth.js';
 export * from './sync.js';
 export * from './launch.js';
 export * from './insights.js';
+export * from './capi.js';

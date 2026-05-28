@@ -2,7 +2,41 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-28 — **Phase 9 (stats & revenue, D8/D15) + OpenAI article generator CODE COMPLETE** (full monorepo typecheck+lint+test+build green; Phase 9 deployed to staging). Phases 0–8 done; legacy Node redirect retired (#18). Articles now generate via **OpenAI `gpt-4.1-mini`** (reverse-engineered competitor skeleton + JSON output with high-CPC `related_search_terms` → CSA `terms`); needs `OPENAI_API_KEY` set. Next: Phase 10 (dashboards). **Live revenue needs external deps:** AdSense AFS access + a Google OAuth token store (#4/#13) — `@knn/adsense` + attribution math built & tested but the live AFS pull is DORMANT (FB cost stats still populate). Earlier deps apply (CF KV token, FB test account, OPENAI_API_KEY for article gen, INTERNAL_API_* for auto-launch)._
+_Last updated: 2026-05-28 — **Conversion tracking (D20) CODE COMPLETE** (full monorepo typecheck+lint+test+build green; NOT yet committed/deployed). The funnel is now end-to-end: `/search` infers the AFS final-ad click → beacons `POST /api/events` → resolves click→pixel+buyer-token → fires **Facebook CAPI S2S** via the worker. Also done this session: **Phase 9 (stats & revenue, D8/D15) + OpenAI article generator** (deployed to staging). Phases 0–8 done; legacy Node redirect retired (#18). Articles generate via **OpenAI `gpt-4.1-mini`**; needs `OPENAI_API_KEY`. Next: Phase 10 (dashboards). **Live deps:** AdSense AFS + Google OAuth (#4/#13, `@knn/adsense` dormant); CF KV token (click-log + redirect sync), FB test account, `NEXT_PUBLIC_EVENTS_URL` (conversion beacon), OPENAI/INTERNAL_API_* envs._
+
+## Conversion tracking — D20 (code complete; gate green; NOT yet committed/deployed)
+
+End-to-end FB conversion signal. The final ads sit in a cross-origin Google iframe so we **infer** the
+click the way production AFS trackers (ClickFlare) do, then fire **Facebook Conversions API (CAPI) S2S**.
+
+- **Detector** `apps/article/app/search/conversion-tracker.tsx` (client): on a `message` event, fire once
+  if `event.origin` startsWith `https://syndicatedsearch.goog` **and** `document.activeElement` is an
+  `IFRAME` **and** not already fired (`sessionStorage knn_conv_fired`) → `sendBeacon` the public events URL
+  with `click_id`(=txid)/`value`/`currency`/`url`. Inert unless `NEXT_PUBLIC_EVENTS_URL` is set (baked at
+  build — wired through `deploy/Dockerfile` ARG/ENV + compose build args + `.env(.staging).example`).
+- **txid threading:** edge Worker (`apps/redirect/src/worker.ts`) now writes `click:{txid}` →
+  `{redirectId, fbclid, ts}` to KV (`waitUntil`, 7-day TTL) **only when paid && redirect active**. The
+  redirect already threads `txid` → `/a/[slug]` (`related-search-unit.tsx` adds it to the results-page URL)
+  → `/search` (`page.tsx` reads `txid/cv/ccy`) → the beacon. The click id is the multi-tenant join key.
+- **API** `apps/api/src/modules/events/` — public `POST /api/events` (`events.routes.ts`, query-param
+  beacon, always 204, captures ip/ua). `events.service.ts#recordConversion`: KV `readClick` (added to
+  `apps/api/src/lib/kv-sync.ts`) → `Ad`(redirectId) → `orgId`/`AdSet.pixelId`+`pxeEvent`/`campaignId`;
+  persists a `ConversionEvent` (RLS, `clickId @unique` = idempotent) `pending` (pixel resolved) or
+  `skipped` (no pixel); enqueues `CAPI_DISPATCH` (`jobId capi:{id}`, attempts 5, exp backoff) when pending.
+- **Worker** `apps/worker/src/capi-dispatch.ts#dispatchConversion` (CAPI_DISPATCH queue, concurrency 4):
+  loads the event, resolves the **fresh** buyer token (campaign.buyer → `FbConnection`, decrypted —
+  handles rotation since ingest), builds the `CapiEvent` (`event_id=clickId` dedupe, `pxe`→event name,
+  `fbc=fb.1.{ms}.{fbclid}`+ip+ua, value/currency), POSTs `@knn/fb/capi.ts` `sendConversionEvent`
+  (`/{pixelId}/events`). Success → `sent`+`sentAt`. **Terminal `failed`:** no pixel, broken conn (err 190).
+  **Retry (rethrow, stays `pending`):** rate-limit/transient. Already-`sent` → no-op.
+- **Schema:** `ConversionEvent` (migration `20260528100449_conversion_events`, RLS `tenant_isolation`,
+  pgvector DROP stripped) — `clickId @unique`, `pixelFbId`, `eventName`, `valueMinor`/`currency`,
+  `clientIp`/`clientUa`/`eventSourceUrl`/`eventTime`, `status`/`attempts`/`fbResponse`/`sentAt`.
+- **New code:** `@knn/shared/conversions.ts` (`pxeToFbEvent`, `buildFbc`), `@knn/fb/capi.ts`,
+  `QUEUES.CAPI_DISPATCH`. **Gate green:** typecheck 12 ✓, lint 12 ✓, test (worker 35 incl. capi-dispatch 5,
+  api 67 incl. events 4, fb 23 incl. capi 3, shared 57 incl. conversions 4), build 4 ✓.
+- **To go live (deploy):** set `NEXT_PUBLIC_EVENTS_URL=https://app.staging.rsoc.app/api/events` (build arg,
+  rebuild article), and `CLOUDFLARE_*`/`CF_KV_NAMESPACE_ID` on the edge so the click-log KV write lands.
 
 ## Article generation — OpenAI (Phase 9.5, amends D16)
 

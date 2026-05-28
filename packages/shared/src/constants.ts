@@ -76,6 +76,7 @@ export const QUEUES = {
   ATTRIBUTION: 'attribution',
   CHANNEL_MAINTENANCE: 'channel-maintenance',
   FB_LAUNCH: 'fb-launch',
+  CAPI_DISPATCH: 'capi-dispatch',
   TOKEN_REFRESH: 'token-refresh',
   ARTICLE_GENERATION: 'article-generation',
   META_REJECTION_CHECK: 'meta-rejection-check',

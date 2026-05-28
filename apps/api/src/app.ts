@@ -9,6 +9,7 @@ import { publicArticleRoutes } from './modules/articles/articles.routes.js';
 import { internalRoutes } from './modules/internal/internal.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { campaignRoutes } from './modules/campaigns/campaigns.routes.js';
+import { eventsRoutes } from './modules/events/events.routes.js';
 import { facebookRoutes } from './modules/facebook/facebook.routes.js';
 import { uploadRoutes } from './modules/uploads/uploads.routes.js';
 import { registerBullBoard } from './plugins/bull-board.js';
@@ -55,6 +56,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(uploadRoutes, { prefix: '/api/uploads' });
   await app.register(publicArticleRoutes, { prefix: '/api/public/articles' });
   await app.register(internalRoutes, { prefix: '/api/internal' });
+  await app.register(eventsRoutes, { prefix: '/api/events' });
 
   return app;
 }

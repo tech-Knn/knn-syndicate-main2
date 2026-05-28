@@ -659,3 +659,52 @@ model AdRevenueDaily {
   @@index([campaignId, day])
   @@map("ad_revenue_daily")
 }
+
+// ---------------------------------------------------------------------------
+// Conversion tracking (RSOC final ad-click → Facebook Conversions API, S2S).
+// The AFS ad lives in a cross-origin Google iframe, so the client can't see the
+// click directly — the /search page infers it (postMessage from syndicatedsearch.goog
+// + the iframe being the active element) and beacons /api/events with the click id
+// (our `txid`). The server resolves that click → the ad's pixel + the owning buyer's
+// token, records a ConversionEvent, and a worker fires it to FB CAPI (deduped on
+// `clickId` via `event_id`). The transient click→ad/fbclid map lives in edge KV
+// (`click:{txid}`); this row is the durable record + the first-party conversion signal.
+// ---------------------------------------------------------------------------
+
+/// One row per converting click (one final ad-click per click id). `clickId` = the
+/// redirect `txid`; unique so a click converts at most once. Resolved server-side from
+/// the click → never trusts the client for the pixel/token.
+model ConversionEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  orgId          String    @map("org_id") @db.Uuid
+  campaignId     String    @map("campaign_id") @db.Uuid
+  adId           String    @map("ad_id") @db.Uuid
+  /// The redirect click id (txid) — the join key + FB CAPI `event_id` (dedup).
+  clickId        String    @unique @map("click_id")
+  /// Facebook click id (from the original /go click) → builds `fbc` for attribution.
+  fbclid         String?
+  /// Resolved at ingest: the FB pixel id (from the ad set) + the matching event name.
+  pixelFbId      String    @map("pixel_fb_id")
+  eventName      String    @map("event_name")
+  /// Optional conversion value (minor units) + currency for value optimization.
+  valueMinor     Int?      @map("value_minor")
+  currency       String    @default("USD")
+  /// Captured at the conversion beacon for CAPI user_data (the user's request).
+  clientIp       String?   @map("client_ip")
+  clientUa       String?   @map("client_ua")
+  eventSourceUrl String?   @map("event_source_url")
+  /// When the conversion happened (used as CAPI event_time + fbc timestamp basis).
+  eventTime      DateTime  @map("event_time")
+  /// pending → sent (CAPI 200) | failed (exhausted retries).
+  status         String    @default("pending")
+  attempts       Int       @default(0)
+  fbResponse     String?   @map("fb_response")
+  sentAt         DateTime? @map("sent_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([orgId, createdAt])
+  @@index([campaignId, createdAt])
+  @@index([status])
+  @@map("conversion_events")
+}

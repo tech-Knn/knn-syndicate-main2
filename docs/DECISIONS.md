@@ -275,3 +275,41 @@ the approved plan.
 - **Compliance:** `complianceRewriteOpenAI` runs only when an admin `compliance_prompt` is set
   (skipped otherwise — saves a call); raw + compliant are still both stored (audit). Claude variants
   remain in `@knn/ai` but are no longer the default.
+
+### 2026-05-28 — D20: Conversion tracking via inferred AFS click → Facebook CAPI S2S
+
+- **Why it's hard:** the final ads on `/search` render inside a **cross-origin** Google iframe
+  (`syndicatedsearch.goog`), so we cannot observe the monetizing click directly (no DOM access, no
+  callback). This is the single conversion signal we send back to Facebook to optimize the ads.
+- **Detection (matches the production AFS/ClickFlare technique):** a client `message` listener on
+  `/search` treats it as a final-ad click when **all** hold — `event.origin` starts with
+  `https://syndicatedsearch.goog`, `document.activeElement.tagName === 'IFRAME'` (the ad iframe stole
+  focus), and we haven't already fired this session (`sessionStorage knn_conv_fired`). Best-effort, once
+  per session; `sessionStorage` failures degrade open (still fire). Lives in
+  `apps/article/app/search/conversion-tracker.tsx`; inert unless `NEXT_PUBLIC_EVENTS_URL` is set.
+- **The join key is the click id (`txid`), not a cookie.** The edge redirect Worker already mints `txid`
+  per paid click; it now also writes `click:{txid}` → `{redirectId, fbclid, ts}` to Workers KV
+  (`waitUntil`, 7-day TTL) only when the click is **paid and the redirect is active**. `txid` threads
+  redirect → `/a/[slug]` (RelatedSearchUnit) → `/search` → the beacon. This is what makes pixel+token
+  resolution deterministic and multi-tenant-safe.
+- **Beacon → API:** the detector `navigator.sendBeacon`s the public `POST /api/events?click_id=…&value=…
+  &currency=…&url=…` (query-param style, since `sendBeacon` can't set JSON headers; `fetch keepalive`
+  fallback). The route is **public** (no auth — it's a browser beacon), captures `client_ip`/`user_agent`
+  server-side, and **always 204s** (a beacon must never surface errors to the page).
+- **Resolution (server, `events.service.ts`):** `click_id` → KV `readClick` → `redirectId` → `Ad`
+  (→ `orgId`, `AdSet.pixelId` + `pxeEvent`, `Campaign.id`). Unknown click → recorded-false no-op.
+  We persist a `ConversionEvent` (org-scoped, RLS; `clickId @unique` = idempotent ingest) with `status`
+  **`pending`** when a pixel is resolved, else **`skipped`** (no pixel on the ad set → nothing to fire).
+- **Firing is async + retried (worker, not the request path):** a `pending` event enqueues
+  `CAPI_DISPATCH` (`jobId capi:{id}`, `attempts:5`, exp backoff). `dispatchConversion` resolves the
+  **fresh** buyer token at send time (campaign.buyer → `FbConnection`, decrypted) — *not* frozen at
+  ingest, so a rotated token is used — and POSTs Facebook CAPI (`@knn/fb/capi.ts`,
+  `/{pixelId}/events`). `event_id = clickId` (Facebook dedupes against the in-browser pixel if any);
+  `event_name` from the ad's `pxe` (`search→Search`, `lander→ViewContent`, `adclick→Lead`);
+  `user_data.fbc = fb.1.{clickMs}.{fbclid}` + ip + ua; `custom_data = {value, currency}`.
+- **Error policy:** broken connection (err 190) or missing pixel → **terminal `failed`** (no retry —
+  retrying can't fix it). Rate-limit / transient → rethrow so **BullMQ retries** with backoff;
+  `status` stays `pending`. Already-`sent` → no-op (`skipped`). Mirrors the launch pipeline's D12/D13 stance.
+- **Pixel frozen at ingest, token resolved at send (deliberate split):** the *pixel* is the ad set's
+  promoted-object pixel captured on the `ConversionEvent`; the *token* is looked up fresh in the worker.
+  Pixels don't rotate; tokens do (60-day churn, D13) — so freeze the stable one, resolve the volatile one late.

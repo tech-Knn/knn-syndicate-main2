@@ -57,6 +57,7 @@ services:
         NEXT_PUBLIC_AFS_STYLE_ID: ${NEXT_PUBLIC_AFS_STYLE_ID:-}
         NEXT_PUBLIC_AFS_ADTEST: ${NEXT_PUBLIC_AFS_ADTEST:-}
         NEXT_PUBLIC_AFS_ADSAFE: ${NEXT_PUBLIC_AFS_ADSAFE:-}
+        NEXT_PUBLIC_EVENTS_URL: ${NEXT_PUBLIC_EVENTS_URL:-}
     restart: 'no'
     command: ['sh', '-lc', 'pnpm db:deploy && pnpm db:bootstrap && pnpm db:seed']
     depends_on:

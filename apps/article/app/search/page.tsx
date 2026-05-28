@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { ConversionTracker } from './conversion-tracker';
 import { SearchAdsUnit } from './search-ads-unit';
 import styles from './search.module.css';
 
@@ -22,6 +23,11 @@ export default async function SearchPage({
   // `q` is the default CSA results param (resultsPageQueryParam); accept `query` too.
   const query = str(sp.q) || str(sp.query);
   const referrerAdCreative = str(sp.rc) || undefined;
+  // Conversion attribution: the redirect threads the click id (txid) + optional
+  // value (cv) / currency (ccy) here via the content page's results-page URL.
+  const clickId = str(sp.txid) || undefined;
+  const value = str(sp.cv) || undefined;
+  const currency = str(sp.ccy) || undefined;
 
   return (
     <main className={styles.page}>
@@ -34,6 +40,7 @@ export default async function SearchPage({
         )}
       </div>
       <SearchAdsUnit query={query} referrerAdCreative={referrerAdCreative} />
+      <ConversionTracker clickId={clickId} value={value} currency={currency} />
     </main>
   );
 }

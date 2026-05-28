@@ -50,6 +50,28 @@ export async function writeRedirectConfigs(
   if (!res.ok) throw new Error(`KV bulk write failed: ${res.status} ${await res.text().catch(() => '')}`);
 }
 
+/** Transient click record the edge Worker writes to KV (`click:{txid}`) on a paid
+ *  click, read back at conversion time to resolve the ad + fbclid. */
+export interface ClickRecord {
+  redirectId: string;
+  fbclid?: string;
+  /** Click timestamp (unix ms) — used for the `fbc` identifier. */
+  ts: number;
+}
+
+/** Read a click record by txid from KV. Returns null when the key is absent (404). */
+export async function readClick(txid: string): Promise<ClickRecord | null> {
+  if (!isKvConfigured()) throw new KvNotConfiguredError();
+  const res = await fetch(`${base()}/values/${encodeURIComponent(`click:${txid}`)}`, { headers: authHeader() });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`KV click read failed: ${res.status}`);
+  try {
+    return JSON.parse(await res.text()) as ClickRecord;
+  } catch {
+    return null;
+  }
+}
+
 /** Delete a redirect config (on pause/stop) — 404 is treated as already-gone. */
 export async function deleteRedirectConfig(redirectId: string): Promise<void> {
   if (!isKvConfigured()) throw new KvNotConfiguredError();

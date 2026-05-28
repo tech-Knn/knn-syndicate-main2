@@ -15,11 +15,12 @@ import { type RedirectConfig, resolveRedirect } from './resolve.js';
 
 /** Minimal Workers-KV surface we use (avoids @cloudflare/workers-types in the
  *  Node typecheck; wrangler injects the real binding at deploy). */
-interface KvGet {
+interface Kv {
   get(key: string, type: 'text'): Promise<string | null>;
+  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
 }
 interface Env {
-  REDIRECTS: KvGet;
+  REDIRECTS: Kv;
   /** Generic fallback when a redirect id is unknown (never 404 a paid click). */
   ARTICLE_FALLBACK?: string;
 }
@@ -51,6 +52,15 @@ worker.get('/go/:id', async (c) => {
 
   const query = Object.fromEntries(new URL(c.req.url).searchParams);
   const decision = resolveRedirect(config, query, { txid: mintTxid() });
+
+  // On a funnel-bound (paid + active) click, log txid → {redirectId, fbclid} to KV so
+  // the later conversion beacon can resolve the ad's pixel + the buyer's token and the
+  // fbclid for attribution. Fire-and-forget (waitUntil) — never blocks the 302.
+  if (decision.paid && config.active) {
+    const record = JSON.stringify({ redirectId: c.req.param('id'), fbclid: query.fbclid, ts: Date.now() });
+    c.executionCtx.waitUntil(c.env.REDIRECTS.put(`click:${decision.txid}`, record, { expirationTtl: 604_800 }));
+  }
+
   // Cache-Control: never cache the 302 (the txid + split must vary per click).
   c.header('Cache-Control', 'no-store');
   return c.redirect(decision.location, 302);

@@ -1,7 +1,7 @@
 # @knn/worker — background jobs (BullMQ + node-cron)
 
 Runs all async/scheduled work: stats pull, revenue attribution, channel maintenance, FB launch,
-token refresh, article generation, meta-rejection checks, notifications.
+token refresh, article generation, meta-rejection checks, conversion dispatch (CAPI), notifications.
 
 ## Invariants
 
@@ -29,6 +29,14 @@ token refresh, article generation, meta-rejection checks, notifications.
   Multi-currency (D15): native spend/revenue + a USD field via the daily `FxRate` (`fx.service.ts`).
 - **FB calls go through the per-ad-account rate-limit queue** (D12) with backoff + circuit breaker;
   respect the `BATCHED` state. The SDK does no backoff itself.
+- **Conversion dispatch (D20, `src/capi-dispatch.ts`, `CAPI_DISPATCH` queue):** fires Facebook CAPI for one
+  `ConversionEvent`. The **pixel is frozen on the event at ingest**; the **buyer token is resolved fresh
+  here** (campaign.buyer → `FbConnection`, decrypted) so a token rotated since ingest is used — never read
+  the token at ingest. Error policy mirrors the launcher: broken connection (err 190) or missing pixel →
+  **terminal `failed`** (do NOT rethrow — retrying can't fix it); rate-limit/transient → **rethrow** so
+  BullMQ retries (status stays `pending`); already-`sent` → no-op. Idempotent on `event_id = clickId`
+  (Facebook also dedupes against the in-browser pixel). Don't move token resolution earlier or add a retry
+  on the terminal cases.
 
 **Testing footgun:** worker tests share one Postgres and use GLOBAL (cross-org) scans (channel pool,
 meta-rejection, attribution), so `vitest.config.ts` sets `fileParallelism: false` — don't re-enable

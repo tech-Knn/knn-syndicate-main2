@@ -16,16 +16,27 @@ import styles from './article.module.css';
 export function RelatedSearchUnit({
   referrerAdCreative,
   terms,
+  txid,
 }: {
   referrerAdCreative?: string;
   terms?: string;
+  /** The redirect click id — threaded onto /search so the conversion beacon can fire. */
+  txid?: string;
 }) {
   const live = afsConfigured();
 
   useEffect(() => {
     if (!live) return;
+    // Carry the click id (+ ad creative) onto the results page so /search can attribute
+    // the conversion. CSA appends the query term as `q`.
+    const rp = new URLSearchParams();
+    if (txid) rp.set('txid', txid);
+    if (referrerAdCreative) rp.set('rc', referrerAdCreative);
+    const resultsPageBaseUrl = `${window.location.origin}/search${rp.toString() ? `?${rp.toString()}` : ''}`;
+
     const pageOptions = basePageOptions({
       relatedSearchTargeting: 'content',
+      resultsPageBaseUrl,
       // On a content page the query params aren't the search query — ignore them too.
       ignoredPageParams: `${AFS_TRACKING_PARAMS},q,query`,
     });
@@ -38,7 +49,7 @@ export function RelatedSearchUnit({
       relatedSearches: 10,
       adLoadedCallback: afsAdLoadedCallback,
     });
-  }, [live, referrerAdCreative, terms]);
+  }, [live, referrerAdCreative, terms, txid]);
 
   return (
     <aside className={styles.afs} aria-label="Related searches">
