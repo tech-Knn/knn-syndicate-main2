@@ -53,7 +53,9 @@ export async function signup(input: SignupInput): Promise<{ status: UserStatus }
   const passwordHash = await hashPassword(input.password);
   return withSystem(async (tx) => {
     const org = await tx.organization.findUnique({ where: { slug: input.companySlug } });
-    if (!org || org.status !== 'ACTIVE') {
+    // Never let anyone self-join the platform org (KNN staff) — same generic error so
+    // its existence isn't revealed. Client users belong only to real companies.
+    if (!org || org.status !== 'ACTIVE' || org.isPlatform) {
       throw new AppError(400, 'Unknown or inactive company');
     }
     const existing = await tx.user.findUnique({ where: { email: input.email } });

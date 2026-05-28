@@ -8,6 +8,7 @@ import { buildApp } from '../../app.js';
 
 const suffix = Date.now().toString(36);
 const slugA = `co-a-${suffix}`;
+const platformSlug = `plat-${suffix}`;
 const adminEmail = `admin-${suffix}@a.com`;
 const superEmail = `super-${suffix}@a.com`;
 const buyerEmail = `buyer-${suffix}@a.com`;
@@ -27,6 +28,7 @@ beforeAll(async () => {
   await withSystem(async (tx) => {
     const orgA = await tx.organization.create({ data: { name: 'Co A', slug: slugA } });
     const orgB = await tx.organization.create({ data: { name: 'Co B', slug: `co-b-${suffix}` } });
+    await tx.organization.create({ data: { name: 'Plat', slug: platformSlug, isPlatform: true } });
     orgAId = orgA.id;
     orgBId = orgB.id;
     await tx.user.create({
@@ -84,6 +86,15 @@ describe('auth lifecycle', () => {
     });
     expect(res.statusCode).toBe(201);
     expect(res.json()).toEqual({ status: USER_STATUS.PENDING });
+  });
+
+  it('refuses to sign up into the platform org (no self-join to KNN staff)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/auth/signup',
+      payload: { name: 'Sneaky', email: `sneaky-${suffix}@a.com`, password: BUYER_PW, companySlug: platformSlug },
+    });
+    expect(res.statusCode).toBe(400);
   });
 
   it('blocks login while PENDING', async () => {
