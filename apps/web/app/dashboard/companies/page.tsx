@@ -3,7 +3,7 @@
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { type CompanyRollup, addBusinessDays, currentBusinessDay, formatUsd } from '@knn/shared';
-import { Badge, Button, Card, Segmented, Skeleton } from '@/components/ui';
+import { Badge, Button, Card, type DateRange, DateRangePicker, Skeleton } from '@/components/ui';
 import { admin, stats } from '@/lib/api';
 import { type AuditRow, type OrgRow, type PublicUser } from '@/lib/types';
 import { useAuth } from '../../providers';
@@ -11,8 +11,7 @@ import styles from '../admin.module.css';
 
 const blank = { name: '', slug: '', adminName: '', adminEmail: '', adminPassword: '' };
 
-const RANGE_DAYS: Record<string, number> = { '7': 7, '30': 30, '90': 90 };
-function rangeFor(days: number): { from: string; to: string } {
+function rangeFor(days: number): DateRange {
   const to = currentBusinessDay();
   return { from: addBusinessDays(to, -(days - 1)), to };
 }
@@ -75,7 +74,7 @@ export default function CompaniesPage() {
   const [membersByOrg, setMembersByOrg] = useState<Record<string, PublicUser[] | null>>({});
 
   // Revenue by company + cut editing.
-  const [rangeKey, setRangeKey] = useState('30');
+  const [revRange, setRevRange] = useState<DateRange>(() => rangeFor(30));
   const [revenue, setRevenue] = useState<CompanyRollup[] | null>(null);
   const [cuts, setCuts] = useState<Record<string, string>>({});
   const [cutState, setCutState] = useState<Record<string, 'saving' | 'saved' | undefined>>({});
@@ -97,17 +96,17 @@ export default function CompaniesPage() {
   }, []);
   useEffect(() => loadAudit(), [loadAudit]);
 
-  const loadRevenue = useCallback((key: string) => {
+  const loadRevenue = useCallback((r: DateRange) => {
     setRevenue(null);
     void stats
-      .byCompany(rangeFor(RANGE_DAYS[key] ?? 30))
+      .byCompany(r)
       .then((rows) => {
         setRevenue(rows);
         setCuts(Object.fromEntries(rows.map((c) => [c.orgId, String(Math.round(c.defaultRevenueCutPct * 100))])));
       })
       .catch(() => setRevenue([]));
   }, []);
-  useEffect(() => loadRevenue(rangeKey), [rangeKey, loadRevenue]);
+  useEffect(() => loadRevenue(revRange), [revRange, loadRevenue]);
 
   // Auto-derive a slug from the company name as the user types (still editable).
   const onName = (name: string): void =>
@@ -385,15 +384,7 @@ export default function CompaniesPage() {
       <Card className={styles.section}>
         <div className={styles.sectionHead}>
           <span className={styles.sectionTitle}>Revenue by company</span>
-          <Segmented
-            options={[
-              { label: '7D', value: '7' },
-              { label: '30D', value: '30' },
-              { label: '90D', value: '90' },
-            ]}
-            value={rangeKey}
-            onChange={setRangeKey}
-          />
+          <DateRangePicker value={revRange} onChange={setRevRange} />
         </div>
         {!revenue ? (
           <div className={styles.rowsSkel}>

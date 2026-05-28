@@ -6,6 +6,8 @@ import {
 } from 'react';
 import styles from './ui.module.css';
 
+export { DateRangePicker, type DateRange } from './date-range';
+
 export function Spinner({ className }: { className?: string }) {
   return <span className={`${styles.spinner} ${className ?? ''}`} aria-hidden />;
 }

@@ -8,14 +8,13 @@ import {
   currentBusinessDay,
   formatUsd,
 } from '@knn/shared';
-import { Badge, Card, Segmented, Skeleton } from '@/components/ui';
+import { Badge, Card, type DateRange, DateRangePicker, Skeleton } from '@/components/ui';
 import { admin, stats } from '@/lib/api';
 import { type PublicUser, type UserAction } from '@/lib/types';
 import { useAuth } from '../../providers';
 import styles from '../admin.module.css';
 
-const RANGE_DAYS: Record<string, number> = { '7': 7, '30': 30, '90': 90 };
-function rangeFor(days: number): { from: string; to: string } {
+function rangeFor(days: number): DateRange {
   const to = currentBusinessDay();
   return { from: addBusinessDays(to, -(days - 1)), to };
 }
@@ -53,7 +52,7 @@ function actionsFor(status: string): { label: string; action: UserAction; danger
 export default function TeamPage() {
   const { user } = useAuth();
   const router = useRouter();
-  const [rangeKey, setRangeKey] = useState('30');
+  const [range, setRange] = useState<DateRange>(() => rangeFor(30));
   const [buyers, setBuyers] = useState<BuyerRollup[] | null>(null);
   const [members, setMembers] = useState<PublicUser[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -62,10 +61,10 @@ export default function TeamPage() {
     if (user && user.role !== 'COMPANY_ADMIN' && user.role !== 'SUPER_ADMIN') router.replace('/dashboard');
   }, [user, router]);
 
-  const loadBuyers = useCallback(async (key: string) => {
+  const loadBuyers = useCallback(async (r: DateRange) => {
     setBuyers(null);
     try {
-      setBuyers(await stats.byBuyer(rangeFor(RANGE_DAYS[key] ?? 30)));
+      setBuyers(await stats.byBuyer(r));
     } catch {
       setBuyers([]);
     }
@@ -80,8 +79,8 @@ export default function TeamPage() {
   }, []);
 
   useEffect(() => {
-    void loadBuyers(rangeKey);
-  }, [rangeKey, loadBuyers]);
+    void loadBuyers(range);
+  }, [range, loadBuyers]);
   useEffect(() => {
     void loadMembers();
   }, [loadMembers]);
@@ -122,15 +121,7 @@ export default function TeamPage() {
       <Card className={styles.section}>
         <div className={styles.sectionHead}>
           <span className={styles.sectionTitle}>Performance by buyer</span>
-          <Segmented
-            options={[
-              { label: '7D', value: '7' },
-              { label: '30D', value: '30' },
-              { label: '90D', value: '90' },
-            ]}
-            value={rangeKey}
-            onChange={setRangeKey}
-          />
+          <DateRangePicker value={range} onChange={setRange} />
         </div>
         {!buyers ? (
           <div className={styles.rowsSkel}>

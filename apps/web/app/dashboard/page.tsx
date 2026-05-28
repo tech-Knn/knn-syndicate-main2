@@ -9,15 +9,13 @@ import {
   currentBusinessDay,
   formatUsd,
 } from '@knn/shared';
-import { Badge, Card, Segmented, Skeleton, StatTile } from '@/components/ui';
+import { Badge, Card, type DateRange, DateRangePicker, Skeleton, StatTile } from '@/components/ui';
 import { RevenueChart, Sparkline } from '@/components/charts';
 import { stats } from '@/lib/api';
 import { useAuth } from '../providers';
 import styles from './overview.module.css';
 
-const RANGE_DAYS: Record<string, number> = { '7': 7, '30': 30, '90': 90 };
-
-function rangeFor(days: number): { from: string; to: string } {
+function rangeFor(days: number): DateRange {
   const to = currentBusinessDay();
   return { from: addBusinessDays(to, -(days - 1)), to };
 }
@@ -71,7 +69,7 @@ function exportCsv(rows: CampaignPerf[]): void {
 
 export default function DashboardHome() {
   const { user } = useAuth();
-  const [rangeKey, setRangeKey] = useState('7');
+  const [range, setRange] = useState<DateRange>(() => rangeFor(7));
   const [summary, setSummary] = useState<StatsSummary | null>(null);
   const [campaigns, setCampaigns] = useState<CampaignPerf[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -81,15 +79,14 @@ export default function DashboardHome() {
   const isAdmin = user?.role === 'SUPER_ADMIN' || user?.role === 'COMPANY_ADMIN';
   const scopeWord = user?.role === 'SUPER_ADMIN' ? 'platform' : user?.role === 'COMPANY_ADMIN' ? 'organization' : 'campaigns';
 
-  const load = useCallback(async (key: string, silent = false) => {
-    const range = rangeFor(RANGE_DAYS[key] ?? 7);
+  const load = useCallback(async (r: DateRange, silent = false) => {
     if (!silent) {
       setSummary(null);
       setCampaigns(null);
     }
     setError(null);
     try {
-      const [s, c] = await Promise.all([stats.summary(range), stats.campaigns(range)]);
+      const [s, c] = await Promise.all([stats.summary(r), stats.campaigns(r)]);
       setSummary(s);
       setCampaigns(c);
     } catch {
@@ -98,12 +95,12 @@ export default function DashboardHome() {
   }, []);
 
   useEffect(() => {
-    void load(rangeKey);
+    void load(range);
     setExpanded(null);
     setBreakdowns({});
-    const id = setInterval(() => void load(rangeKey, true), 60_000);
+    const id = setInterval(() => void load(range, true), 60_000);
     return () => clearInterval(id);
-  }, [rangeKey, load]);
+  }, [range, load]);
 
   const toggle = async (id: string): Promise<void> => {
     if (expanded === id) {
@@ -113,7 +110,7 @@ export default function DashboardHome() {
     setExpanded(id);
     if (!breakdowns[id]) {
       try {
-        const b = await stats.campaignBreakdown(id, rangeFor(RANGE_DAYS[rangeKey] ?? 7));
+        const b = await stats.campaignBreakdown(id, range);
         setBreakdowns((prev) => ({ ...prev, [id]: b }));
       } catch {
         /* leave row expanded with a tiny error; non-critical */
@@ -133,15 +130,7 @@ export default function DashboardHome() {
           <h1 className={`serif ${styles.title}`}>Hello, {firstName}.</h1>
           <p className={styles.sub}>Real-time ROI across your {scopeWord}.</p>
         </div>
-        <Segmented
-          options={[
-            { label: '7D', value: '7' },
-            { label: '30D', value: '30' },
-            { label: '90D', value: '90' },
-          ]}
-          value={rangeKey}
-          onChange={setRangeKey}
-        />
+        <DateRangePicker value={range} onChange={setRange} />
       </div>
 
       {error && <Card className={styles.errorCard}>{error}</Card>}
