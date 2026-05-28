@@ -67,15 +67,19 @@ async function main(): Promise<void> {
     await tx.channel.deleteMany({ where: { channelId: { startsWith: `demo-${SLUG}-` } } });
     await tx.organization.deleteMany({ where: { slug: SLUG } });
     const org = await tx.organization.create({ data: { name: 'Demo Co', slug: SLUG } });
+    const hash = await bcrypt.hash(PASSWORD, 12);
     const buyer = await tx.user.create({
-      data: {
-        orgId: org.id,
-        email: EMAIL,
-        name: 'Dana Buyer',
-        passwordHash: await bcrypt.hash(PASSWORD, 12),
-        role: ROLES.MEDIA_BUYER,
-        status: USER_STATUS.ACTIVE,
-      },
+      data: { orgId: org.id, email: EMAIL, name: 'Dana Buyer', passwordHash: hash, role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE },
+    });
+    // A second buyer (no campaigns) + a pending buyer, so the Team members table has variety.
+    await tx.user.create({
+      data: { orgId: org.id, email: 'sam@demo.knn', name: 'Sam Buyer', passwordHash: hash, role: ROLES.MEDIA_BUYER, status: USER_STATUS.PENDING },
+    });
+    await tx.user.create({
+      data: { orgId: org.id, email: 'admin@demo.knn', name: 'Avery Admin', passwordHash: hash, role: ROLES.COMPANY_ADMIN, status: USER_STATUS.ACTIVE },
+    });
+    await tx.user.create({
+      data: { orgId: org.id, email: 'super@demo.knn', name: 'Sky Super', passwordHash: hash, role: ROLES.SUPER_ADMIN, status: USER_STATUS.ACTIVE },
     });
 
     for (const spec of SPECS) {
@@ -128,7 +132,11 @@ async function main(): Promise<void> {
   });
 
   // eslint-disable-next-line no-console
-  console.log(`Seeded demo org "${SLUG}" with 3 campaigns × ${DAYS} days.\nLogin: ${EMAIL} / ${PASSWORD}`);
+  console.log(
+    `Seeded demo org "${SLUG}" with 3 campaigns × ${DAYS} days.\n` +
+      `Logins (password ${PASSWORD}):\n` +
+      `  buyer  ${EMAIL}\n  admin  admin@demo.knn\n  super  super@demo.knn`,
+  );
 }
 
 main()

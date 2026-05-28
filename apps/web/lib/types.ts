@@ -146,6 +146,19 @@ export interface AdminOrg {
   autoLaunch: boolean;
 }
 
+export interface PublicUser {
+  id: string;
+  orgId: string;
+  email: string;
+  name: string;
+  role: Role;
+  status: UserStatus;
+  createdAt: string;
+  approvedAt: string | null;
+}
+
+export type UserAction = 'approve' | 'reject' | 'suspend' | 'reactivate';
+
 export interface UploadResult {
   id: string;
   filename: string;

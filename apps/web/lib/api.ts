@@ -5,14 +5,21 @@ import {
   type FbAccount,
   type FbPage,
   type FbPixel,
+  type PublicUser,
   type SessionUser,
   type SyncResult,
   type UploadResult,
+  type UserAction,
 } from './types';
 import {
+  type ArticleRow,
+  type BuyerRollup,
   type CampaignBreakdown,
   type CampaignDraftInput,
   type CampaignPerf,
+  type ChannelRow,
+  type CompanyRollup,
+  type PlatformSettings,
   type StatsSummary,
 } from '@knn/shared';
 
@@ -306,6 +313,41 @@ export const admin = {
         }),
       )
     ).organization,
+  users: async (): Promise<PublicUser[]> =>
+    (await parse<{ users: PublicUser[] }>(await authedFetch('/api/admin/users'))).users,
+  setUserStatus: async (id: string, action: UserAction): Promise<PublicUser> =>
+    (
+      await parse<{ user: PublicUser }>(
+        await authedFetch(`/api/admin/users/${id}`, {
+          method: 'PATCH',
+          headers: jsonHeaders(),
+          body: JSON.stringify({ action }),
+        }),
+      )
+    ).user,
+  channels: async (): Promise<ChannelRow[]> =>
+    (await parse<{ channels: ChannelRow[] }>(await authedFetch('/api/admin/channels'))).channels,
+  articles: async (): Promise<ArticleRow[]> =>
+    (await parse<{ articles: ArticleRow[] }>(await authedFetch('/api/admin/articles'))).articles,
+  settings: async (): Promise<PlatformSettings> =>
+    (await parse<{ settings: PlatformSettings }>(await authedFetch('/api/admin/settings'))).settings,
+  updateSettings: async (input: Partial<PlatformSettings>): Promise<PlatformSettings> =>
+    (
+      await parse<{ settings: PlatformSettings }>(
+        await authedFetch('/api/admin/settings', {
+          method: 'PATCH',
+          headers: jsonHeaders(),
+          body: JSON.stringify(input),
+        }),
+      )
+    ).settings,
+  setRevenueCut: async (orgId: string, pct: number): Promise<void> => {
+    await authedFetch(`/api/admin/organizations/${orgId}/revenue-cut`, {
+      method: 'PATCH',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ pct }),
+    });
+  },
 };
 
 export const stats = {
@@ -316,6 +358,11 @@ export const stats = {
       .campaigns,
   campaignBreakdown: async (id: string, range?: RangeArg): Promise<CampaignBreakdown> =>
     parse(await authedFetch(`/api/stats/campaigns/${id}${rangeQs(range)}`)),
+  byBuyer: async (range?: RangeArg): Promise<BuyerRollup[]> =>
+    (await parse<{ buyers: BuyerRollup[] }>(await authedFetch(`/api/stats/by-buyer${rangeQs(range)}`))).buyers,
+  byCompany: async (range?: RangeArg): Promise<CompanyRollup[]> =>
+    (await parse<{ companies: CompanyRollup[] }>(await authedFetch(`/api/stats/by-company${rangeQs(range)}`)))
+      .companies,
 };
 
 export const uploads = {

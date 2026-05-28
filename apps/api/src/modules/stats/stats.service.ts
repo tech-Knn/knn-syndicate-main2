@@ -2,8 +2,10 @@ import { type TxClient } from '@knn/db';
 import {
   type AdPerf,
   type AdSetPerf,
+  type BuyerRollup,
   type CampaignBreakdown,
   type CampaignPerf,
+  type CompanyRollup,
   type DailyPoint,
   type DateRange,
   type MetricTotals,
@@ -292,5 +294,92 @@ export async function getCampaignBreakdown(
       totals,
       adSets,
     };
+  });
+}
+
+/**
+ * Per-buyer rollup (company-admin: own org via RLS; super-admin: all buyers).
+ * Aggregates each buyer's campaigns' spend/revenue/margin over the range.
+ */
+export async function getBuyerRollup(auth: AuthContext, range: DateRange): Promise<BuyerRollup[]> {
+  return runScoped(auth, async (tx) => {
+    const buyers = await tx.user.findMany({
+      where: { role: ROLES.MEDIA_BUYER },
+      select: { id: true, name: true, email: true },
+    });
+    if (buyers.length === 0) return [];
+    const campaigns = await tx.campaign.findMany({ select: { id: true, buyerId: true } });
+    const campToBuyer = new Map(campaigns.map((c) => [c.id, c.buyerId]));
+    const campCount = new Map<string, number>();
+    for (const c of campaigns) campCount.set(c.buyerId, (campCount.get(c.buyerId) ?? 0) + 1);
+
+    const where = { day: { gte: range.from, lte: range.to }, campaignId: { in: campaigns.map((c) => c.id) } };
+    const [statsByCamp, revByCamp] = await Promise.all([
+      tx.adStatsDaily.groupBy({ by: ['campaignId'], where, _sum: { spendUsdMinor: true } }),
+      tx.adRevenueDaily.groupBy({ by: ['campaignId'], where, _sum: { visibleUsdMinor: true, marginUsdMinor: true } }),
+    ]);
+    const spend = new Map<string, number>();
+    const revenue = new Map<string, number>();
+    const margin = new Map<string, number>();
+    for (const r of statsByCamp) {
+      const b = campToBuyer.get(r.campaignId);
+      if (b) spend.set(b, (spend.get(b) ?? 0) + (r._sum.spendUsdMinor ?? 0));
+    }
+    for (const r of revByCamp) {
+      const b = campToBuyer.get(r.campaignId);
+      if (!b) continue;
+      revenue.set(b, (revenue.get(b) ?? 0) + (r._sum.visibleUsdMinor ?? 0));
+      margin.set(b, (margin.get(b) ?? 0) + (r._sum.marginUsdMinor ?? 0));
+    }
+    return buyers
+      .map((b): BuyerRollup => {
+        const spendUsd = round2(centsToDollars(spend.get(b.id) ?? 0));
+        const revenueUsd = round2(centsToDollars(revenue.get(b.id) ?? 0));
+        return {
+          buyerId: b.id,
+          name: b.name,
+          email: b.email,
+          spendUsd,
+          revenueUsd,
+          profitUsd: round2(revenueUsd - spendUsd),
+          marginUsd: round2(centsToDollars(margin.get(b.id) ?? 0)),
+          campaignCount: campCount.get(b.id) ?? 0,
+        };
+      })
+      .sort((a, b) => b.revenueUsd - a.revenueUsd);
+  });
+}
+
+/**
+ * Per-company rollup (SUPER_ADMIN only — guarded at the route). Groups the daily
+ * tables by orgId directly (they carry org_id), so it's a cheap platform-wide scan.
+ */
+export async function getCompanyRollup(auth: AuthContext, range: DateRange): Promise<CompanyRollup[]> {
+  return runScoped(auth, async (tx) => {
+    const orgs = await tx.organization.findMany({ select: { id: true, name: true, defaultRevenueCutPct: true } });
+    const where = { day: { gte: range.from, lte: range.to } };
+    const [statsByOrg, revByOrg, buyerCounts, campCounts] = await Promise.all([
+      tx.adStatsDaily.groupBy({ by: ['orgId'], where, _sum: { spendUsdMinor: true } }),
+      tx.adRevenueDaily.groupBy({ by: ['orgId'], where, _sum: { visibleUsdMinor: true, marginUsdMinor: true } }),
+      tx.user.groupBy({ by: ['orgId'], where: { role: ROLES.MEDIA_BUYER }, _count: { _all: true } }),
+      tx.campaign.groupBy({ by: ['orgId'], _count: { _all: true } }),
+    ]);
+    const spend = new Map(statsByOrg.map((r) => [r.orgId, r._sum.spendUsdMinor ?? 0]));
+    const rev = new Map(revByOrg.map((r) => [r.orgId, r._sum.visibleUsdMinor ?? 0]));
+    const margin = new Map(revByOrg.map((r) => [r.orgId, r._sum.marginUsdMinor ?? 0]));
+    const buyers = new Map(buyerCounts.map((r) => [r.orgId, r._count._all]));
+    const camps = new Map(campCounts.map((r) => [r.orgId, r._count._all]));
+    return orgs
+      .map((o): CompanyRollup => ({
+        orgId: o.id,
+        name: o.name,
+        spendUsd: round2(centsToDollars(spend.get(o.id) ?? 0)),
+        revenueUsd: round2(centsToDollars(rev.get(o.id) ?? 0)),
+        marginUsd: round2(centsToDollars(margin.get(o.id) ?? 0)),
+        buyerCount: buyers.get(o.id) ?? 0,
+        campaignCount: camps.get(o.id) ?? 0,
+        defaultRevenueCutPct: Number(o.defaultRevenueCutPct),
+      }))
+      .sort((a, b) => b.revenueUsd - a.revenueUsd);
   });
 }

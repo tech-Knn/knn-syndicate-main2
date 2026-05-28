@@ -100,4 +100,32 @@ export interface CompanyRollup {
   marginUsd: number;
   buyerCount: number;
   campaignCount: number;
+  defaultRevenueCutPct: number; // 0..1 — the platform's cut for this company
+}
+
+/** A channel-pool row for the super-admin operational view. */
+export interface ChannelRow {
+  id: string;
+  channelId: string;
+  label: string | null;
+  status: string; // AVAILABLE | ASSIGNED | RESERVED
+  campaignId: string | null;
+  campaignName: string | null;
+  lockedForDay: string | null;
+}
+
+/** An article row for the admin/super articles list. */
+export interface ArticleRow {
+  id: string;
+  title: string;
+  slug: string;
+  status: string;
+  createdAt: string; // ISO
+}
+
+/** Platform-wide settings editable by the super-admin. */
+export interface PlatformSettings {
+  compliancePrompt: string;
+  articleDomain: string;
+  redirectDomain: string;
 }

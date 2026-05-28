@@ -20,6 +20,8 @@ function navFor(role: Role): { href: string; label: string }[] {
     { href: '/dashboard', label: 'Overview' },
     { href: '/dashboard/campaigns', label: 'Campaigns' },
     ...(isAdmin ? [{ href: '/dashboard/approvals', label: 'Approvals' }] : []),
+    ...(role === 'COMPANY_ADMIN' ? [{ href: '/dashboard/team', label: 'Team' }] : []),
+    ...(role === 'SUPER_ADMIN' ? [{ href: '/dashboard/platform', label: 'Platform' }] : []),
     { href: '/dashboard/facebook', label: 'Facebook' },
   ];
 }

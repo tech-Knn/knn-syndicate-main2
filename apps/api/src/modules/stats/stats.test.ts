@@ -213,3 +213,66 @@ describe('stats read API', () => {
     expect((await app.inject({ method: 'GET', url: `/api/stats/campaigns/${ids.cA1}`, headers: h(otherBuyer) })).statusCode).toBe(404);
   });
 });
+
+describe('admin & super-admin rollups + platform surfaces', () => {
+  it('by-buyer rolls up each buyer in the admin\'s org (and is forbidden to buyers)', async () => {
+    const buyerTok = await bearer(buyerA1);
+    expect((await app.inject({ method: 'GET', url: '/api/stats/by-buyer', headers: h(buyerTok) })).statusCode).toBe(403);
+
+    const adminTok = await bearer(adminA);
+    const body = (await app.inject({ method: 'GET', url: '/api/stats/by-buyer', headers: h(adminTok) })).json<{ buyers: { buyerId: string; revenueUsd: number; campaignCount: number }[] }>();
+    // Buyer A1 = cA1 over default range = $105; Buyer A2 = cA2 (today) = $80.
+    const a1Row = body.buyers.find((b) => b.revenueUsd === 105);
+    const a2Row = body.buyers.find((b) => b.revenueUsd === 80);
+    expect(a1Row).toBeTruthy();
+    expect(a2Row).toBeTruthy();
+    expect(a1Row!.campaignCount).toBe(1);
+    expect(body.buyers.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('by-company is super-only and aggregates every org (forbidden to company-admin)', async () => {
+    const adminTok = await bearer(adminA);
+    expect((await app.inject({ method: 'GET', url: '/api/stats/by-company', headers: h(adminTok) })).statusCode).toBe(403);
+
+    const superTok = await bearer(superE);
+    const body = (await app.inject({ method: 'GET', url: '/api/stats/by-company', headers: h(superTok) })).json<{ companies: { orgId: string; revenueUsd: number; defaultRevenueCutPct: number }[] }>();
+    const orgA = body.companies.find((c) => c.orgId === orgAId);
+    const orgB = body.companies.find((c) => c.orgId === orgBId);
+    expect(orgA?.revenueUsd).toBe(185); // cA1 ($105) + cA2 ($80)
+    expect(orgB).toBeTruthy(); // org B visible to super (cross-org)
+    expect(typeof orgA?.defaultRevenueCutPct).toBe('number');
+  });
+
+  it('platform settings: GET/PATCH is super-only and round-trips', async () => {
+    const adminTok = await bearer(adminA);
+    expect((await app.inject({ method: 'GET', url: '/api/admin/settings', headers: h(adminTok) })).statusCode).toBe(403);
+
+    const superTok = await bearer(superE);
+    const stamp = `https://articles.test-${suffix}.example`;
+    const patched = (await app.inject({ method: 'PATCH', url: '/api/admin/settings', headers: h(superTok), payload: { articleDomain: stamp } })).json<{ settings: { articleDomain: string } }>();
+    expect(patched.settings.articleDomain).toBe(stamp);
+    const got = (await app.inject({ method: 'GET', url: '/api/admin/settings', headers: h(superTok) })).json<{ settings: { articleDomain: string } }>();
+    expect(got.settings.articleDomain).toBe(stamp);
+  });
+
+  it('revenue-cut PATCH is super-only', async () => {
+    const adminTok = await bearer(adminA);
+    expect((await app.inject({ method: 'PATCH', url: `/api/admin/organizations/${orgBId}/revenue-cut`, headers: h(adminTok), payload: { pct: 0.5 } })).statusCode).toBe(403);
+
+    const superTok = await bearer(superE);
+    const res = await app.inject({ method: 'PATCH', url: `/api/admin/organizations/${orgBId}/revenue-cut`, headers: h(superTok), payload: { pct: 0.42 } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json<{ organization: { defaultRevenueCutPct: number } }>().organization.defaultRevenueCutPct).toBeCloseTo(0.42, 4);
+  });
+
+  it('channel pool is super-only; articles list is scoped', async () => {
+    const adminTok = await bearer(adminA);
+    const superTok = await bearer(superE);
+    expect((await app.inject({ method: 'GET', url: '/api/admin/channels', headers: h(adminTok) })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'GET', url: '/api/admin/channels', headers: h(superTok) })).statusCode).toBe(200);
+    // articles list is available to both (scoped); just assert it responds with an array.
+    const arts = await app.inject({ method: 'GET', url: '/api/admin/articles', headers: h(adminTok) });
+    expect(arts.statusCode).toBe(200);
+    expect(Array.isArray(arts.json<{ articles: unknown[] }>().articles)).toBe(true);
+  });
+});
