@@ -4,22 +4,25 @@
  * a registered staging redirect URI), discovers the account + AFS ad client, and
  * seeds the AFS custom channels into the pool. Idempotent (upsert + skipDuplicates).
  *
- * Tokens come from the ENV (never committed):
- *   GSEED_ACCESS_TOKEN=ya29... GSEED_REFRESH_TOKEN=1//... \
+ * The refresh token comes from the ENV (never committed); it refreshes to a fresh
+ * access token using GOOGLE_CLIENT_ID/SECRET (already in the container env):
+ *   GSEED_REFRESH_TOKEN=1//... \
  *     pnpm --filter @knn/api exec tsx scripts/seed-google-connection.ts
  *
  * Run inside the deployed api container (it has TOKEN_ENCRYPTION_KEY + DB access).
  */
 import { withSystem } from '@knn/db';
-import { discoverChannels, listAccounts, listAdClients } from '@knn/adsense';
+import { discoverChannels, listAccounts, listAdClients, refreshGoogleToken } from '@knn/adsense';
 import { encryptToken } from '@knn/fb';
 
 const MAX_CHANNELS = 2000;
 
 async function main(): Promise<void> {
-  const access = process.env.GSEED_ACCESS_TOKEN;
   const refresh = process.env.GSEED_REFRESH_TOKEN;
-  if (!access || !refresh) throw new Error('Set GSEED_ACCESS_TOKEN and GSEED_REFRESH_TOKEN');
+  if (!refresh) throw new Error('Set GSEED_REFRESH_TOKEN');
+  // Refresh first — the pasted access token may be expired (≈1h TTL); the refresh token
+  // + GOOGLE_CLIENT_ID/SECRET (from env) always mint a fresh one.
+  const { accessToken: access, expiresInSec } = await refreshGoogleToken(refresh);
 
   const account = (await listAccounts(access))[0]?.name;
   if (!account) throw new Error('No AdSense account visible to this token');
@@ -33,7 +36,7 @@ async function main(): Promise<void> {
         id: 'platform',
         accessTokenEnc: encryptToken(access),
         refreshTokenEnc: encryptToken(refresh),
-        tokenExpiresAt: new Date(Date.now() + 3000 * 1000),
+        tokenExpiresAt: new Date(Date.now() + expiresInSec * 1000),
         scopes: 'https://www.googleapis.com/auth/adsense.readonly',
         adsenseAccount: account,
         adsenseAdClient: adClient ?? null,
@@ -42,7 +45,7 @@ async function main(): Promise<void> {
       update: {
         accessTokenEnc: encryptToken(access),
         refreshTokenEnc: encryptToken(refresh),
-        tokenExpiresAt: new Date(Date.now() + 3000 * 1000),
+        tokenExpiresAt: new Date(Date.now() + expiresInSec * 1000),
         adsenseAccount: account,
         adsenseAdClient: adClient ?? null,
         status: 'ACTIVE',
