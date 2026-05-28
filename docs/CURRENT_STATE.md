@@ -2,7 +2,19 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
-_Last updated: 2026-05-28 — **Phase 9 (stats & revenue aggregation, D8/D15) CODE COMPLETE** (gate green: worker 30 incl. attribution 10, shared 50, adsense 6, fb 20; full monorepo typecheck+lint+test+build clean). Phases 0–8 done; legacy Node redirect retired (#18). Next: Phase 10 (dashboards). **Live revenue needs external deps:** AdSense AFS access + a Google OAuth token store (#4/#13) — the `@knn/adsense` client + attribution math are built & tested but the live AFS pull is DORMANT until then (FB cost stats still populate). Earlier deps still apply (CF KV token, FB test account, AI keys, INTERNAL_API_* for auto-launch)._
+_Last updated: 2026-05-28 — **Phase 9 (stats & revenue, D8/D15) + OpenAI article generator CODE COMPLETE** (full monorepo typecheck+lint+test+build green; Phase 9 deployed to staging). Phases 0–8 done; legacy Node redirect retired (#18). Articles now generate via **OpenAI `gpt-4.1-mini`** (reverse-engineered competitor skeleton + JSON output with high-CPC `related_search_terms` → CSA `terms`); needs `OPENAI_API_KEY` set. Next: Phase 10 (dashboards). **Live revenue needs external deps:** AdSense AFS access + a Google OAuth token store (#4/#13) — `@knn/adsense` + attribution math built & tested but the live AFS pull is DORMANT (FB cost stats still populate). Earlier deps apply (CF KV token, FB test account, OPENAI_API_KEY for article gen, INTERNAL_API_* for auto-launch)._
+
+## Article generation — OpenAI (Phase 9.5, amends D16)
+
+Articles generate with **OpenAI `gpt-4.1-mini`** (`@knn/ai/openai.ts` `generateArticleOpenAI`, JSON mode)
+— reverse-engineered from live competitors (creatorrule.com / goodprojectideas.com). Output:
+`{title, teaser, body_markdown, related_search_terms}`. Skeleton = Define → Benefits → Concrete details
+(numbers) → Steps → 3-Q FAQ, 8th-grade, ## headings. **The high-CPC monetization is `related_search_terms`**
+(6 commercial-intent queries the model emits) → stored on `articles.related_search_terms` (migration
+`20260528080854`) → fed to the content-page CSA `terms` (preferred over campaign keywords). Body renders
+via `@knn/shared#articleBlocks` (safe h2/h3/p/ul/ol, no raw HTML); opening paragraph = lead above the AFS
+unit. Compliance rewrite runs only when an admin `compliance_prompt` is set. Claude variants kept but not
+default. Needs `OPENAI_API_KEY` (empty on staging → generation dormant; set it to go live).
 
 ## Phase 9 — Stats & revenue aggregation (code complete; gate green)
 

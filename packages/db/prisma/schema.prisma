@@ -447,6 +447,10 @@ model Article {
   slug     String @unique
   title    String
   keywords Json   @default("[]")
+  /// AI-generated high-commercial-intent related-search queries (Phase 9.5): the
+  /// `terms` hint fed to the content-page CSA unit (distinct from campaign keywords;
+  /// this is where the high-CPC monetization lives). Empty falls back to `keywords`.
+  relatedSearchTerms String[] @default([]) @map("related_search_terms")
   /// The query/angle that drove generation (D6).
   query    String?
 

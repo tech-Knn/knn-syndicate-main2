@@ -91,6 +91,8 @@ const EnvSchema = z.object({
   ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-6'),
   OPENAI_API_KEY: optionalString,
   OPENAI_EMBEDDING_MODEL: z.string().default('text-embedding-3-small'),
+  // Article generation + compliance model (cost-optimized; gpt-4.1-mini ≈ ⅓¢/article).
+  OPENAI_ARTICLE_MODEL: z.string().default('gpt-4.1-mini'),
 
   // FX
   FX_API_URL: z.string().default('https://api.exchangerate.host'),

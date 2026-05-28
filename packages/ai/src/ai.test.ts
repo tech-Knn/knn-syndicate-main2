@@ -6,6 +6,7 @@ const { fakeEnv } = vi.hoisted(() => ({
   fakeEnv: {
     OPENAI_API_KEY: 'sk-openai-test',
     OPENAI_EMBEDDING_MODEL: 'text-embedding-3-small',
+    OPENAI_ARTICLE_MODEL: 'gpt-4.1-mini-test',
     ANTHROPIC_API_KEY: 'sk-ant-test',
     ANTHROPIC_MODEL: 'claude-test',
   },
@@ -14,6 +15,7 @@ vi.mock('@knn/config', () => ({ env: fakeEnv }));
 
 const { embedText } = await import('./embeddings.js');
 const { generateArticle, complianceRewrite } = await import('./anthropic.js');
+const { generateArticleOpenAI, complianceRewriteOpenAI } = await import('./openai.js');
 const { AiNotConfiguredError, AiRequestError } = await import('./errors.js');
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -96,5 +98,58 @@ describe('complianceRewrite', () => {
     await expect(
       complianceRewrite({ content: 'Original with claims.', compliancePrompt: 'Remove claims.' }),
     ).resolves.toBe('Rewritten, compliant body.');
+  });
+});
+
+function chatResponse(content: string, status = 200): Response {
+  return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status });
+}
+
+describe('generateArticleOpenAI', () => {
+  it('parses the JSON reply into title/teaser/body/terms and requests JSON mode', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      chatResponse(
+        JSON.stringify({
+          title: 'The Complete Guide to Backyard Apartments: A Smart Investment',
+          teaser: 'A backyard apartment, or ADU, adds living space and value...',
+          body_markdown: '## Understanding ADUs\n\nAn ADU is a self-contained unit.',
+          related_search_terms: ['adu builders near me', 'backyard apartment cost', '  '],
+        }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const out = await generateArticleOpenAI({ keywords: ['backyard apartment', 'ADU'] });
+    expect(out.title).toContain('Backyard Apartments');
+    expect(out.teaser).toContain('ADU');
+    expect(out.content).toContain('## Understanding ADUs');
+    // Empty/whitespace terms are dropped.
+    expect(out.relatedSearchTerms).toEqual(['adu builders near me', 'backyard apartment cost']);
+
+    const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
+      model: string;
+      response_format?: { type: string };
+    };
+    expect(body.model).toBe('gpt-4.1-mini-test');
+    expect(body.response_format?.type).toBe('json_object');
+  });
+
+  it('throws AiRequestError on non-JSON output', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(chatResponse('not json at all')));
+    await expect(generateArticleOpenAI({ keywords: ['x'] })).rejects.toBeInstanceOf(AiRequestError);
+  });
+
+  it('throws AiNotConfiguredError when the OpenAI key is missing', async () => {
+    fakeEnv.OPENAI_API_KEY = '';
+    await expect(generateArticleOpenAI({ keywords: ['x'] })).rejects.toBeInstanceOf(AiNotConfiguredError);
+  });
+});
+
+describe('complianceRewriteOpenAI', () => {
+  it('returns the rewritten markdown body', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(chatResponse('## Rewritten\n\nCompliant body.')));
+    await expect(
+      complianceRewriteOpenAI({ content: '## Original\n\nClaims.', compliancePrompt: 'Remove claims.' }),
+    ).resolves.toContain('Compliant body.');
   });
 });

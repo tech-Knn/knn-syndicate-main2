@@ -25,7 +25,11 @@ function deps(vector: number[]): ArticleAiDeps & {
 } {
   return {
     embedText: vi.fn().mockResolvedValue(vector),
-    generateArticle: vi.fn().mockResolvedValue({ title: 'Health Plans 2026', content: 'Raw body paragraph.' }),
+    generateArticle: vi.fn().mockResolvedValue({
+      title: 'Health Plans 2026',
+      content: 'Raw body paragraph.',
+      relatedSearchTerms: ['medicare advantage plans', 'health insurance quotes'],
+    }),
     complianceRewrite: vi.fn().mockResolvedValue('Compliant body paragraph.'),
   };
 }
@@ -82,10 +86,15 @@ describe('article engine', () => {
     firstSlug = result.slug;
 
     const stored = await withSystem((tx) =>
-      tx.article.findUnique({ where: { id: result.id }, select: { rawContent: true, compliantContent: true } }),
+      tx.article.findUnique({
+        where: { id: result.id },
+        select: { rawContent: true, compliantContent: true, relatedSearchTerms: true },
+      }),
     );
     expect(stored?.rawContent).toBe('Raw body paragraph.');
     expect(stored?.compliantContent).toBe('Compliant body paragraph.');
+    // The AI-generated high-CPC related-search terms are persisted (→ CSA `terms`).
+    expect(stored?.relatedSearchTerms).toEqual(['medicare advantage plans', 'health insurance quotes']);
 
     const campaign = await withSystem((tx) =>
       tx.campaign.findUnique({ where: { id: campaignId }, select: { articleId: true } }),
@@ -149,6 +158,8 @@ describe('article engine', () => {
     const article = await getPublicArticleBySlug(firstSlug);
     expect(article?.title).toBe('Health Plans 2026');
     expect(article?.compliantContent).toBe('Compliant body paragraph.');
+    // The AI related-search terms are served (→ the content-page CSA `terms`).
+    expect(article?.relatedSearchTerms).toEqual(['medicare advantage plans', 'health insurance quotes']);
     // The raw draft is never exposed on the public shape.
     expect(article && 'rawContent' in article).toBe(false);
   });

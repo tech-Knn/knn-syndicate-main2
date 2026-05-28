@@ -1,7 +1,7 @@
-# @knn/ai — Claude (articles + compliance) and OpenAI (embeddings) clients
+# @knn/ai — OpenAI (articles + compliance + embeddings) and Claude clients
 
-Pure library for the AI calls behind the Phase 5 article engine (D16). No DB, no HTTP server —
-callers (the API article service) own persistence + the reuse logic.
+Pure library for the AI calls behind the article engine (Phase 5 + the OpenAI rework). No DB, no
+HTTP server — callers (the API article service) own persistence + the reuse logic.
 
 ## Invariants / footguns
 
@@ -12,10 +12,18 @@ callers (the API article service) own persistence + the reuse logic.
   **not** crash the app. Live generation needs the keys wired (an external dependency, like FB connect).
 - **Embeddings are 1536-dim** (`text-embedding-3-small`, `EMBEDDING_DIMENSIONS`); `embedText` validates
   the length. The vector is for pgvector cosine reuse — the DB column is `vector(1536)`.
-- **`generateArticle` returns `{title, content}`** by parsing a leading `TITLE:` line (falls back to the
-  topic). **`complianceRewrite`** returns only the rewritten body. The API service stores BOTH the raw
-  and the compliant text (audit, D16) and serves the compliant one.
-- Models come from env (`ANTHROPIC_MODEL`, `OPENAI_EMBEDDING_MODEL`) — don't hardcode.
+- **Articles use OpenAI now (the default).** `generateArticleOpenAI` returns
+  `{title, teaser, content, relatedSearchTerms}` — JSON-mode (`response_format: json_object`) so the
+  reply is structured: a markdown body (## sections + lists, the reverse-engineered competitor
+  skeleton) **plus** `related_search_terms` (the high-CPC AFS `terms` — where the RPM lives).
+  `complianceRewriteOpenAI` returns the rewritten markdown body. The API service stores raw + compliant
+  (audit) and the terms, serves the compliant one, and **skips the rewrite when no `compliance_prompt`
+  is set** (saves a call). The Claude variants (`generateArticle`/`complianceRewrite`) remain available
+  but are no longer the default (overrides D16's "articles via Claude").
+- **Embeddings stay OpenAI 1536-dim** (`text-embedding-3-small`, `EMBEDDING_DIMENSIONS`); `embedText`
+  validates the length. The vector is for pgvector cosine reuse — the DB column is `vector(1536)`.
+- Models come from env (`OPENAI_ARTICLE_MODEL` default `gpt-4.1-mini` ≈ ⅓¢/article, `OPENAI_EMBEDDING_MODEL`,
+  `ANTHROPIC_MODEL`) — don't hardcode.
 
 ## Tests
 

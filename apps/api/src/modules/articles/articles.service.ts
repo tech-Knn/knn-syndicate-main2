@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import {
   AiNotConfiguredError,
-  complianceRewrite as defaultComplianceRewrite,
+  complianceRewriteOpenAI as defaultComplianceRewrite,
   embedText as defaultEmbedText,
-  generateArticle as defaultGenerateArticle,
+  generateArticleOpenAI as defaultGenerateArticle,
 } from '@knn/ai';
 import { env } from '@knn/config';
 import { type Prisma, type TxClient, withSystem, withTenant } from '@knn/db';
@@ -16,7 +16,10 @@ import type { AuthContext } from '../../middleware/authenticate.js';
 /** Injectable AI calls (defaults = the real @knn/ai clients); tests pass mocks. */
 export interface ArticleAiDeps {
   embedText: (text: string) => Promise<number[]>;
-  generateArticle: (input: { keywords: string[]; query?: string }) => Promise<{ title: string; content: string }>;
+  generateArticle: (input: {
+    keywords: string[];
+    query?: string;
+  }) => Promise<{ title: string; content: string; relatedSearchTerms?: string[] }>;
   complianceRewrite: (input: { content: string; compliancePrompt: string }) => Promise<string>;
 }
 const defaultAiDeps: ArticleAiDeps = {
@@ -39,8 +42,10 @@ export interface PublicArticle {
   title: string;
   compliantContent: string;
   query: string | null;
-  /** Campaign keywords — usable as publisher-provided related-search `terms` (D16). */
+  /** Campaign keywords — fallback related-search `terms` when no AI terms exist. */
   keywords: string[];
+  /** AI-generated high-CPC related-search queries — the CSA `terms` (preferred). */
+  relatedSearchTerms: string[];
 }
 
 /**
@@ -53,7 +58,15 @@ export async function getPublicArticleBySlug(slug: string): Promise<PublicArticl
   return withSystem(async (tx) => {
     const article = await tx.article.findUnique({
       where: { slug },
-      select: { slug: true, title: true, compliantContent: true, query: true, keywords: true, status: true },
+      select: {
+        slug: true,
+        title: true,
+        compliantContent: true,
+        query: true,
+        keywords: true,
+        relatedSearchTerms: true,
+        status: true,
+      },
     });
     if (!article || article.status !== 'READY') return null;
     return {
@@ -62,6 +75,7 @@ export async function getPublicArticleBySlug(slug: string): Promise<PublicArticl
       compliantContent: article.compliantContent,
       query: article.query,
       keywords: Array.isArray(article.keywords) ? (article.keywords as string[]) : [],
+      relatedSearchTerms: article.relatedSearchTerms,
     };
   });
 }
@@ -186,7 +200,10 @@ export async function generateArticleForCampaign(
 
       const compliancePrompt = await getCompliancePrompt(tx);
       const generated = await deps.generateArticle({ keywords, query: campaign.query ?? undefined });
-      const compliant = await deps.complianceRewrite({ content: generated.content, compliancePrompt });
+      // Only spend a second model call when an admin has actually set compliance rules.
+      const compliant = compliancePrompt.trim()
+        ? await deps.complianceRewrite({ content: generated.content, compliancePrompt })
+        : generated.content;
       const slug = slugify(generated.title);
 
       const created = await tx.article.create({
@@ -195,11 +212,12 @@ export async function generateArticleForCampaign(
           slug,
           title: generated.title,
           keywords: keywords as Prisma.InputJsonValue,
+          relatedSearchTerms: generated.relatedSearchTerms ?? [],
           query: campaign.query ?? null,
           rawContent: generated.content,
           compliantContent: compliant,
           status: 'READY',
-          model: env.ANTHROPIC_MODEL,
+          model: env.OPENAI_ARTICLE_MODEL,
         },
         select: { id: true, slug: true, title: true, status: true },
       });

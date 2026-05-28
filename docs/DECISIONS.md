@@ -254,3 +254,24 @@ the approved plan.
 - **Gate met:** attribution math (worked examples + zero-conversion fallback), currency conversion,
   revenue-cut (buyer override), AFS `<10` suppression, and finalization re-pull idempotency — all green
   against real Postgres (`apps/worker/src/attribution/attribution.test.ts`, 10 tests; `money.test.ts` 20).
+
+### 2026-05-28 — Article generation moves to OpenAI (amends D16)
+
+- **Decision:** generate the monetized articles with **OpenAI `gpt-4.1-mini`** (env
+  `OPENAI_ARTICLE_MODEL`), not Claude. These search-arb articles are short + formulaic, so a mini model
+  matches the competitor output at ≈⅓¢/article (nano is ~1/12¢ if you want to A/B it). Cost isn't the
+  constraint — quality-per-dollar is, and mini wins here. Embeddings already use OpenAI (unchanged).
+  Reverse-engineered from live competitors (creatorrule.com / goodprojectideas.com).
+- **Structured JSON output** (`generateArticleOpenAI`, response_format json_object):
+  `{title, teaser, body_markdown, related_search_terms}`. The body follows the competitor skeleton —
+  *Define → Benefits → Concrete details (numbers) → Steps → 3-Q FAQ*, 8th-grade, ## headings + lists.
+- **The high-CPC monetization is `related_search_terms`**, not keyword-stuffed prose: 6 high-commercial-
+  intent search queries the model emits per topic → stored on `articles.related_search_terms` → fed to
+  the content-page CSA `terms` (preferred over campaign keywords). Pick a high-RPM vertical (insurance/
+  auto/finance/medical/senior) as the topic; the article is just on-topic context for Google's
+  content-targeting.
+- **Rendering:** `@knn/shared#articleBlocks` parses the markdown into safe React blocks (h2/h3/p/ul/ol —
+  no `dangerouslySetInnerHTML`); the opening paragraph is the lead above the AFS unit, sections below.
+- **Compliance:** `complianceRewriteOpenAI` runs only when an admin `compliance_prompt` is set
+  (skipped otherwise — saves a call); raw + compliant are still both stored (audit). Claude variants
+  remain in `@knn/ai` but are no longer the default.

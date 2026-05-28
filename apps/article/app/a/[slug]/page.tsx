@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { articleParagraphs, articleTeaser } from '@knn/shared';
+import { articleBlocks, articleTeaser } from '@knn/shared';
 import { RelatedSearchUnit } from './related-search-unit';
 import styles from './article.module.css';
 
@@ -14,6 +14,7 @@ interface PublicArticle {
   compliantContent: string;
   query: string | null;
   keywords: string[];
+  relatedSearchTerms: string[];
 }
 
 async function fetchArticle(slug: string): Promise<PublicArticle | null> {
@@ -62,14 +63,18 @@ export default async function ArticlePage({
   if (!article) notFound();
 
   const teaser = articleTeaser(article.compliantContent);
-  const paragraphs = articleParagraphs(article.compliantContent);
+  const blocks = articleBlocks(article.compliantContent);
+  // The opening paragraph is shown as the lead (above the AFS unit), so drop it from
+  // the body to avoid repeating it.
+  const bodyBlocks = blocks[0]?.type === 'p' ? blocks.slice(1) : blocks;
   // Required (since 2025-11-01) when traffic comes from a source you control (our
   // FB ads); the redirect passes the originating ad creative as `rc`.
   const referrerAdCreative = str(sp.rc) || undefined;
-  // Publisher-provided related-search terms (the redirect passes campaign keywords/
-  // RAC as `terms`; falls back to the article's own keywords). Only sent alongside
-  // referrerAdCreative, which Google requires when `terms` is used.
-  const terms = str(sp.terms) || article.keywords.join(',') || undefined;
+  // Publisher-provided related-search terms. Preference: explicit `terms` from the
+  // redirect → the article's AI-generated high-CPC related searches → campaign
+  // keywords. Only sent alongside referrerAdCreative, which Google requires.
+  const terms =
+    str(sp.terms) || article.relatedSearchTerms.join(',') || article.keywords.join(',') || undefined;
 
   return (
     <main className={styles.page}>
@@ -81,9 +86,27 @@ export default async function ArticlePage({
         <RelatedSearchUnit referrerAdCreative={referrerAdCreative} terms={terms} />
 
         <div className={styles.body}>
-          {paragraphs.map((paragraph, i) => (
-            <p key={i}>{paragraph}</p>
-          ))}
+          {bodyBlocks.map((block, i) => {
+            if (block.type === 'h2') return <h2 key={i}>{block.text}</h2>;
+            if (block.type === 'h3') return <h3 key={i}>{block.text}</h3>;
+            if (block.type === 'ul')
+              return (
+                <ul key={i}>
+                  {block.items.map((it, j) => (
+                    <li key={j}>{it}</li>
+                  ))}
+                </ul>
+              );
+            if (block.type === 'ol')
+              return (
+                <ol key={i}>
+                  {block.items.map((it, j) => (
+                    <li key={j}>{it}</li>
+                  ))}
+                </ol>
+              );
+            return <p key={i}>{block.text}</p>;
+          })}
         </div>
       </article>
     </main>

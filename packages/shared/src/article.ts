@@ -34,3 +34,89 @@ export function articleParagraphs(content: string): string[] {
     .map((p) => p.trim())
     .filter(Boolean);
 }
+
+/** A renderable block from the article markdown (headings, paragraphs, lists). */
+export type ArticleBlock =
+  | { type: 'h2'; text: string }
+  | { type: 'h3'; text: string }
+  | { type: 'p'; text: string }
+  | { type: 'ul'; items: string[] }
+  | { type: 'ol'; items: string[] };
+
+/** Strip inline markdown emphasis (**bold**, __bold__, *italic*) to plain text. */
+function stripInline(s: string): string {
+  return s
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .trim();
+}
+
+/**
+ * Parse the article body (our controlled markdown subset) into typed blocks for safe
+ * React rendering — `## ` / `### ` headings, `- `/`* ` bullet lists, `1. ` numbered
+ * lists, and paragraphs. No HTML is produced (no injection); inline emphasis markers
+ * are stripped to plain text. `#` is treated as `h2` since the page renders the title
+ * as the `h1`.
+ */
+export function articleBlocks(content: string): ArticleBlock[] {
+  const lines = content.replace(/\r\n/g, '\n').split('\n');
+  const blocks: ArticleBlock[] = [];
+  let para: string[] = [];
+  let list: { type: 'ul' | 'ol'; items: string[] } | null = null;
+
+  const flushPara = (): void => {
+    if (para.length) {
+      blocks.push({ type: 'p', text: stripInline(para.join(' ')) });
+      para = [];
+    }
+  };
+  const flushList = (): void => {
+    if (list) {
+      blocks.push(list);
+      list = null;
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushPara();
+      flushList();
+      continue;
+    }
+    const heading = line.match(/^(#{1,3})\s+(.*)$/);
+    if (heading) {
+      flushPara();
+      flushList();
+      const text = stripInline(heading[2]!);
+      blocks.push(heading[1]!.length >= 3 ? { type: 'h3', text } : { type: 'h2', text });
+      continue;
+    }
+    const ordered = line.match(/^\d+\.\s+(.*)$/);
+    if (ordered) {
+      flushPara();
+      if (!list || list.type !== 'ol') {
+        flushList();
+        list = { type: 'ol', items: [] };
+      }
+      list.items.push(stripInline(ordered[1]!));
+      continue;
+    }
+    const bullet = line.match(/^[-*]\s+(.*)$/);
+    if (bullet) {
+      flushPara();
+      if (!list || list.type !== 'ul') {
+        flushList();
+        list = { type: 'ul', items: [] };
+      }
+      list.items.push(stripInline(bullet[1]!));
+      continue;
+    }
+    flushList();
+    para.push(line);
+  }
+  flushPara();
+  flushList();
+  return blocks;
+}
