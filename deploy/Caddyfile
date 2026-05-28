@@ -4,6 +4,15 @@
 # no scheme). If Cloudflare proxying is on, use "Full (strict)" SSL mode.
 
 {$APP_HOST} {
+	# Internal worker→API routes (Phase 8 auto-launch, D19) must NOT be reachable from
+	# the public edge — the worker calls them on the internal Docker network (api:3000),
+	# never through Caddy. They're token-guarded, but block them here too (defense in
+	# depth). This handle is first, so it wins for /api/internal before the /api/* proxy.
+	@internal path /api/internal /api/internal/*
+	handle @internal {
+		respond 403
+	}
+
 	# API + admin (incl. Bull-Board at /admin/queues) → Fastify; everything else → dashboard.
 	@api path /api/* /admin/*
 	handle @api {
