@@ -5,7 +5,7 @@ import { ROLES, USER_STATUS } from '@knn/shared';
 import { encryptToken } from '@knn/fb';
 import { AppError } from '../../lib/errors.js';
 import { submitCampaign } from './campaigns.service.js';
-import { listOffers, setOffers } from './offers.service.js';
+import { listOfferDomains, listOffers, setOffers } from './offers.service.js';
 
 const suffix = Date.now().toString(36);
 let orgId = '';
@@ -80,6 +80,32 @@ describe('campaign offers', () => {
     await expect(
       setOffers(auth(), campaignId, [{ domainId: domPending, weightPct: 100, kind: 'PAID' }]),
     ).rejects.toThrow('not LIVE');
+  });
+
+  it("hides another company's domain from offer options and rejects using it", async () => {
+    const otherOrg = await withSystem((tx) => tx.organization.create({ data: { name: 'Other', slug: `oth-${suffix}` } }));
+    const domOther = await withSystem((tx) =>
+      tx.domain.create({ data: { host: `oth-${suffix}.example.com`, afsAccountId: afsId, status: 'LIVE', verifyToken: `o-${suffix}`, ownerOrgId: otherOrg.id } }),
+    );
+    const opts = await listOfferDomains(auth());
+    expect(opts.some((o) => o.id === domOther.id)).toBe(false); // owned by another company → hidden
+    expect(opts.some((o) => o.id === domLiveA)).toBe(true); // shared → visible
+    await expect(
+      setOffers(auth(), campaignId, [{ domainId: domOther.id, weightPct: 100, kind: 'PAID' }]),
+    ).rejects.toThrow('restricted to another company');
+    await withSystem(async (tx) => {
+      await tx.domain.deleteMany({ where: { id: domOther.id } });
+      await tx.organization.deleteMany({ where: { id: otherOrg.id } });
+    });
+  });
+
+  it("allows a domain owned by the buyer's own company", async () => {
+    await withSystem((tx) => tx.domain.update({ where: { id: domLiveB }, data: { ownerOrgId: orgId } }));
+    const opts = await listOfferDomains(auth());
+    expect(opts.some((o) => o.id === domLiveB)).toBe(true);
+    const rows = await setOffers(auth(), campaignId, [{ domainId: domLiveB, weightPct: 100, kind: 'PAID' }]);
+    expect(rows).toHaveLength(1);
+    await withSystem((tx) => tx.domain.update({ where: { id: domLiveB }, data: { ownerOrgId: null } }));
   });
 
   it('forbids another buyer from reading/editing the campaign offers', async () => {

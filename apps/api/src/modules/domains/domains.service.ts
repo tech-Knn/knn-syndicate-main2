@@ -30,6 +30,9 @@ export interface DomainRow {
   verifiedAt: string | null;
   lastCheck: string | null;
   channelCount: number;
+  /** Owning company (null = shared across all companies). */
+  ownerOrgId: string | null;
+  ownerOrgName: string | null;
   createdAt: string;
 }
 
@@ -112,7 +115,9 @@ async function withCounts(
     verifiedAt: Date | null;
     lastCheck: string | null;
     createdAt: Date;
+    ownerOrgId: string | null;
     afsAccount: { label: string | null; afsPubId: string | null };
+    ownerOrg: { name: string } | null;
   }[],
 ): Promise<DomainRow[]> {
   const counts = await withSystem((tx) =>
@@ -133,15 +138,23 @@ async function withCounts(
     verifiedAt: d.verifiedAt?.toISOString() ?? null,
     lastCheck: d.lastCheck,
     channelCount: byDomain.get(d.id) ?? 0,
+    ownerOrgId: d.ownerOrgId,
+    ownerOrgName: d.ownerOrg?.name ?? null,
     createdAt: d.createdAt.toISOString(),
   }));
 }
+
+/** The `include` every DomainRow query needs to populate afsAccount + ownerOrg. */
+const domainInclude = {
+  afsAccount: { select: { label: true, afsPubId: true } },
+  ownerOrg: { select: { name: true } },
+} as const;
 
 export async function listDomains(): Promise<DomainRow[]> {
   return withSystem(async (tx) => {
     const rows = await tx.domain.findMany({
       orderBy: { createdAt: 'asc' },
-      include: { afsAccount: { select: { label: true, afsPubId: true } } },
+      include: domainInclude,
     });
     return withCounts(rows);
   });
@@ -164,7 +177,7 @@ export async function createDomain(actor: AuthContext, input: CreateDomainInput)
         verifyToken: randomUUID(),
         status: 'PENDING_DNS',
       },
-      include: { afsAccount: { select: { label: true, afsPubId: true } } },
+      include: domainInclude,
     });
     await writeAudit(tx, { orgId: actor.orgId, actorId: actor.userId, action: 'domain.created', entityType: 'domain', entityId: created.id, details: { host } });
     return (await withCounts([created]))[0]!;
@@ -188,9 +201,36 @@ export async function updateDomain(
         ...(input.styleId !== undefined ? { styleId: input.styleId.trim() || null } : {}),
         ...(input.adsafe !== undefined ? { adsafe: input.adsafe.trim() || null } : {}),
       },
-      include: { afsAccount: { select: { label: true, afsPubId: true } } },
+      include: domainInclude,
     });
     await writeAudit(tx, { orgId: actor.orgId, actorId: actor.userId, action: 'domain.updated', entityType: 'domain', entityId: id });
+    return (await withCounts([updated]))[0]!;
+  });
+}
+
+/**
+ * Assign (or clear) the company that owns a domain. `null` = shared across all
+ * companies; a company id = only that company's buyers may route offers here.
+ * Super-admin only (route-guarded).
+ */
+export async function setDomainOwner(actor: AuthContext, id: string, orgId: string | null): Promise<DomainRow> {
+  return withSystem(async (tx) => {
+    const domain = await tx.domain.findUnique({ where: { id }, select: { id: true } });
+    if (!domain) throw new AppError(404, 'Domain not found');
+    if (orgId) {
+      const org = await tx.organization.findUnique({ where: { id: orgId }, select: { isPlatform: true } });
+      if (!org) throw new AppError(404, 'Company not found');
+      if (org.isPlatform) throw new AppError(400, 'The platform organization cannot own a domain');
+    }
+    const updated = await tx.domain.update({ where: { id }, data: { ownerOrgId: orgId }, include: domainInclude });
+    await writeAudit(tx, {
+      orgId: actor.orgId,
+      actorId: actor.userId,
+      action: 'domain.owner.set',
+      entityType: 'domain',
+      entityId: id,
+      details: { ownerOrgId: orgId },
+    });
     return (await withCounts([updated]))[0]!;
   });
 }
@@ -241,7 +281,7 @@ export async function verifyDomain(actor: AuthContext, id: string, deps: VerifyD
         verifiedAt: ok ? new Date() : undefined,
         lastCheck: `${new Date().toISOString()} — ${detail}`,
       },
-      include: { afsAccount: { select: { label: true, afsPubId: true } } },
+      include: domainInclude,
     });
     await writeAudit(tx, { orgId: actor.orgId, actorId: actor.userId, action: ok ? 'domain.verified' : 'domain.verify_failed', entityType: 'domain', entityId: id });
     return (await withCounts([updated]))[0]!;

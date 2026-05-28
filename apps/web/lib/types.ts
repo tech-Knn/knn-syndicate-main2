@@ -196,6 +196,8 @@ export interface DomainRow {
   verifiedAt: string | null;
   lastCheck: string | null;
   channelCount: number;
+  ownerOrgId: string | null;
+  ownerOrgName: string | null;
   createdAt: string;
 }
 

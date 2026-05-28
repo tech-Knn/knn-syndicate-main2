@@ -461,6 +461,8 @@ export const domains = {
     (await parse<{ domain: DomainRow }>(await authedFetch(`/api/domains/${id}`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify(input) }))).domain,
   verify: async (id: string): Promise<DomainRow> =>
     (await parse<{ domain: DomainRow }>(await authedFetch(`/api/domains/${id}/verify`, { method: 'POST' }))).domain,
+  setOwner: async (id: string, orgId: string | null): Promise<DomainRow> =>
+    (await parse<{ domain: DomainRow }>(await authedFetch(`/api/domains/${id}/owner`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify({ orgId }) }))).domain,
   sync: async (id: string, ranges?: string): Promise<{ synced: number; added: number; ranges: string }> =>
     parse(await authedFetch(`/api/domains/${id}/sync`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ ranges }) })),
   // Browse the AFS account's channels by name/id (pick which to use), then import/remove.

@@ -39,11 +39,14 @@ export interface OfferDomainOption {
   afsLabel: string | null;
 }
 
-/** LIVE domains a buyer can route offers to (public websites; any authenticated role). */
+/**
+ * LIVE domains a buyer can route offers to: shared domains (no owner) PLUS any
+ * domain owned by the buyer's own company. Domains owned by another company are hidden.
+ */
 export async function listOfferDomains(auth: AuthContext): Promise<OfferDomainOption[]> {
   return runScoped(auth, async (tx) => {
     const rows = await tx.domain.findMany({
-      where: { status: 'LIVE' },
+      where: { status: 'LIVE', OR: [{ ownerOrgId: null }, { ownerOrgId: auth.orgId }] },
       select: { id: true, host: true, afsAccount: { select: { label: true } } },
       orderBy: { host: 'asc' },
     });
@@ -118,11 +121,15 @@ export async function setOffers(auth: AuthContext, campaignId: string, inputs: O
     if (existing.some((o) => o.channelRef)) {
       throw new AppError(409, 'Offers already hold channels — release them before editing');
     }
-    // Validate every referenced domain exists and is LIVE (don't route traffic to a dead site).
+    // Validate every referenced domain: exists, is LIVE, and is usable by this org
+    // (shared, or owned by the campaign's company — never another company's domain).
     for (const o of inputs) {
-      const d = await tx.domain.findUnique({ where: { id: o.domainId }, select: { host: true, status: true } });
+      const d = await tx.domain.findUnique({ where: { id: o.domainId }, select: { host: true, status: true, ownerOrgId: true } });
       if (!d) throw new AppError(400, 'Offer references an unknown domain');
       if (d.status !== 'LIVE') throw new AppError(400, `Domain ${d.host} is not LIVE yet — verify it first`);
+      if (d.ownerOrgId && d.ownerOrgId !== c.orgId) {
+        throw new AppError(400, `Domain ${d.host} is restricted to another company`);
+      }
     }
     await tx.offer.deleteMany({ where: { campaignId } });
     for (const o of inputs) {

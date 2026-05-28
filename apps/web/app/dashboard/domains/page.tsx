@@ -3,8 +3,8 @@
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Badge, Button, Card, Skeleton } from '@/components/ui';
-import { adsense, domains } from '@/lib/api';
-import { type AfsAccountRow, type AfsChannelRow, type DomainRow } from '@/lib/types';
+import { admin, adsense, domains } from '@/lib/api';
+import { type AfsAccountRow, type AfsChannelRow, type DomainRow, type OrgRow } from '@/lib/types';
 import { useAuth } from '../../providers';
 import styles from '../admin.module.css';
 
@@ -21,6 +21,7 @@ export default function DomainsPage() {
   const [rows, setRows] = useState<DomainRow[] | null>(null);
   const [dns, setDns] = useState<{ cnameTarget: string } | null>(null);
   const [accounts, setAccounts] = useState<AfsAccountRow[]>([]);
+  const [companies, setCompanies] = useState<OrgRow[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [form, setForm] = useState({ host: '', afsAccountId: '', channelRanges: '', styleId: '' });
@@ -39,8 +40,22 @@ export default function DomainsPage() {
       })
       .catch(() => setRows([]));
     void adsense.accounts().then(setAccounts).catch(() => setAccounts([]));
+    void admin.organizations().then(setCompanies).catch(() => setCompanies([]));
   }, []);
   useEffect(() => load(), [load]);
+
+  const setOwner = async (id: string, orgId: string): Promise<void> => {
+    setBusy(id + 'Owner');
+    setNote(null);
+    try {
+      await domains.setOwner(id, orgId || null);
+      load();
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'Could not update owner');
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const add = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
@@ -267,6 +282,7 @@ export default function DomainsPage() {
                 <tr>
                   <th className={styles.thLeft}>Domain</th>
                   <th className={styles.thLeft}>AFS account</th>
+                  <th className={styles.thLeft}>Owner</th>
                   <th className={styles.thLeft}>Ranges</th>
                   <th>Channels</th>
                   <th className={styles.thLeft}>Status</th>
@@ -283,6 +299,22 @@ export default function DomainsPage() {
                     <td className={styles.subtle}>
                       {d.afsLabel ?? '—'}
                       {d.afsPubId && <div className="mono">{d.afsPubId}</div>}
+                    </td>
+                    <td>
+                      <select
+                        className={styles.select}
+                        value={d.ownerOrgId ?? ''}
+                        disabled={busy === d.id + 'Owner'}
+                        onChange={(e) => void setOwner(d.id, e.target.value)}
+                        aria-label={`Owner for ${d.host}`}
+                      >
+                        <option value="">Shared (all companies)</option>
+                        {companies.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                     <td className={styles.subtle}>{d.channelRanges ?? '—'}</td>
                     <td className={styles.num}>{d.channelCount}</td>

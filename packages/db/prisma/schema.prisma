@@ -55,8 +55,9 @@ model Organization {
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
 
-  users     User[]
-  campaigns Campaign[]
+  users        User[]
+  campaigns    Campaign[]
+  ownedDomains Domain[]   @relation("DomainOwner")
 
   @@map("organizations")
 }
@@ -831,10 +832,16 @@ model Domain {
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
+  /// Optional company that owns this domain. NULL = shared (any company's
+  /// campaigns may use it); set = only that company's buyers may route offers here.
+  ownerOrgId String? @map("owner_org_id") @db.Uuid
+
   afsAccount GoogleConnection @relation(fields: [afsAccountId], references: [id], onDelete: Cascade)
+  ownerOrg   Organization?    @relation("DomainOwner", fields: [ownerOrgId], references: [id], onDelete: SetNull)
   offers     Offer[]
 
   @@index([afsAccountId])
+  @@index([ownerOrgId])
   @@map("domains")
 }
 

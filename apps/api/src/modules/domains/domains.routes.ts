@@ -14,6 +14,7 @@ import {
   listDomains,
   resolveSiteConfig,
   setDomainChannels,
+  setDomainOwner,
   syncDomainChannels,
   updateDomain,
   verifyDomain,
@@ -81,6 +82,21 @@ export async function domainRoutes(app: FastifyInstance): Promise<void> {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
         return reply.send({ domain: await updateDomain(req.auth, req.params.id, req.body) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Assign / clear the company that owns a domain (null body orgId = shared).
+  app.patch<{ Params: { id: string }; Body: { orgId: string | null } }>(
+    '/:id/owner',
+    { preHandler: superOnly },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const orgId = req.body?.orgId ?? null;
+        return reply.send({ domain: await setDomainOwner(req.auth, req.params.id, orgId) });
       } catch (err) {
         return handleRouteError(err, reply);
       }
