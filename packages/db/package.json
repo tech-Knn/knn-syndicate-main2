@@ -16,11 +16,13 @@
     "bootstrap": "dotenv -e ../../.env -- tsx scripts/bootstrap-roles.ts",
     "studio": "dotenv -e ../../.env -- prisma studio",
     "seed": "dotenv -e ../../.env -- tsx prisma/seed.ts",
+    "gen:demo-articles": "dotenv -e ../../.env -- tsx scripts/generate-demo-articles.ts",
     "lint": "eslint src scripts",
     "typecheck": "tsc --noEmit",
     "test": "dotenv -e ../../.env -- vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@knn/ai": "workspace:*",
     "@knn/config": "workspace:*",
     "@prisma/client": "^6.2.1"
   },

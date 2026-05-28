@@ -231,6 +231,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@knn/ai':
+        specifier: workspace:*
+        version: link:../ai
       '@knn/config':
         specifier: workspace:*
         version: link:../config
