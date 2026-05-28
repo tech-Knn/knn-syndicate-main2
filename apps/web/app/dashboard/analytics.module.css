@@ -1,0 +1,157 @@
+.toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.toolbarRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+.spacer {
+  flex: 1;
+}
+.search {
+  flex: 1;
+  min-width: 14rem;
+  padding: 0.5rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--cream);
+  font-size: 0.85rem;
+}
+.search:focus {
+  outline: none;
+  border-color: var(--rust);
+}
+.filterSelect {
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--cream);
+  font-size: 0.82rem;
+  max-width: 14rem;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.chip {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-2);
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s ease;
+}
+.chip:hover {
+  border-color: var(--border-strong);
+  color: var(--cream);
+}
+.chipActive {
+  background: rgba(var(--rust-rgb), 0.18);
+  border-color: var(--rust);
+  color: var(--cream);
+}
+
+.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.sortable:hover {
+  color: var(--cream);
+}
+.arrow {
+  color: var(--rust);
+  font-size: 0.7rem;
+  margin-left: 0.15rem;
+}
+
+.totalsRow td {
+  font-weight: 600;
+  border-top: 2px solid var(--border-strong);
+  color: var(--cream);
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+.pagerBtn {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--cream);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.pagerBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.pageInfo {
+  font-size: 0.8rem;
+  color: var(--muted-2);
+  font-family: var(--font-mono);
+}
+
+.clickRow {
+  cursor: pointer;
+}
+.clickRow:hover {
+  background: var(--surface-2);
+}
+.caret {
+  display: inline-block;
+  width: 0.9rem;
+  color: var(--muted);
+  transition: transform 0.12s ease;
+}
+.caretOpen {
+  transform: rotate(90deg);
+  color: var(--rust);
+}
+.detail {
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+.adSet {
+  margin-bottom: 0.5rem;
+}
+.adSetName {
+  font-size: 0.78rem;
+  color: var(--gold);
+  margin-bottom: 0.25rem;
+}
+.adRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 0.25rem 0;
+  font-size: 0.8rem;
+  color: var(--muted-2);
+}
+.adName {
+  min-width: 12rem;
+  color: var(--cream);
+}
+.pos {
+  color: var(--green);
+}
+.neg {
+  color: var(--red);
+}
