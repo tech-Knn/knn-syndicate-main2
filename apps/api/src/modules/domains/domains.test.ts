@@ -1,0 +1,115 @@
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { prisma, withSystem } from '@knn/db';
+import { closeQueues } from '@knn/queue';
+import { ROLES, USER_STATUS } from '@knn/shared';
+import { encryptToken } from '@knn/fb';
+import {
+  createDomain,
+  deleteDomain,
+  listDomains,
+  syncDomainChannels,
+  verifyDomain,
+} from './domains.service.js';
+
+const suffix = Date.now().toString(36);
+const HOST = `articles-${suffix}.example.com`;
+const CH = String(80000 + (Date.now() % 9000)); // numeric, high range (avoid pool-scan pollution)
+
+let orgId = '';
+let userId = '';
+let afsId = '';
+let buyerId = '';
+let campaignId = '';
+const auth = () => ({ userId, orgId, role: ROLES.SUPER_ADMIN, status: USER_STATUS.ACTIVE });
+
+function stubFetch(body: unknown, ok = true): typeof fetch {
+  return (async () => ({ ok, status: ok ? 200 : 404, json: async () => body, text: async () => JSON.stringify(body) }) as Response) as unknown as typeof fetch;
+}
+/** AdSense customchannels stub for the per-domain sync (one channel in range). */
+function adsenseStub(): typeof fetch {
+  return (async (url: unknown) => {
+    const u = String(url);
+    const body = u.includes('/customchannels')
+      ? { customChannels: [{ name: `accounts/p/adclients/c/customchannels/${CH}`, displayName: 'Auto US' }] }
+      : {};
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) } as Response;
+  }) as unknown as typeof fetch;
+}
+
+beforeAll(async () => {
+  await withSystem(async (tx) => {
+    orgId = (await tx.organization.create({ data: { name: 'Dom Co', slug: `dom-${suffix}` } })).id;
+    userId = (await tx.user.create({ data: { orgId, email: `dom-s-${suffix}@a.com`, name: 'S', passwordHash: 'x', role: ROLES.SUPER_ADMIN, status: USER_STATUS.ACTIVE } })).id;
+    buyerId = (await tx.user.create({ data: { orgId, email: `dom-b-${suffix}@a.com`, name: 'B', passwordHash: 'x', role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE } })).id;
+    afsId = (await tx.googleConnection.create({
+      data: {
+        accessTokenEnc: encryptToken('fake-access'),
+        tokenExpiresAt: new Date(Date.now() + 3_600_000),
+        adsenseAccount: `accounts/pub-${suffix}`,
+        adsenseAdClient: `accounts/pub-${suffix}/adclients/partner-pub-${suffix}`,
+        afsPubId: `partner-pub-${suffix}`,
+        label: 'AFS Test',
+        status: 'ACTIVE',
+      },
+    })).id;
+    campaignId = (await tx.campaign.create({ data: { orgId, buyerId, name: 'c', status: 'ACTIVE', keywords: [] } })).id;
+  });
+});
+
+afterEach(() => vi.unstubAllGlobals());
+
+afterAll(async () => {
+  await withSystem(async (tx) => {
+    await tx.channel.deleteMany({ where: { channelId: CH } });
+    await tx.googleConnection.deleteMany({ where: { id: afsId } }); // cascades domains
+    await tx.organization.deleteMany({ where: { id: orgId } });
+  });
+  await closeQueues();
+  await prisma.$disconnect();
+});
+
+describe('domain management', () => {
+  let domainId = '';
+
+  it('creates a domain (PENDING_DNS, mapped to its AFS pubId)', async () => {
+    const d = await createDomain(auth(), { host: HOST, afsAccountId: afsId, channelRanges: `${CH}-${CH}` });
+    domainId = d.id;
+    expect(d.host).toBe(HOST);
+    expect(d.status).toBe('PENDING_DNS');
+    expect(d.afsPubId).toBe(`partner-pub-${suffix}`);
+    expect(d.verifyToken).toBeTruthy();
+  });
+
+  it('rejects a duplicate host', async () => {
+    await expect(createDomain(auth(), { host: HOST, afsAccountId: afsId })).rejects.toThrow('already registered');
+  });
+
+  it('verify → LIVE when the host serves the article app', async () => {
+    const d = await verifyDomain(auth(), domainId, { fetch: stubFetch({ ok: true, app: 'knn-article', host: HOST }) });
+    expect(d.status).toBe('LIVE');
+    expect(d.verifiedAt).toBeTruthy();
+  });
+
+  it('verify → ERROR when the host is unreachable', async () => {
+    const d = await verifyDomain(auth(), domainId, { fetch: stubFetch({}, false) });
+    expect(d.status).toBe('ERROR');
+  });
+
+  it('per-domain sync imports the range, tagging channels with domainId', async () => {
+    vi.stubGlobal('fetch', adsenseStub());
+    const r = await syncDomainChannels(auth(), domainId, `${CH}-${CH}`);
+    expect(r.synced).toBe(1);
+    const ch = await withSystem((tx) => tx.channel.findUnique({ where: { channelId: CH } }));
+    expect(ch?.domainId).toBe(domainId);
+    const mine = (await listDomains()).find((x) => x.id === domainId);
+    expect(mine?.channelCount).toBe(1);
+  });
+
+  it('blocks delete while offers reference the domain, allows it after', async () => {
+    await withSystem((tx) => tx.offer.create({ data: { orgId, campaignId, domainId, weightPct: 100, kind: 'PAID' } }));
+    await expect(deleteDomain(auth(), domainId)).rejects.toThrow('live offers');
+    await withSystem((tx) => tx.offer.deleteMany({ where: { domainId } }));
+    await deleteDomain(auth(), domainId);
+    expect((await listDomains()).find((d) => d.id === domainId)).toBeUndefined();
+  });
+});

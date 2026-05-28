@@ -159,6 +159,23 @@ export interface PublicUser {
 
 export type UserAction = 'approve' | 'reject' | 'suspend' | 'reactivate';
 
+export interface DomainRow {
+  id: string;
+  host: string;
+  afsAccountId: string;
+  afsLabel: string | null;
+  afsPubId: string | null;
+  channelRanges: string | null;
+  styleId: string | null;
+  adsafe: string | null;
+  status: string;
+  verifyToken: string;
+  verifiedAt: string | null;
+  lastCheck: string | null;
+  channelCount: number;
+  createdAt: string;
+}
+
 export interface AfsAccountRow {
   id: string;
   label: string | null;

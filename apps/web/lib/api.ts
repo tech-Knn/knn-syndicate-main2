@@ -4,6 +4,7 @@ import {
   type AfsAccountRow,
   type Campaign,
   type ConnectionStatus,
+  type DomainRow,
   type FbAccount,
   type FbPage,
   type FbPixel,
@@ -394,6 +395,22 @@ export const adsense = {
       }),
     ),
   disconnect: async (): Promise<void> => parse(await authedFetch('/api/adsense/connection', { method: 'DELETE' })),
+};
+
+export const domains = {
+  list: async (): Promise<{ domains: DomainRow[]; dns: { cnameTarget: string } }> =>
+    parse(await authedFetch('/api/domains')),
+  create: async (input: { host: string; afsAccountId: string; channelRanges?: string; styleId?: string; adsafe?: string }): Promise<DomainRow> =>
+    (await parse<{ domain: DomainRow }>(await authedFetch('/api/domains', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(input) }))).domain,
+  update: async (id: string, input: Partial<{ afsAccountId: string; channelRanges: string; styleId: string; adsafe: string }>): Promise<DomainRow> =>
+    (await parse<{ domain: DomainRow }>(await authedFetch(`/api/domains/${id}`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify(input) }))).domain,
+  verify: async (id: string): Promise<DomainRow> =>
+    (await parse<{ domain: DomainRow }>(await authedFetch(`/api/domains/${id}/verify`, { method: 'POST' }))).domain,
+  sync: async (id: string, ranges?: string): Promise<{ synced: number; added: number; ranges: string }> =>
+    parse(await authedFetch(`/api/domains/${id}/sync`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ ranges }) })),
+  remove: async (id: string): Promise<void> => {
+    await authedFetch(`/api/domains/${id}`, { method: 'DELETE' });
+  },
 };
 
 export const uploads = {

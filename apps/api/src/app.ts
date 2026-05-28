@@ -7,6 +7,7 @@ import { env, rootVersion } from '@knn/config';
 import { adminRoutes } from './modules/admin/admin.routes.js';
 import { adsenseRoutes } from './modules/adsense/adsense.routes.js';
 import { publicArticleRoutes } from './modules/articles/articles.routes.js';
+import { domainRoutes } from './modules/domains/domains.routes.js';
 import { internalRoutes } from './modules/internal/internal.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
 import { campaignRoutes } from './modules/campaigns/campaigns.routes.js';
@@ -55,6 +56,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(adminRoutes, { prefix: '/api/admin' });
   await app.register(facebookRoutes, { prefix: '/api/facebook' });
   await app.register(adsenseRoutes, { prefix: '/api/adsense' });
+  await app.register(domainRoutes, { prefix: '/api/domains' });
   await app.register(campaignRoutes, { prefix: '/api/campaigns' });
   await app.register(statsRoutes, { prefix: '/api/stats' });
   await app.register(uploadRoutes, { prefix: '/api/uploads' });
