@@ -74,6 +74,14 @@ export interface AdPerf {
 export interface AdSetPerf {
   id: string;
   name: string;
+  /** Rolled-up metrics across the ad set's ads (so the tree shows numbers at every level). */
+  spendUsd: number;
+  revenueUsd: number;
+  profitUsd: number;
+  roi: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
   ads: AdPerf[];
 }
 

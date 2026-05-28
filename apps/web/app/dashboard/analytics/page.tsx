@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   type CampaignBreakdown,
   type CampaignPerf,
+  type OfferStat,
   addBusinessDays,
   currentBusinessDay,
   formatUsd,
@@ -370,28 +371,7 @@ export default function AnalyticsPage() {
                       {open && (
                         <tr>
                           <td colSpan={colSpan}>
-                            {!bd ? (
-                              <Skeleton className={admin.rowSkel} />
-                            ) : bd.adSets.length === 0 ? (
-                              <p className={admin.subtle}>No ad sets.</p>
-                            ) : (
-                              <div className={styles.detail}>
-                                {bd.adSets.map((set) => (
-                                  <div key={set.id} className={styles.adSet}>
-                                    <div className={styles.adSetName}>{set.name}</div>
-                                    {set.ads.map((ad) => (
-                                      <div key={ad.id} className={styles.adRow}>
-                                        <span className={styles.adName}>{ad.name}</span>
-                                        <span>{num(ad.spendUsd)} spend</span>
-                                        <span>{num(ad.revenueUsd)} rev</span>
-                                        <span className={ad.profitUsd >= 0 ? styles.pos : styles.neg}>{num(ad.profitUsd)} profit</span>
-                                        <span>{ad.conversions} conv</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
+                            <CampaignDetail campaignId={r.id} bd={bd} range={range} />
                           </td>
                         </tr>
                       )}
@@ -440,4 +420,120 @@ export default function AnalyticsPage() {
 
 function FragmentRow({ children }: { children: React.ReactNode }): React.ReactNode {
   return <>{children}</>;
+}
+
+// Generic per-row derived metrics (works for ad sets + ads, which share these fields).
+type Metricable = { spendUsd: number; revenueUsd: number; impressions: number; clicks: number; conversions: number };
+const dCpa = (r: Metricable): string => (r.conversions ? formatUsd(r.spendUsd / r.conversions) : '—');
+const dCpc = (r: Metricable): string => (r.clicks ? formatUsd(r.spendUsd / r.clicks) : '—');
+const dCtr = (r: Metricable): string => `${(r.impressions ? (r.clicks / r.impressions) * 100 : 0).toFixed(2)}%`;
+
+/** The expandable campaign panel: a Campaign→AdSet→Ad tree + a per-offer/domain view. */
+function CampaignDetail({ campaignId, bd, range }: { campaignId: string; bd: CampaignBreakdown | undefined; range: DateRange }): React.ReactNode {
+  const [tab, setTab] = useState<'structure' | 'offers'>('structure');
+  const [offers, setOffers] = useState<OfferStat[] | null>(null);
+
+  useEffect(() => {
+    if (tab === 'offers' && offers === null) {
+      void stats.campaignOffers(campaignId, range).then(setOffers).catch(() => setOffers([]));
+    }
+  }, [tab, offers, campaignId, range]);
+
+  const money = (n: number): string => formatUsd(n);
+
+  return (
+    <div className={styles.detail}>
+      <div className={styles.detailTabs}>
+        <button type="button" className={`${styles.detailTab} ${tab === 'structure' ? styles.detailTabActive : ''}`} onClick={() => setTab('structure')}>
+          Structure (ad sets → ads)
+        </button>
+        <button type="button" className={`${styles.detailTab} ${tab === 'offers' ? styles.detailTabActive : ''}`} onClick={() => setTab('offers')}>
+          By offer / domain
+        </button>
+      </div>
+
+      {tab === 'structure' ? (
+        !bd ? (
+          <Skeleton className={admin.rowSkel} />
+        ) : bd.adSets.length === 0 ? (
+          <p className={admin.subtle}>No ad sets.</p>
+        ) : (
+          <table className={admin.table}>
+            <thead>
+              <tr>
+                <th className={admin.thLeft}>Ad set / Ad</th>
+                <th className={admin.thLeft}>Spend</th>
+                <th className={admin.thLeft}>Revenue</th>
+                <th className={admin.thLeft}>Profit</th>
+                <th className={admin.thLeft}>ROAS</th>
+                <th className={admin.thLeft}>Conv</th>
+                <th className={admin.thLeft}>CPA</th>
+                <th className={admin.thLeft}>CPC</th>
+                <th className={admin.thLeft}>CTR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bd.adSets.map((set) => (
+                <FragmentRow key={set.id}>
+                  <tr className={styles.setRow}>
+                    <td>{set.name}</td>
+                    <td>{money(set.spendUsd)}</td>
+                    <td>{money(set.revenueUsd)}</td>
+                    <td className={set.profitUsd >= 0 ? styles.pos : styles.neg}>{money(set.profitUsd)}</td>
+                    <td>{set.roi.toFixed(2)}×</td>
+                    <td>{set.conversions.toLocaleString()}</td>
+                    <td>{dCpa(set)}</td>
+                    <td>{dCpc(set)}</td>
+                    <td>{dCtr(set)}</td>
+                  </tr>
+                  {set.ads.map((ad) => (
+                    <tr key={ad.id}>
+                      <td className={styles.adIndent}>{ad.name}</td>
+                      <td>{money(ad.spendUsd)}</td>
+                      <td>{money(ad.revenueUsd)}</td>
+                      <td className={ad.profitUsd >= 0 ? styles.pos : styles.neg}>{money(ad.profitUsd)}</td>
+                      <td>{ad.roi.toFixed(2)}×</td>
+                      <td>{ad.conversions.toLocaleString()}</td>
+                      <td>{dCpa(ad)}</td>
+                      <td>{dCpc(ad)}</td>
+                      <td>{dCtr(ad)}</td>
+                    </tr>
+                  ))}
+                </FragmentRow>
+              ))}
+            </tbody>
+          </table>
+        )
+      ) : offers === null ? (
+        <Skeleton className={admin.rowSkel} />
+      ) : offers.length === 0 ? (
+        <p className={admin.subtle}>No offers on this campaign (single-domain or legacy).</p>
+      ) : (
+        <table className={admin.table}>
+          <thead>
+            <tr>
+              <th className={admin.thLeft}>Domain</th>
+              <th className={admin.thLeft}>Kind</th>
+              <th className={admin.thLeft}>Weight</th>
+              <th className={admin.thLeft}>Revenue</th>
+              <th className={admin.thLeft}>AFS clicks</th>
+              <th className={admin.thLeft}>RPC</th>
+            </tr>
+          </thead>
+          <tbody>
+            {offers.map((o) => (
+              <tr key={o.offerId}>
+                <td className={admin.name}>{o.host}</td>
+                <td className={admin.subtle}>{o.kind === 'PAID' ? 'Paid' : 'Organic'}</td>
+                <td>{o.weightPct}%</td>
+                <td>{o.suppressed ? <span className={styles.suppressed}>low volume</span> : money(o.revenueUsd)}</td>
+                <td>{o.suppressed ? '—' : o.afsClicks.toLocaleString()}</td>
+                <td>{!o.suppressed && o.afsClicks ? money(o.revenueUsd / o.afsClicks) : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
 }

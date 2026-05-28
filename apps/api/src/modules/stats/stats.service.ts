@@ -262,10 +262,8 @@ export async function getCampaignBreakdown(
     let tClicks = 0;
     let tConv = 0;
 
-    const adSets: AdSetPerf[] = campaign.adSets.map((set) => ({
-      id: set.id,
-      name: set.name,
-      ads: set.ads.map((ad): AdPerf => {
+    const adSets: AdSetPerf[] = campaign.adSets.map((set) => {
+      const ads = set.ads.map((ad): AdPerf => {
         const s = statsMap.get(ad.id);
         const spendUsd = round2(centsToDollars(s?.spendUsdMinor ?? 0));
         const revenueUsd = round2(centsToDollars(revByAd.get(ad.id) ?? 0));
@@ -286,8 +284,23 @@ export async function getCampaignBreakdown(
           conversions: s?.conversions ?? 0,
           basis: basisByAd.get(ad.id) ?? null,
         };
-      }),
-    }));
+      });
+      // Roll the ads up to the ad-set level so the tree has numbers at every level.
+      const setSpend = round2(ads.reduce((a, x) => a + x.spendUsd, 0));
+      const setRev = round2(ads.reduce((a, x) => a + x.revenueUsd, 0));
+      return {
+        id: set.id,
+        name: set.name,
+        spendUsd: setSpend,
+        revenueUsd: setRev,
+        profitUsd: round2(setRev - setSpend),
+        roi: roiOf(setRev, setSpend),
+        impressions: ads.reduce((a, x) => a + x.impressions, 0),
+        clicks: ads.reduce((a, x) => a + x.clicks, 0),
+        conversions: ads.reduce((a, x) => a + x.conversions, 0),
+        ads,
+      };
+    });
 
     const totals: MetricTotals = {
       spendUsd: round2(tSpend),
