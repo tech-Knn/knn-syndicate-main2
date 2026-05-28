@@ -11,6 +11,7 @@ import {
   handleCallback,
   listAfsAccounts,
   setAccountLabel,
+  syncChannelCatalog,
   syncChannels,
 } from './adsense.service.js';
 
@@ -62,6 +63,16 @@ export async function adsenseRoutes(app: FastifyInstance): Promise<void> {
     try {
       await disconnectAccount(req.auth, req.params.id);
       return reply.code(204).send();
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // Sync the account's full ~100k channel list into the local catalog (instant browse).
+  app.post<{ Params: { id: string } }>('/accounts/:id/catalog/sync', { preHandler: superOnly }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await syncChannelCatalog(req.auth, req.params.id));
     } catch (err) {
       return handleRouteError(err, reply);
     }

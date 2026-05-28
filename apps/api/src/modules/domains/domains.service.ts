@@ -314,8 +314,37 @@ const defaultBrowseDeps: BrowseChannelsDeps = {
   fetchChannels: (token, adClient, max) => listCustomChannels(token, adClient, undefined, max),
 };
 
-/** How many of the account's channels to scan per browse (bounds the 100k-channel account). */
+/** How many of the account's channels to scan per LIVE browse (bounds the 100k account). */
 const CHANNEL_SCAN_CAP = 20000;
+
+interface AfsAccountConn {
+  id: string;
+  adsenseAdClient: string | null;
+  accessTokenEnc: string;
+  refreshTokenEnc: string | null;
+  tokenExpiresAt: Date;
+}
+
+/**
+ * Where the channel browser gets an account's channels: the LOCAL catalog (synced from
+ * AdSense — instant, full 100k coverage) when populated, else a bounded LIVE API scan
+ * (for accounts not yet catalog-synced + the test path). Sync the catalog from the
+ * Platform page to make 100k-channel browsing fast.
+ */
+async function accountChannelSource(
+  afsAccount: AfsAccountConn,
+  deps: BrowseChannelsDeps,
+): Promise<{ channelId: string; displayName?: string }[]> {
+  const cat = await withSystem((tx) =>
+    tx.afsChannelCatalog.findMany({ where: { afsAccountId: afsAccount.id }, select: { channelId: true, displayName: true } }),
+  );
+  if (cat.length > 0) return cat.map((c) => ({ channelId: c.channelId, displayName: c.displayName ?? undefined }));
+  if (!afsAccount.adsenseAdClient) {
+    throw new AppError(409, "The domain's AFS account has no channel catalog yet — sync it from the Platform page (or reconnect the account)");
+  }
+  const token = await freshTokenFor(afsAccount);
+  return deps.fetchChannels(token, afsAccount.adsenseAdClient, CHANNEL_SCAN_CAP);
+}
 
 /**
  * Browse a domain's AFS account custom channels by name/id (Phase: channel selection).
@@ -333,10 +362,8 @@ export async function listDomainAfsChannels(
   void actor;
   const domain = await withSystem((tx) => tx.domain.findUnique({ where: { id }, include: { afsAccount: true } }));
   if (!domain) throw new AppError(404, 'Domain not found');
-  if (!domain.afsAccount.adsenseAdClient) throw new AppError(409, "The domain's AFS account has no AFS ad client resolved — reconnect it");
 
-  const token = await freshTokenFor(domain.afsAccount);
-  const all = await deps.fetchChannels(token, domain.afsAccount.adsenseAdClient, CHANNEL_SCAN_CAP);
+  const all = await accountChannelSource(domain.afsAccount, deps);
 
   const q = (opts.q ?? '').trim().toLowerCase();
   const filtered = q
@@ -424,10 +451,8 @@ export async function importAllChannels(
 ): Promise<{ added: number; matched: number; scanned: number; cappedAt?: number }> {
   const domain = await withSystem((tx) => tx.domain.findUnique({ where: { id }, include: { afsAccount: true } }));
   if (!domain) throw new AppError(404, 'Domain not found');
-  if (!domain.afsAccount.adsenseAdClient) throw new AppError(409, "The domain's AFS account has no AFS ad client resolved — reconnect it");
 
-  const token = await freshTokenFor(domain.afsAccount);
-  const all = await deps.fetchChannels(token, domain.afsAccount.adsenseAdClient, CHANNEL_SCAN_CAP);
+  const all = await accountChannelSource(domain.afsAccount, deps);
   const q = (opts.q ?? '').trim().toLowerCase();
   const matched = q ? all.filter((c) => (c.displayName ?? '').toLowerCase().includes(q) || c.channelId.includes(q)) : all;
   const toImport = matched.slice(0, IMPORT_ALL_CAP);

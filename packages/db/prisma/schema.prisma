@@ -781,6 +781,23 @@ model GoogleConnection {
   @@map("google_connections")
 }
 
+/// Local mirror of an AFS account's custom channels (id + name), synced from the AdSense
+/// API. An account can hold ~100k channels, so browsing/searching the live API per request
+/// is slow — sync once, then search the catalog locally (instant). Selecting from the
+/// catalog imports into the usable `channels` pool. Global (no org / RLS — like channels).
+model AfsChannelCatalog {
+  id           String   @id @default(uuid()) @db.Uuid
+  afsAccountId String   @map("afs_account_id")
+  /// The AdSense custom-channel id (the `ch` value).
+  channelId    String   @map("channel_id")
+  displayName  String?  @map("display_name")
+  syncedAt     DateTime @default(now()) @map("synced_at")
+
+  @@unique([afsAccountId, channelId])
+  @@index([afsAccountId])
+  @@map("afs_channel_catalog")
+}
+
 enum DomainStatus {
   PENDING_DNS
   VERIFYING

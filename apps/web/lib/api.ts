@@ -413,6 +413,9 @@ export const adsense = {
       }),
     ),
   disconnect: async (): Promise<void> => parse(await authedFetch('/api/adsense/connection', { method: 'DELETE' })),
+  // Sync an AFS account's full channel list into the local catalog (fast browsing of ~100k).
+  syncCatalog: async (accountId: string): Promise<{ synced: number; account: string | null }> =>
+    parse(await authedFetch(`/api/adsense/accounts/${accountId}/catalog/sync`, { method: 'POST' })),
 };
 
 export const domains = {

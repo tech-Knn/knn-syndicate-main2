@@ -158,6 +158,26 @@ describe('domain management', () => {
     await withSystem((tx) => tx.channel.deleteMany({ where: { channelId: { in: ['70001', '70002', '70003'] } } }));
   });
 
+  it('browses from the local catalog when synced (no live API scan)', async () => {
+    await withSystem((tx) =>
+      tx.afsChannelCatalog.createMany({
+        data: [
+          { afsAccountId: afsId, channelId: '90001', displayName: 'Catalog One' },
+          { afsAccountId: afsId, channelId: '90002', displayName: 'Catalog Two' },
+        ],
+      }),
+    );
+    // fetchChannels throws → proves the catalog path is used (zero live API calls).
+    const deps = {
+      fetchChannels: async (): Promise<{ channelId: string; displayName?: string }[]> => {
+        throw new Error('should not hit the live AdSense API when the catalog is synced');
+      },
+    };
+    const r = await listDomainAfsChannels(auth(), domainId, { q: 'catalog' }, deps);
+    expect(r.channels.map((c) => c.channelId).sort()).toEqual(['90001', '90002']);
+    await withSystem((tx) => tx.afsChannelCatalog.deleteMany({ where: { afsAccountId: afsId } }));
+  });
+
   it('import-all pulls every (matching) channel from the API in one shot', async () => {
     const fake = [
       { channelId: '71001', displayName: 'Pihu A' },

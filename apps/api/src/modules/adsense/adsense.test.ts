@@ -11,6 +11,7 @@ import {
   handleCallback,
   listAfsAccounts,
   setAccountLabel,
+  syncChannelCatalog,
   syncChannels,
 } from './adsense.service.js';
 import { signAdsenseState } from './state.js';
@@ -146,5 +147,30 @@ describe('AdSense connect', () => {
     expect(result.ranges).toBe('90000-99999');
     const ch = await withSystem((tx) => tx.channel.findUnique({ where: { channelId: TEST_CH } }));
     expect(ch?.status).toBe('AVAILABLE');
+  });
+
+  it('syncChannelCatalog mirrors the account channels locally (wipe + reinsert)', async () => {
+    const afs = await withSystem((tx) =>
+      tx.googleConnection.create({
+        data: { accessTokenEnc: encryptToken('x'), tokenExpiresAt: new Date(Date.now() + 3_600_000), adsenseAccount: `accounts/pub-cat-${suffix}`, adsenseAdClient: `adc-cat-${suffix}`, afsPubId: `pp-cat-${suffix}`, label: 'Cat AFS', status: 'ACTIVE' },
+      }),
+    );
+    const r1 = await syncChannelCatalog(superAuth(), afs.id, {
+      listChannels: async () => [
+        { channelId: '95001', displayName: 'Team Alpha' },
+        { channelId: '95002', displayName: 'Team Beta' },
+      ],
+    });
+    expect(r1.synced).toBe(2);
+    expect(await withSystem((tx) => tx.afsChannelCatalog.count({ where: { afsAccountId: afs.id } }))).toBe(2);
+
+    // Re-sync with a different set → mirror replaces (wipe + reinsert).
+    const r2 = await syncChannelCatalog(superAuth(), afs.id, { listChannels: async () => [{ channelId: '95003', displayName: 'Team Gamma' }] });
+    expect(r2.synced).toBe(1);
+    const rows = await withSystem((tx) => tx.afsChannelCatalog.findMany({ where: { afsAccountId: afs.id }, select: { channelId: true } }));
+    expect(rows.map((r) => r.channelId)).toEqual(['95003']);
+
+    await withSystem((tx) => tx.afsChannelCatalog.deleteMany({ where: { afsAccountId: afs.id } }));
+    await withSystem((tx) => tx.googleConnection.deleteMany({ where: { id: afs.id } }));
   });
 });

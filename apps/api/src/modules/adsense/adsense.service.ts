@@ -7,6 +7,7 @@ import {
   isGoogleConfigured,
   listAccounts,
   listAdClients,
+  listCustomChannels,
   parseChannelRanges,
   refreshGoogleToken,
 } from '@knn/adsense';
@@ -271,6 +272,63 @@ export async function syncChannels(
     return fresh.length;
   });
   return { synced: channels.length, added, account: conn.adsenseAccount, ranges: spec };
+}
+
+/** Per-account fresh access token (refreshes + persists to THAT account, not 'platform'). */
+async function freshAccountToken(c: { id: string; accessTokenEnc: string; refreshTokenEnc: string | null; tokenExpiresAt: Date }): Promise<string> {
+  if (c.tokenExpiresAt.getTime() - 60_000 > Date.now()) return decryptToken(c.accessTokenEnc);
+  if (!c.refreshTokenEnc) throw new AppError(409, 'AFS access token expired and no refresh token — reconnect');
+  const r = await refreshGoogleToken(decryptToken(c.refreshTokenEnc));
+  await withSystem((tx) =>
+    tx.googleConnection.update({
+      where: { id: c.id },
+      data: { accessTokenEnc: encryptToken(r.accessToken), tokenExpiresAt: new Date(Date.now() + r.expiresInSec * 1000), status: 'ACTIVE', lastError: null },
+    }),
+  );
+  return r.accessToken;
+}
+
+/** Cap on the local catalog mirror per account (covers the ~100k-channel account + headroom). */
+const CATALOG_MAX = 200_000;
+
+export interface CatalogSyncDeps {
+  listChannels: (token: string, adClient: string, max: number) => Promise<{ channelId: string; displayName?: string }[]>;
+}
+const defaultCatalogDeps: CatalogSyncDeps = {
+  listChannels: (token, adClient, max) => listCustomChannels(token, adClient, undefined, max),
+};
+
+/**
+ * Sync an AFS account's FULL custom-channel list into the local catalog so the channel
+ * browser can search ~100k channels instantly (no live API scan per query). Mirror
+ * semantics: wipe + reinsert (batched outside one giant txn). Super-admin only.
+ */
+export async function syncChannelCatalog(
+  actor: AuthContext,
+  accountId: string,
+  deps: CatalogSyncDeps = defaultCatalogDeps,
+): Promise<{ synced: number; account: string | null }> {
+  const conn = await withSystem((tx) => tx.googleConnection.findUnique({ where: { id: accountId } }));
+  if (!conn) throw new AppError(404, 'AFS account not found');
+  if (!conn.adsenseAdClient) throw new AppError(409, 'No AFS ad client resolved yet — reconnect once AFS access is granted');
+
+  const token = await freshAccountToken(conn);
+  const channels = await deps.listChannels(token, conn.adsenseAdClient, CATALOG_MAX);
+
+  await withSystem((tx) => tx.afsChannelCatalog.deleteMany({ where: { afsAccountId: accountId } }));
+  for (let i = 0; i < channels.length; i += 1000) {
+    const batch = channels.slice(i, i + 1000);
+    await withSystem((tx) =>
+      tx.afsChannelCatalog.createMany({
+        data: batch.map((c) => ({ afsAccountId: accountId, channelId: c.channelId, displayName: c.displayName ?? null })),
+        skipDuplicates: true,
+      }),
+    );
+  }
+  await withSystem((tx) =>
+    writeAudit(tx, { orgId: actor.orgId, actorId: actor.userId, action: 'adsense.catalog.synced', entityType: 'google_connection', entityId: accountId, details: { synced: channels.length } }),
+  );
+  return { synced: channels.length, account: conn.adsenseAccount };
 }
 
 export async function disconnect(actor: AuthContext): Promise<void> {

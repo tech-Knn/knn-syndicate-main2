@@ -115,6 +115,21 @@ export default function DomainsPage() {
       return n;
     });
 
+  const syncCatalog = async (): Promise<void> => {
+    if (!chDomain) return;
+    setChBusy(true);
+    setNote('Syncing channels from AdSense… (this can take a moment for large accounts)');
+    try {
+      const r = await adsense.syncCatalog(chDomain.afsAccountId);
+      setNote(`Synced ${r.synced.toLocaleString()} channels from AdSense — browsing is now instant.`);
+      await loadChannels(chDomain.id, chQuery);
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'Could not sync the channel catalog');
+    } finally {
+      setChBusy(false);
+    }
+  };
+
   const importAll = async (): Promise<void> => {
     if (!chDomain) return;
     setChBusy(true);
@@ -321,6 +336,9 @@ export default function DomainsPage() {
             />
             <Button type="submit" variant="ghost" loading={chBusy}>
               Search
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => void syncCatalog()} disabled={chBusy} title="Pull the account's full channel list from AdSense for instant browsing">
+              Sync from AdSense
             </Button>
             <Button type="button" variant="ghost" onClick={() => void importAll()} disabled={chBusy}>
               Import all{chQuery ? ' matching' : ''}
