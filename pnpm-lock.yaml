@@ -62,6 +62,9 @@ importers:
       '@fastify/sensible':
         specifier: ^6.0.2
         version: 6.0.4
+      '@knn/adsense':
+        specifier: workspace:*
+        version: link:../../packages/adsense
       '@knn/ai':
         specifier: workspace:*
         version: link:../../packages/ai

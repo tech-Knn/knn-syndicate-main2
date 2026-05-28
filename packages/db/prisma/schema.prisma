@@ -708,3 +708,32 @@ model ConversionEvent {
   @@index([status])
   @@map("conversion_events")
 }
+
+// ---------------------------------------------------------------------------
+// Google / AdSense connection (Phase 10 follow-up). Unlike Facebook (per-buyer),
+// AdSense is a SINGLE platform account (the funnel's approved domain), so this is
+// a global singleton (no org scope / no RLS — like channels & platform_settings).
+// A SUPER_ADMIN connects it; the refresh token (offline access) is AES-256-GCM
+// encrypted at rest (same TOKEN_ENCRYPTION_KEY as FbConnection). The worker refreshes
+// the short-lived access token on demand and feeds the AdSense revenue pull (D8).
+// ---------------------------------------------------------------------------
+model GoogleConnection {
+  /// Fixed singleton id — there is one platform AdSense connection.
+  id              String   @id @default("platform")
+  googleEmail     String?  @map("google_email")
+  accessTokenEnc  String   @map("access_token_enc")
+  refreshTokenEnc String?  @map("refresh_token_enc")
+  tokenExpiresAt  DateTime @map("token_expires_at")
+  scopes          String   @default("")
+  /// AdSense resource ids discovered at connect (e.g. accounts/pub-X, .../adclients/ca-pub-X).
+  adsenseAccount  String?  @map("adsense_account")
+  adsenseAdClient String?  @map("adsense_ad_client")
+  /// ACTIVE | CONNECTION_BROKEN (string, not the FB enum, to avoid coupling).
+  status          String   @default("ACTIVE")
+  lastError       String?  @map("last_error")
+  connectedById   String?  @map("connected_by_id") @db.Uuid
+  connectedAt     DateTime @default(now()) @map("connected_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("google_connections")
+}
