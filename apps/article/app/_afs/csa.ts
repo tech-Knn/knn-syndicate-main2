@@ -21,7 +21,7 @@ const ADS_JS_ID = 'google-adsense-search';
 /** Our tracking / redirect params — Google should ignore these when generating
  *  content-based related searches (otherwise they pollute term relevance). */
 export const AFS_TRACKING_PARAMS =
-  'rc,ch,terms,txid,clickid,utm_source,utm_content,utm_campaign,utm_medium,utm_term,fbclid,hl,styleId,placement,s1,ds,camp_id';
+  'rc,ch,cid,terms,txid,clickid,utm_source,utm_content,utm_campaign,utm_medium,utm_term,fbclid,hl,styleId,placement,s1,ds,camp_id';
 
 /** Queue a CSA command and ensure ads.js is loaded to process it. */
 export function runCsa(command: 'ads' | 'relatedsearch', ...rest: unknown[]): void {

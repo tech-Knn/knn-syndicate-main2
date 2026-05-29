@@ -34,7 +34,7 @@ export function RelatedSearchUnit({
   terms?: string;
   /** The redirect click id — threaded onto /search so the conversion beacon can fire. */
   txid?: string;
-  /** The offer's AFS channel (`ch`) — tags ad requests for per-offer revenue attribution. */
+  /** The offer's AFS channel — tags ad requests for per-offer revenue attribution (forwarded to /search as `cid`). */
   channel?: string;
   /** Per-host AFS config resolved server-side (pubId/style/adsafe). */
   site: SiteConfig;
@@ -49,7 +49,10 @@ export function RelatedSearchUnit({
     const rp = new URLSearchParams();
     if (txid) rp.set('txid', txid);
     if (referrerAdCreative) rp.set('rc', referrerAdCreative);
-    if (channel) rp.set('ch', channel);
+    // Forward the channel as `cid`, NOT `ch`: Google's results unit appends its own `ch=1`
+    // click-telemetry param, so a `ch` here collides (two values → array → dropped) and the
+    // offer's AFS revenue attribution is silently lost. Every competitor uses `cid` for this.
+    if (channel) rp.set('cid', channel);
     const resultsPageBaseUrl = `${window.location.origin}/search${rp.toString() ? `?${rp.toString()}` : ''}`;
 
     const pageOptions = basePageOptions(site, {
