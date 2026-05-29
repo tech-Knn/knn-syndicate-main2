@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FbConnectionBrokenError, FbRateLimitError } from './errors.js';
+import { FbAccountRestrictedError, FbConnectionBrokenError, FbRateLimitError, classifyFbError } from './errors.js';
 import { graphRequest } from './graph.js';
 import { getMe } from './oauth.js';
 import { fetchAdAccounts } from './sync.js';
@@ -31,6 +31,35 @@ describe('graph client', () => {
       fetchReturning({ error: { code: 190, error_subcode: 460, message: 'expired' } }, { status: 400 }),
     );
     await expect(getMe('tok')).rejects.toBeInstanceOf(FbConnectionBrokenError);
+  });
+
+  it('classifies err 368 ("authenticate your account") as an account-restricted error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      fetchReturning(
+        { error: { code: 368, message: 'The action attempted has been deemed abusive or is otherwise disallowed' } },
+        { status: 400 },
+      ),
+    );
+    await expect(getMe('tok')).rejects.toBeInstanceOf(FbAccountRestrictedError);
+  });
+
+  it('classifies the account-restricted subcode 1487390 as account-restricted, not a rate limit', () => {
+    const err = classifyFbError({ code: 1, error_subcode: 1487390, message: 'restricted' }, 400);
+    expect(err).toBeInstanceOf(FbAccountRestrictedError);
+  });
+
+  it('keeps a token break (190) as a broken connection, not account-restricted', () => {
+    expect(classifyFbError({ code: 190, error_subcode: 459, message: 'checkpoint' }, 400)).toBeInstanceOf(
+      FbConnectionBrokenError,
+    );
+  });
+
+  it('extracts the checkpoint URL from error_data when present', () => {
+    const fromObj = classifyFbError({ code: 368, message: 'blocked', error_data: { url: 'https://www.facebook.com/checkpoint/123' } }, 400);
+    expect(fromObj.checkpointUrl).toBe('https://www.facebook.com/checkpoint/123');
+    const fromStr = classifyFbError({ code: 368, message: 'blocked', error_data: 'https://www.facebook.com/checkpoint/abc' }, 400);
+    expect(fromStr.checkpointUrl).toBe('https://www.facebook.com/checkpoint/abc');
   });
 
   it('classifies BUC throttle (80004) as a rate limit with retryAfterMs from the header', async () => {

@@ -179,6 +179,40 @@ describe('launchCampaign (Phase 8)', () => {
     expect(c?.status).toBe('PROCESSING'); // retryable, not stuck at LAUNCHING
   });
 
+  it('on FB account restriction (368): reverts to PROCESSING + surfaces an actionable 409 (no blind retry)', async () => {
+    const campaignId = await makeCampaign();
+    vi.mocked(fb.createFbCampaign).mockImplementationOnce(async () => {
+      throw new fb.FbAccountRestrictedError('The action attempted has been deemed abusive or is otherwise disallowed', {
+        code: 368,
+        checkpointUrl: 'https://www.facebook.com/checkpoint/xyz',
+      });
+    });
+    await expect(
+      launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('authenticate your account') });
+    const c = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { status: true } }));
+    expect(c?.status).toBe('PROCESSING'); // not stuck; relaunchable once the owner authenticates
+    // The token is fine — a restriction must NOT mark the connection broken.
+    const conn = await withSystem((tx) => tx.fbConnection.findFirst({ where: { orgId }, select: { status: true } }));
+    expect(conn?.status).not.toBe('CONNECTION_BROKEN');
+  });
+
+  it('on a token break (190) during launch: marks the connection broken + reverts to PROCESSING', async () => {
+    const campaignId = await makeCampaign();
+    vi.mocked(fb.createFbCampaign).mockImplementationOnce(async () => {
+      throw new fb.FbConnectionBrokenError('Error validating access token', { code: 190, subcode: 460 });
+    });
+    await expect(
+      launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('reconnect') });
+    const c = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { status: true } }));
+    expect(c?.status).toBe('PROCESSING');
+    const conn = await withSystem((tx) => tx.fbConnection.findFirst({ where: { orgId }, select: { status: true } }));
+    expect(conn?.status).toBe('CONNECTION_BROKEN');
+    // Restore the shared connection fixture so later tests in this file still launch.
+    await withSystem((tx) => tx.fbConnection.updateMany({ where: { orgId }, data: { status: 'ACTIVE', lastError: null } }));
+  });
+
   it('is idempotent — an already-launched campaign returns ACTIVE without re-creating', async () => {
     const campaignId = await makeCampaign();
     await withSystem((tx) => tx.campaign.update({ where: { id: campaignId }, data: { fbCampaignId: 'existing' } }));

@@ -1,4 +1,9 @@
-import { FB_RATE_LIMIT_ERROR_CODES, FB_TOKEN_ERROR_SUBCODES } from '@knn/shared';
+import {
+  FB_ACCOUNT_RESTRICTED_ERROR_CODES,
+  FB_ACCOUNT_RESTRICTED_SUBCODES,
+  FB_RATE_LIMIT_ERROR_CODES,
+  FB_TOKEN_ERROR_SUBCODES,
+} from '@knn/shared';
 
 export interface FbErrorBody {
   message?: string;
@@ -8,6 +13,8 @@ export interface FbErrorBody {
   error_user_title?: string;
   error_user_msg?: string;
   fbtrace_id?: string;
+  /** On checkpoint errors (190/459) FB returns the URL the user must visit to clear it. */
+  error_data?: { url?: string } | string;
 }
 
 interface FbErrorOpts {
@@ -17,6 +24,8 @@ interface FbErrorOpts {
   fbtraceId?: string;
   userTitle?: string;
   userMessage?: string;
+  /** A checkpoint/authentication URL the account owner must visit, when FB provides one. */
+  checkpointUrl?: string;
 }
 
 export class FbApiError extends Error {
@@ -27,6 +36,7 @@ export class FbApiError extends Error {
   /** Facebook's human-facing error_user_title / error_user_msg, when present. */
   readonly userTitle?: string;
   readonly userMessage?: string;
+  readonly checkpointUrl?: string;
 
   constructor(message: string, opts: FbErrorOpts = {}) {
     super(message);
@@ -37,6 +47,7 @@ export class FbApiError extends Error {
     this.fbtraceId = opts.fbtraceId;
     this.userTitle = opts.userTitle;
     this.userMessage = opts.userMessage;
+    this.checkpointUrl = opts.checkpointUrl;
   }
 }
 
@@ -58,8 +69,32 @@ export class FbRateLimitError extends FbApiError {
   }
 }
 
+/**
+ * The ad account is under a Facebook security/policy hold (code 368, "authenticate your
+ * account in Ads Manager"). The TOKEN is fine and reads/existing ads keep running — only
+ * create/modify is blocked until the account owner re-authenticates in the Ads Manager UI.
+ * Distinct from FbConnectionBrokenError (token break) so the app surfaces an actionable
+ * message and STOPS retrying (retries make the checkpoint worse) rather than looping.
+ */
+export class FbAccountRestrictedError extends FbApiError {
+  constructor(message: string, opts: FbErrorOpts = {}) {
+    super(message, opts);
+    this.name = 'FbAccountRestrictedError';
+  }
+}
+
 const tokenSubcodes = FB_TOKEN_ERROR_SUBCODES as readonly number[];
 const rateCodes = FB_RATE_LIMIT_ERROR_CODES as readonly number[];
+const restrictedCodes = FB_ACCOUNT_RESTRICTED_ERROR_CODES as readonly number[];
+const restrictedSubcodes = FB_ACCOUNT_RESTRICTED_SUBCODES as readonly number[];
+
+/** Pull the checkpoint URL out of FB's `error_data` (string or `{url}`), if present. */
+function extractCheckpointUrl(body: FbErrorBody): string | undefined {
+  const d = body.error_data;
+  if (!d) return undefined;
+  if (typeof d === 'string') return d.startsWith('http') ? d : undefined;
+  return d.url;
+}
 
 /** Map a Facebook Graph API error body into the right typed error. */
 export function classifyFbError(
@@ -77,10 +112,20 @@ export function classifyFbError(
     fbtraceId: body.fbtrace_id,
     userTitle: body.error_user_title,
     userMessage: body.error_user_msg,
+    checkpointUrl: extractCheckpointUrl(body),
   };
 
   if (code === 190 || (subcode !== undefined && tokenSubcodes.includes(subcode))) {
     return new FbConnectionBrokenError(message, opts);
+  }
+  // Account security/policy hold (368 "authenticate your account") — token is fine, but
+  // create/modify is blocked. Checked before the generic fallback so the launcher can
+  // surface the Ads-Manager re-auth step and stop retrying.
+  if (
+    (code !== undefined && restrictedCodes.includes(code)) ||
+    (subcode !== undefined && restrictedSubcodes.includes(subcode))
+  ) {
+    return new FbAccountRestrictedError(message, opts);
   }
   if (code !== undefined && rateCodes.includes(code)) {
     return new FbRateLimitError(message, { ...opts, retryAfterMs });

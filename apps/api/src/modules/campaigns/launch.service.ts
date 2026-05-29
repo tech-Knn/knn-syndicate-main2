@@ -3,6 +3,9 @@ import { join } from 'node:path';
 import { env } from '@knn/config';
 import { FbConnectionStatus } from '@knn/db';
 import {
+  FbAccountRestrictedError,
+  FbApiError,
+  FbConnectionBrokenError,
   FbRateLimitError,
   createFbAd,
   createFbAdCreative,
@@ -19,6 +22,7 @@ import { KvNotConfiguredError, type RedirectConfigPayload, writeRedirectConfigs 
 import { notify } from '../../lib/notify.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
+import { markConnectionBroken } from '../facebook/facebook.service.js';
 import { generateArticleForCampaign } from '../articles/articles.service.js';
 import { type CampaignWithChildren, campaignInclude, toDraft } from './campaigns.service.js';
 
@@ -42,6 +46,8 @@ interface LaunchPlan {
   token: string;
   fbAccountId: string;
   fbPageId: string;
+  /** The connection that owns the chosen ad account — so a token break can mark it (D13). */
+  connectionId: string;
   adSets: { set: StoredAdSet; fbPixelId: string | null; ads: { ad: StoredAdSet['ads'][number]; storageKey: string | null }[] }[];
 }
 
@@ -80,7 +86,7 @@ async function resolveLaunchPlan(auth: AuthContext, campaignId: string): Promise
     const [adAccount, page] = await Promise.all([
       tx.fbAdAccount.findUnique({
         where: { id: campaign.adAccountId },
-        select: { fbAccountId: true, connection: { select: { accessTokenEnc: true, status: true } } },
+        select: { fbAccountId: true, connection: { select: { id: true, accessTokenEnc: true, status: true } } },
       }),
       tx.fbPage.findUnique({ where: { id: campaign.pageId }, select: { fbPageId: true } }),
     ]);
@@ -106,7 +112,14 @@ async function resolveLaunchPlan(auth: AuthContext, campaignId: string): Promise
       }),
     );
 
-    return { campaign, token: decryptToken(adAccount.connection.accessTokenEnc), fbAccountId: adAccount.fbAccountId, fbPageId: page.fbPageId, adSets };
+    return {
+      campaign,
+      token: decryptToken(adAccount.connection.accessTokenEnc),
+      fbAccountId: adAccount.fbAccountId,
+      fbPageId: page.fbPageId,
+      connectionId: adAccount.connection.id,
+      adSets,
+    };
   });
 }
 
@@ -135,17 +148,17 @@ export async function setCampaignActive(
     if (campaign.status !== CAMPAIGN_STATUS.ACTIVE && campaign.status !== CAMPAIGN_STATUS.PAUSED) {
       throw new AppError(409, `Only an active or paused campaign can be ${active ? 'resumed' : 'paused'}`);
     }
-    let fb: { fbCampaignId: string; fbAccountId: string; token: string } | null = null;
+    let fb: { fbCampaignId: string; fbAccountId: string; token: string; connectionId: string } | null = null;
     if (campaign.fbCampaignId && campaign.adAccountId) {
       const acc = await tx.fbAdAccount.findUnique({
         where: { id: campaign.adAccountId },
-        select: { fbAccountId: true, connection: { select: { accessTokenEnc: true, status: true } } },
+        select: { fbAccountId: true, connection: { select: { id: true, accessTokenEnc: true, status: true } } },
       });
       if (!acc) throw new AppError(400, 'Selected ad account no longer exists');
       if (acc.connection.status === FbConnectionStatus.CONNECTION_BROKEN) {
         throw new AppError(409, 'Facebook connection is broken — reconnect first');
       }
-      fb = { fbCampaignId: campaign.fbCampaignId, fbAccountId: acc.fbAccountId, token: decryptToken(acc.connection.accessTokenEnc) };
+      fb = { fbCampaignId: campaign.fbCampaignId, fbAccountId: acc.fbAccountId, token: decryptToken(acc.connection.accessTokenEnc), connectionId: acc.connection.id };
     }
     return { done: false as const, orgId: campaign.orgId, fb };
   });
@@ -157,6 +170,18 @@ export async function setCampaignActive(
       await updateFbCampaignStatus(plan.fb.fbCampaignId, plan.fb.fbAccountId, plan.fb.token, active ? 'ACTIVE' : 'PAUSED');
     } catch (err) {
       if (err instanceof FbRateLimitError) throw new AppError(429, 'Facebook is rate-limiting — try again in a moment');
+      // Pause/resume is also a "modify" — same account security hold applies (FB code 368).
+      if (err instanceof FbAccountRestrictedError) {
+        throw new AppError(
+          409,
+          'Facebook has temporarily restricted this ad account for security ("authenticate your account in Ads Manager"). The account owner must complete the authentication prompt in Ads Manager, then try again.' +
+            (err.checkpointUrl ? ` Authenticate here: ${err.checkpointUrl}` : ''),
+        );
+      }
+      if (err instanceof FbConnectionBrokenError) {
+        await markConnectionBroken(plan.fb.connectionId, err.message).catch(() => undefined);
+        throw new AppError(409, 'This Facebook connection has expired or been revoked — reconnect the profile in Settings → Facebook, then try again.');
+      }
       throw err;
     }
   }
@@ -400,8 +425,9 @@ export async function launchCampaign(
     }
   });
 
+  let plan: LaunchPlan | undefined;
   try {
-    const plan = await resolveLaunchPlan(auth, campaignId);
+    plan = await resolveLaunchPlan(auth, campaignId);
     const result = await createFbStructure(plan, 'ACTIVE');
     await persistFbIds(auth, campaignId, result);
     await runScoped(auth, async (tx) => {
@@ -424,18 +450,56 @@ export async function launchCampaign(
     });
     return { status: 'ACTIVE', fbCampaignId: result.fbCampaignId };
   } catch (err) {
+    // Always log the FB error detail (code/subcode/fbtrace) — this was previously lost,
+    // making restrictions impossible to diagnose from the logs.
+    if (err instanceof FbApiError) {
+      console.error(
+        `[launch] Facebook error on campaign ${campaignId}: code=${err.code ?? '?'} subcode=${err.subcode ?? '?'} fbtrace=${err.fbtraceId ?? '?'} :: ${err.message}`,
+      );
+    }
+
     if (err instanceof FbRateLimitError) {
       await runScoped(auth, (tx) =>
         tx.campaign.update({ where: { id: campaignId }, data: { status: CAMPAIGN_STATUS.BATCHED } }),
       );
       return { status: 'BATCHED' };
     }
-    // Any other failure (FB rejection, creative/pixel error, …): revert LAUNCHING →
-    // PROCESSING so the campaign isn't stuck and an admin can fix + relaunch. The real
-    // error is rethrown to the caller (surfaced in the UI).
+
+    // Everything below reverts LAUNCHING → PROCESSING so the campaign isn't stuck and can
+    // be relaunched once the underlying issue is fixed.
     await runScoped(auth, (tx) =>
       tx.campaign.update({ where: { id: campaignId }, data: { status: CAMPAIGN_STATUS.PROCESSING } }),
     ).catch(() => undefined);
+
+    // Ad-account security/policy hold (FB code 368 "authenticate your account in Ads
+    // Manager"). The token is fine and existing ads keep running — only create/modify is
+    // blocked until the OWNER re-authenticates in Ads Manager. Do NOT auto-retry (retries
+    // make the checkpoint worse): notify, then surface a clear, actionable 409.
+    if (err instanceof FbAccountRestrictedError) {
+      const detail = err.userMessage ?? err.message;
+      await notify({
+        orgId: campaign.orgId,
+        userId: campaign.buyerId,
+        type: 'fb_account_restricted',
+        title: 'Facebook needs you to authenticate your ad account',
+        body: `"${campaign.name}" couldn't launch: Facebook has temporarily restricted this ad account for security. The account owner must open Ads Manager and complete "Authenticate your account" (a 6-digit code is emailed). Existing ads keep running. Then relaunch.`,
+      }).catch(() => undefined);
+      throw new AppError(
+        409,
+        'Facebook has temporarily restricted this ad account for security ("authenticate your account in Ads Manager"). The account owner must open Ads Manager and complete the authentication prompt (Facebook emails a 6-digit code), then relaunch. Existing ads keep running.' +
+          (err.checkpointUrl ? ` Authenticate here: ${err.checkpointUrl}` : '') +
+          (detail ? ` (Facebook: ${detail})` : ''),
+      );
+    }
+
+    // Token break (err 190 / token subcodes) — flip the connection to CONNECTION_BROKEN
+    // (D13: polling/launches stop until reconnect) + clear reconnect message.
+    if (err instanceof FbConnectionBrokenError) {
+      if (plan?.connectionId) await markConnectionBroken(plan.connectionId, err.message).catch(() => undefined);
+      throw new AppError(409, 'This Facebook connection has expired or been revoked — reconnect the profile in Settings → Facebook, then relaunch.');
+    }
+
+    // Any other failure (FB rejection, creative/pixel error, …): rethrow for the UI.
     throw err;
   }
 }

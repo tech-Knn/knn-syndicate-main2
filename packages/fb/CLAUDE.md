@@ -13,8 +13,14 @@ library — no DB, no HTTP server. The API/worker apps own persistence and notif
   are user-scoped and intentionally ungated; `/act_<id>/...` calls pass `accountId`.
 - **Error classification is the contract** (`classifyFbError`): code 190 or a token subcode
   (458/459/460/463/466/467) → `FbConnectionBrokenError` (→ the app flips the connection to
-  `CONNECTION_BROKEN` and degrades, D13). Codes 4/17/32/613/80000/80003/80004 → `FbRateLimitError`
-  (the limiter retries with backoff, then trips the breaker). Everything else → `FbApiError`.
+  `CONNECTION_BROKEN` and degrades, D13). Code **368** (or subcode 1487390) → `FbAccountRestrictedError`
+  — the ad ACCOUNT is under a security/policy hold ("authenticate your account in Ads Manager"); the
+  token is fine and reads/existing ads keep running, only create/modify is blocked until the owner
+  re-authenticates in the UI. The launcher reverts to PROCESSING + notifies + surfaces an actionable
+  409 and does **not** retry (retries worsen the checkpoint) — it must NOT mark the connection broken.
+  Codes 4/17/32/613/80000/80003/80004 → `FbRateLimitError` (the limiter retries with backoff, then
+  trips the breaker). Everything else → `FbApiError`. `error_data` (string or `{url}`) is parsed into
+  `err.checkpointUrl` when FB returns a checkpoint link.
 - **Backoff hint** comes from `x-business-use-case-usage` (`estimated_time_to_regain_access`, in
   **minutes** → ms) or `retry-after` (seconds). The limiter prefers `err.retryAfterMs` over its own
   exponential schedule.
