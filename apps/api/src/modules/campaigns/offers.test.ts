@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { prisma, withSystem } from '@knn/db';
 import { closeQueues } from '@knn/queue';
@@ -37,6 +38,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await withSystem(async (tx) => {
     await tx.campaign.deleteMany({ where: { orgId } }); // cascades offers
+    await tx.article.deleteMany({ where: { orgId } });
     await tx.domain.deleteMany({ where: { afsAccountId: afsId } });
     await tx.googleConnection.deleteMany({ where: { id: afsId } });
     await tx.organization.deleteMany({ where: { id: orgId } });
@@ -59,6 +61,36 @@ describe('campaign offers', () => {
     const replaced = await setOffers(auth(), campaignId, [{ domainId: domLiveA, weightPct: 100, kind: 'PAID' }]);
     expect(replaced).toHaveLength(1);
     expect((await listOffers(auth(), campaignId)).length).toBe(1);
+  });
+
+  it('sets a per-offer article VARIANT (A/B) and returns its title', async () => {
+    const variant = await withSystem((tx) =>
+      tx.article.create({ data: { orgId, slug: `off-variant-${suffix}`, title: 'Off Variant', rawContent: 'r', compliantContent: 'c', status: 'READY' } }),
+    );
+    const rows = await setOffers(auth(), campaignId, [
+      { domainId: domLiveA, weightPct: 50, kind: 'PAID', articleId: variant.id },
+      { domainId: domLiveB, weightPct: 50, kind: 'PAID' }, // default article
+    ]);
+    const a = rows.find((r) => r.domainId === domLiveA)!;
+    const b = rows.find((r) => r.domainId === domLiveB)!;
+    expect(a.articleId).toBe(variant.id);
+    expect(a.articleTitle).toBe('Off Variant');
+    expect(b.articleId).toBeNull();
+  });
+
+  it('rejects an unknown article variant', async () => {
+    await expect(
+      setOffers(auth(), campaignId, [{ domainId: domLiveA, weightPct: 100, kind: 'PAID', articleId: randomUUID() }]),
+    ).rejects.toBeInstanceOf(AppError);
+  });
+
+  it('rejects a non-READY article variant', async () => {
+    const draftArticle = await withSystem((tx) =>
+      tx.article.create({ data: { orgId, slug: `off-draft-${suffix}`, title: 'Draft', rawContent: 'r', compliantContent: 'c', status: 'GENERATING' } }),
+    );
+    await expect(
+      setOffers(auth(), campaignId, [{ domainId: domLiveA, weightPct: 100, kind: 'PAID', articleId: draftArticle.id }]),
+    ).rejects.toBeInstanceOf(AppError);
   });
 
   it('rejects more than one organic offer', async () => {

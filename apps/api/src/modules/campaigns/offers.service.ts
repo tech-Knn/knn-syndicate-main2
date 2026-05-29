@@ -25,18 +25,42 @@ export interface OfferRow {
   channelId: string | null;
   /** The domain's verify status (PENDING_DNS / VERIFYING / LIVE / ERROR). */
   domainStatus: string;
+  /** Article VARIANT for this offer (A/B testing); null → the campaign's default article. */
+  articleId: string | null;
+  /** Display title of the article variant, when set. */
+  articleTitle: string | null;
 }
 
 export interface OfferInput {
   domainId: string;
   weightPct: number;
   kind: 'PAID' | 'ORGANIC';
+  /** Optional article variant (A/B): must be a READY article in the buyer's org. */
+  articleId?: string | null;
 }
 
 export interface OfferDomainOption {
   id: string;
   host: string;
   afsLabel: string | null;
+}
+
+export interface ArticleVariantOption {
+  id: string;
+  title: string;
+  slug: string;
+}
+
+/** READY articles in the buyer's org — the options for an offer's article-variant (A/B) picker. */
+export async function listArticleVariants(auth: AuthContext): Promise<ArticleVariantOption[]> {
+  return runScoped(auth, (tx) =>
+    tx.article.findMany({
+      where: { status: 'READY' },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      select: { id: true, title: true, slug: true },
+    }),
+  );
 }
 
 /**
@@ -89,6 +113,11 @@ export async function listOffers(auth: AuthContext, campaignId: string): Promise
       ? await tx.channel.findMany({ where: { id: { in: refs } }, select: { id: true, channelId: true } })
       : [];
     const chById = new Map(chRows.map((c) => [c.id, c.channelId]));
+    const artIds = offers.map((o) => o.articleId).filter((x): x is string => Boolean(x));
+    const artRows = artIds.length
+      ? await tx.article.findMany({ where: { id: { in: artIds } }, select: { id: true, title: true } })
+      : [];
+    const artById = new Map(artRows.map((a) => [a.id, a.title]));
     return offers.map((o) => ({
       id: o.id,
       domainId: o.domainId,
@@ -98,6 +127,8 @@ export async function listOffers(auth: AuthContext, campaignId: string): Promise
       kind: o.kind,
       channelId: o.channelRef ? (chById.get(o.channelRef) ?? null) : null,
       domainStatus: o.domain.status,
+      articleId: o.articleId ?? null,
+      articleTitle: o.articleId ? (artById.get(o.articleId) ?? null) : null,
     }));
   });
 }
@@ -131,9 +162,23 @@ export async function setOffers(auth: AuthContext, campaignId: string, inputs: O
         throw new AppError(400, `Domain ${d.host} is restricted to another company`);
       }
     }
+    // Validate any article variants: must be a READY article in this org (RLS scopes the
+    // query, so a foreign-org article simply won't be found).
+    const variantIds = [...new Set(inputs.map((o) => o.articleId).filter((x): x is string => Boolean(x)))];
+    if (variantIds.length > 0) {
+      const arts = await tx.article.findMany({ where: { id: { in: variantIds } }, select: { id: true, status: true } });
+      const byId = new Map(arts.map((a) => [a.id, a.status]));
+      for (const id of variantIds) {
+        const status = byId.get(id);
+        if (!status) throw new AppError(400, 'Offer references an unknown article variant');
+        if (status !== 'READY') throw new AppError(400, 'Article variant must be READY before it can serve traffic');
+      }
+    }
     await tx.offer.deleteMany({ where: { campaignId } });
     for (const o of inputs) {
-      await tx.offer.create({ data: { orgId: c.orgId, campaignId, domainId: o.domainId, weightPct: o.weightPct, kind: o.kind } });
+      await tx.offer.create({
+        data: { orgId: c.orgId, campaignId, domainId: o.domainId, weightPct: o.weightPct, kind: o.kind, articleId: o.articleId ?? null },
+      });
     }
     await writeAudit(tx, {
       orgId: c.orgId,

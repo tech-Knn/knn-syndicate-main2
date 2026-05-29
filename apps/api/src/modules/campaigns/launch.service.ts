@@ -393,15 +393,24 @@ export async function launchCampaign(
       tx.channel.findMany({ where: { id: { in: paidOffers.map((o) => o.channelRef!) } }, select: { id: true, channelId: true } }),
     );
     const chById = new Map(chRows.map((c) => [c.id, c.channelId]));
+    // Per-offer ARTICLE VARIANT (A/B): each offer may serve its own article; otherwise the
+    // campaign's default. Resolve all variant slugs up front (fall back to the campaign slug
+    // if a variant was removed since it was set).
+    const variantIds = [...new Set(offers.map((o) => o.articleId).filter((x): x is string => Boolean(x)))];
+    const variantRows = variantIds.length
+      ? await runScoped(auth, (tx) => tx.article.findMany({ where: { id: { in: variantIds } }, select: { id: true, slug: true } }))
+      : [];
+    const slugByArticle = new Map(variantRows.map((a) => [a.id, a.slug]));
+    const slugFor = (articleId: string | null): string => (articleId ? slugByArticle.get(articleId) ?? slug : slug);
     splits = paidOffers.map((o) => ({
-      url: `https://${o.domain.host}/a/${slug}`,
+      url: `https://${o.domain.host}/a/${slugFor(o.articleId)}`,
       weight: o.weightPct,
       channel: chById.get(o.channelRef!),
       offerId: o.id,
     }));
-    // The ORGANIC offer (if configured) is where non-ad traffic goes.
+    // The ORGANIC offer (if configured) is where non-ad traffic goes (its own variant too).
     const organic = offers.find((o) => o.kind === 'ORGANIC');
-    organicFallbackUrl = organic ? `https://${organic.domain.host}/a/${slug}` : undefined;
+    organicFallbackUrl = organic ? `https://${organic.domain.host}/a/${slugFor(organic.articleId)}` : undefined;
     // articleUrl is only a safety net when splits is empty (it isn't here); point at the
     // first offer so a malformed config still lands on a monetized page.
     articleUrl = splits[0]?.url ?? articleUrl;

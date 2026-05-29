@@ -908,6 +908,10 @@ model Offer {
   domainId   String    @map("domain_id") @db.Uuid
   weightPct  Int       @default(0) @map("weight_pct")
   kind       OfferKind @default(PAID)
+  /// Optional ARTICLE VARIANT for this offer (A/B testing): the article served on this
+  /// offer's website. Null → the campaign's default article (Campaign.articleId). Nullable,
+  /// no FK (reusable across campaigns, like Campaign.articleId).
+  articleId  String?   @map("article_id") @db.Uuid
   /// The Channel (pool row) assigned to this offer for attribution; null until assigned.
   channelRef String?   @map("channel_ref") @db.Uuid
   createdAt  DateTime  @default(now()) @map("created_at")

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { type OfferStat } from '@knn/shared';
 import { Badge, Button, Card } from '@/components/ui';
 import { campaigns, stats } from '@/lib/api';
-import { type CampaignStatus, type OfferDomainOption, type OfferRow } from '@/lib/types';
+import { type ArticleVariantOption, type CampaignStatus, type OfferDomainOption, type OfferRow } from '@/lib/types';
 import styles from '../../admin.module.css';
 
 /** Campaign states where offers can still be edited (before channels are assigned). */
@@ -14,6 +14,8 @@ interface Draft {
   domainId: string;
   weightPct: number;
   kind: 'PAID' | 'ORGANIC';
+  /** Article variant (A/B); '' → the campaign's default article. */
+  articleId: string;
 }
 
 /**
@@ -24,6 +26,7 @@ interface Draft {
 export function OffersEditor({ campaignId, status }: { campaignId: string; status: CampaignStatus }) {
   const editable = EDITABLE.includes(status);
   const [domains, setDomains] = useState<OfferDomainOption[]>([]);
+  const [articleVariants, setArticleVariants] = useState<ArticleVariantOption[]>([]);
   const [rows, setRows] = useState<Draft[]>([]);
   const [saved, setSaved] = useState<OfferRow[] | null>(null);
   const [rev, setRev] = useState<Map<string, OfferStat>>(new Map());
@@ -33,9 +36,10 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
   const load = useCallback(() => {
     void campaigns.offers(campaignId).then((offers) => {
       setSaved(offers);
-      setRows(offers.map((o) => ({ domainId: o.domainId, weightPct: o.weightPct, kind: o.kind })));
+      setRows(offers.map((o) => ({ domainId: o.domainId, weightPct: o.weightPct, kind: o.kind, articleId: o.articleId ?? '' })));
     });
     void campaigns.offerDomains().then(setDomains).catch(() => setDomains([]));
+    void campaigns.articleVariants().then(setArticleVariants).catch(() => setArticleVariants([]));
     // Per-offer revenue (Phase F) — populated once the campaign runs (30-day window).
     void stats
       .campaignOffers(campaignId, { from: undefined, to: undefined })
@@ -46,7 +50,7 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
 
   const setRow = (i: number, patch: Partial<Draft>): void =>
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-  const addRow = (): void => setRows((rs) => [...rs, { domainId: '', weightPct: 0, kind: 'PAID' }]);
+  const addRow = (): void => setRows((rs) => [...rs, { domainId: '', weightPct: 0, kind: 'PAID', articleId: '' }]);
   const removeRow = (i: number): void => setRows((rs) => rs.filter((_, j) => j !== i));
 
   const paidWeight = rows.filter((r) => r.kind === 'PAID').reduce((s, r) => s + (r.weightPct || 0), 0);
@@ -57,7 +61,9 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
     try {
       const offers = await campaigns.setOffers(
         campaignId,
-        rows.filter((r) => r.domainId).map((r) => ({ domainId: r.domainId, weightPct: r.weightPct, kind: r.kind })),
+        rows
+          .filter((r) => r.domainId)
+          .map((r) => ({ domainId: r.domainId, weightPct: r.weightPct, kind: r.kind, articleId: r.articleId || null })),
       );
       setSaved(offers);
       setNote('Saved.');
@@ -74,7 +80,8 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
         <span className={styles.sectionTitle}>Offers</span>
         <span className={styles.subtle}>
           Route this campaign&apos;s traffic across websites — each paid offer gets a weighted share and
-          its own AFS channel.
+          its own AFS channel. Pick a different <strong>article variant</strong> per offer to A/B test angles
+          (each variant&apos;s revenue is tracked on its own channel).
         </span>
       </div>
 
@@ -88,6 +95,7 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
               <thead>
                 <tr>
                   <th className={styles.thLeft}>Website</th>
+                  <th className={styles.thLeft}>Article</th>
                   <th className={styles.thLeft}>Kind</th>
                   <th>Weight</th>
                   <th>Revenue (30d)</th>
@@ -103,6 +111,7 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
                         <div className={styles.name}>{o.host}</div>
                         {o.afsLabel && <div className={styles.subtle}>{o.afsLabel}</div>}
                       </td>
+                      <td className={styles.subtle}>{o.articleTitle ?? 'Campaign default'}</td>
                       <td>
                         <Badge tone={o.kind === 'PAID' ? 'brand' : 'neutral'}>{o.kind.toLowerCase()}</Badge>
                       </td>
@@ -127,6 +136,7 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
               <thead>
                 <tr>
                   <th className={styles.thLeft}>Website</th>
+                  <th className={styles.thLeft}>Article (A/B)</th>
                   <th className={styles.thLeft}>Kind</th>
                   <th>Weight %</th>
                   <th></th>
@@ -142,6 +152,21 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
                           <option key={d.id} value={d.id}>
                             {d.host}
                             {d.afsLabel ? ` — ${d.afsLabel}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <select
+                        className={styles.select}
+                        value={r.articleId}
+                        onChange={(e) => setRow(i, { articleId: e.target.value })}
+                        title="Serve a specific article variant for this offer (A/B test). Default = the campaign's article."
+                      >
+                        <option value="">Campaign default</option>
+                        {articleVariants.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.title}
                           </option>
                         ))}
                       </select>

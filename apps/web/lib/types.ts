@@ -223,18 +223,27 @@ export interface OfferRow {
   kind: 'PAID' | 'ORGANIC';
   channelId: string | null;
   domainStatus: string;
+  articleId: string | null;
+  articleTitle: string | null;
 }
 
 export interface OfferInput {
   domainId: string;
   weightPct: number;
   kind: 'PAID' | 'ORGANIC';
+  articleId?: string | null;
 }
 
 export interface OfferDomainOption {
   id: string;
   host: string;
   afsLabel: string | null;
+}
+
+export interface ArticleVariantOption {
+  id: string;
+  title: string;
+  slug: string;
 }
 
 /** A company (organization) row for the super-admin Companies page. */

@@ -13,6 +13,7 @@ import {
   type FbPixel,
   type FbProfile,
   type FbProfileWithOwner,
+  type ArticleVariantOption,
   type OfferDomainOption,
   type OfferInput,
   type OfferRow,
@@ -334,6 +335,8 @@ export const campaigns = {
     ).offers,
   offerDomains: async (): Promise<OfferDomainOption[]> =>
     (await parse<{ domains: OfferDomainOption[] }>(await authedFetch('/api/campaigns/offer-domains'))).domains,
+  articleVariants: async (): Promise<ArticleVariantOption[]> =>
+    (await parse<{ articles: ArticleVariantOption[] }>(await authedFetch('/api/campaigns/article-variants'))).articles,
 };
 
 export const admin = {

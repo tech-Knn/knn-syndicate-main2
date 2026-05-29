@@ -8,6 +8,8 @@ export const offerSetSchema = z.object({
         domainId: z.string().uuid(),
         weightPct: z.number().int().min(0).max(100),
         kind: z.enum(['PAID', 'ORGANIC']),
+        /** Optional article variant (A/B). Null/omitted → the campaign's default article. */
+        articleId: z.string().uuid().nullish(),
       }),
     )
     .max(20),

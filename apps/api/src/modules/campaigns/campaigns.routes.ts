@@ -15,7 +15,7 @@ import {
   updateCampaign,
 } from './campaigns.service.js';
 import { launchCampaign, setCampaignActive, testLaunchCampaign } from './launch.service.js';
-import { listOfferDomains, listOffers, setOffers } from './offers.service.js';
+import { listArticleVariants, listOfferDomains, listOffers, setOffers } from './offers.service.js';
 import { offerSetSchema } from './offers.schemas.js';
 
 const adminOnly = [authenticate, requireRole(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)];
@@ -37,6 +37,12 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
   app.get('/offer-domains', { preHandler: [authenticate] }, async (req, reply) => {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     return reply.send({ domains: await listOfferDomains(req.auth) });
+  });
+
+  // READY articles in the org — options for an offer's article-variant (A/B) picker.
+  app.get('/article-variants', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    return reply.send({ articles: await listArticleVariants(req.auth) });
   });
 
   app.post('/', { preHandler: [authenticate] }, async (req, reply) => {

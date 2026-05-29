@@ -109,6 +109,7 @@ afterEach(() => {
 afterAll(async () => {
   await withSystem(async (tx) => {
     await tx.campaign.deleteMany({ where: { orgId } }); // cascades offers
+    await tx.article.deleteMany({ where: { orgId } });
     await tx.channel.deleteMany({ where: { channelId: { startsWith: `ch-launch-${suffix}` } } });
     await tx.channel.deleteMany({ where: { channelId: { startsWith: `oc-` } } });
     await tx.domain.deleteMany({ where: { afsAccountId: afsId } });
@@ -273,6 +274,30 @@ describe('launchCampaign (Phase 8)', () => {
     expect(byHost[domBHost]).toMatchObject({ weight: 40, channel: `oc-b-${suffix}` });
     // The ORGANIC offer is the non-ad fallback destination.
     expect(cfg.fallbackUrl).toBe(`https://${domAHost}/a/health-2026`);
+  });
+
+  it('per-offer article VARIANT (A/B): each offer split serves its own article slug, others the campaign default', async () => {
+    const campaignId = await makeCampaign();
+    let variantId = '';
+    await withSystem(async (tx) => {
+      await tx.campaign.update({ where: { id: campaignId }, data: { channelId: null } });
+      // A second READY article = the B variant; offer A serves it, offer B serves the default.
+      variantId = (await tx.article.create({ data: { orgId, slug: `variant-b-${suffix}`, title: 'Variant B', rawContent: 'r', compliantContent: 'c', status: 'READY' } })).id;
+      const chA = await tx.channel.create({ data: { channelId: `oc-va-${suffix}`, domainId: domA, status: 'ASSIGNED', currentCampaignId: campaignId } });
+      const chB = await tx.channel.create({ data: { channelId: `oc-vb-${suffix}`, domainId: domB, status: 'ASSIGNED', currentCampaignId: campaignId } });
+      await tx.offer.create({ data: { orgId, campaignId, domainId: domA, weightPct: 50, kind: 'PAID', channelRef: chA.id, articleId: variantId } });
+      await tx.offer.create({ data: { orgId, campaignId, domainId: domB, weightPct: 50, kind: 'PAID', channelRef: chB.id } }); // no variant → default
+    });
+
+    const writeRedirectConfigs = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {});
+    // The campaign's default article slug is 'health-2026' (generateArticle stub).
+    const result = await launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 'health-2026' })), writeRedirectConfigs });
+    expect(result.status).toBe('ACTIVE');
+
+    const cfg = writeRedirectConfigs.mock.calls[0]![0][0]!.config;
+    const byHost = Object.fromEntries((cfg.splits ?? []).map((s) => [new URL(s.url).host, s.url]));
+    expect(byHost[domAHost]).toBe(`https://${domAHost}/a/variant-b-${suffix}`); // offer A → its variant
+    expect(byHost[domBHost]).toBe(`https://${domBHost}/a/health-2026`); // offer B → campaign default
   });
 
   it('refuses to launch a campaign with no channel (409)', async () => {
