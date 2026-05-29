@@ -34,7 +34,7 @@ import {
   countryName,
 } from '@knn/shared';
 import { ApiError, campaigns as campaignsApi, facebook, uploads as uploadsApi } from '@/lib/api';
-import { type Campaign, type FbAccount, type FbPage, type FbPixel } from '@/lib/types';
+import { type Campaign, type FbAccount, type FbPage, type FbPixel, type OfferDomainOption } from '@/lib/types';
 import { Button, Card, SearchSelect, Spinner } from './ui';
 import styles from './campaign-wizard.module.css';
 
@@ -294,6 +294,23 @@ function hardErrors(form: CampaignForm): string[] {
   return errs;
 }
 
+/** A destination website row (the campaign's "offer"). */
+interface OfferDraft {
+  domainId: string;
+  weightPct: number;
+  kind: 'PAID' | 'ORGANIC';
+}
+
+/** Submit-blocking issues for the destination websites (mirrors the server gate). */
+function offerIssues(offers: OfferDraft[]): string[] {
+  const issues: string[] = [];
+  const paid = offers.filter((o) => o.kind === 'PAID' && o.domainId);
+  if (paid.length === 0) issues.push('Add at least one destination website (where the ads send traffic).');
+  else if (!paid.some((o) => o.weightPct > 0)) issues.push('Give at least one destination website a traffic weight above 0%.');
+  if (offers.filter((o) => o.kind === 'ORGANIC').length > 1) issues.push('Only one organic (non-ad) destination is allowed.');
+  return issues;
+}
+
 /** Full completeness for submit — computed directly from the form (always specific). */
 function formIssues(form: CampaignForm): string[] {
   const issues = [...hardErrors(form)];
@@ -332,6 +349,10 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
   const [pixels, setPixels] = useState<FbPixel[]>([]);
   const [assetsLoading, setAssetsLoading] = useState(true);
 
+  // Destination websites (the campaign's "offers") — where the ads send traffic.
+  const [offerDomains, setOfferDomains] = useState<OfferDomainOption[]>([]);
+  const [offers, setOffers] = useState<OfferDraft[]>([{ domainId: '', weightPct: 100, kind: 'PAID' }]);
+
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [launching, setLaunching] = useState(false);
@@ -351,6 +372,19 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
       active = false;
     };
   }, []);
+
+  // Destination websites the buyer can route to, + any offers already on the campaign.
+  useEffect(() => {
+    void campaignsApi.offerDomains().then(setOfferDomains).catch(() => setOfferDomains([]));
+    if (campaign?.id) {
+      void campaignsApi
+        .offers(campaign.id)
+        .then((rows) => {
+          if (rows.length > 0) setOffers(rows.map((o) => ({ domainId: o.domainId, weightPct: o.weightPct, kind: o.kind })));
+        })
+        .catch(() => undefined);
+    }
+  }, [campaign?.id]);
 
   useEffect(() => {
     if (!form.adAccountId) {
@@ -380,7 +414,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
     [],
   );
 
-  const issues = useMemo(() => formIssues(form), [form]);
+  const issues = useMemo(() => [...formIssues(form), ...offerIssues(offers)], [form, offers]);
 
   async function uploadCreative(setKey: string, ad: AdForm, file: File) {
     setUploadingKey(ad.key);
@@ -416,6 +450,12 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
         setSavedId(saved.id);
         window.history.replaceState({}, '', `/dashboard/campaigns/${saved.id}`);
       }
+      // Persist the destination websites (offers) alongside the campaign so submit's
+      // "≥1 paid offer" gate is satisfied from the wizard itself.
+      const validOffers = offers
+        .filter((o) => o.domainId)
+        .map((o) => ({ domainId: o.domainId, weightPct: o.kind === 'PAID' ? o.weightPct : 0, kind: o.kind }));
+      if (validOffers.length > 0) await campaignsApi.setOffers(saved.id, validOffers);
       return saved;
     } catch (err) {
       setBannerError(err instanceof ApiError ? err.message : 'Could not save the draft.');
@@ -500,7 +540,16 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
             <Spinner />
           </div>
         ) : step === 0 ? (
-          <OfferStep form={form} patch={patch} accounts={accounts} pages={pages} />
+          <OfferStep
+            form={form}
+            patch={patch}
+            accounts={accounts}
+            pages={pages}
+            offers={offers}
+            setOffers={setOffers}
+            offerDomains={offerDomains}
+            readOnly={readOnly}
+          />
         ) : step === 1 ? (
           <AdSetsStep form={form} pixels={pixels} patchAdSet={patchAdSet} patchAd={patchAd} setForm={setForm} uploadingKey={uploadingKey} uploadCreative={uploadCreative} />
         ) : (
@@ -588,8 +637,30 @@ function ChipGroup<T extends string>({ options, selected, onToggle, allLabel }: 
 
 // ---- Steps -----------------------------------------------------------------
 
-function OfferStep({ form, patch, accounts, pages }: { form: CampaignForm; patch: (p: Partial<CampaignForm>) => void; accounts: FbAccount[]; pages: FbPage[] }) {
+function OfferStep({
+  form,
+  patch,
+  accounts,
+  pages,
+  offers,
+  setOffers,
+  offerDomains,
+  readOnly,
+}: {
+  form: CampaignForm;
+  patch: (p: Partial<CampaignForm>) => void;
+  accounts: FbAccount[];
+  pages: FbPage[];
+  offers: OfferDraft[];
+  setOffers: (updater: (o: OfferDraft[]) => OfferDraft[]) => void;
+  offerDomains: OfferDomainOption[];
+  readOnly: boolean;
+}) {
   const [keywordDraft, setKeywordDraft] = useState('');
+  const setOfferRow = (i: number, p: Partial<OfferDraft>): void => setOffers((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...p } : r)));
+  const addOfferRow = (): void => setOffers((rows) => [...rows, { domainId: '', weightPct: 0, kind: 'PAID' }]);
+  const removeOfferRow = (i: number): void => setOffers((rows) => (rows.length > 1 ? rows.filter((_, idx) => idx !== i) : rows));
+  const paidWeight = offers.filter((o) => o.kind === 'PAID').reduce((s, o) => s + (o.weightPct || 0), 0);
   function addKeyword() {
     const k = keywordDraft.trim();
     if (k && !form.keywords.includes(k)) patch({ keywords: [...form.keywords, k] });
@@ -667,6 +738,58 @@ function OfferStep({ form, patch, accounts, pages }: { form: CampaignForm; patch
             options={pages.map((p) => ({ value: p.id, label: p.name, sublabel: p.fbPageId }))}
             emptyText="No Pages found for this profile. Make sure your Facebook profile/Business manages a Page, then click Re-sync on the Facebook tab."
           />
+        </div>
+        <div className={`${styles.field} ${styles.full}`}>
+          <label className={styles.label}>Destination website(s)</label>
+          <span className={styles.hint}>Where the ads send traffic — the monetized article site(s). AFS revenue is attributed per site. Add one, or split traffic across several by weight.</span>
+          {offerDomains.length === 0 ? (
+            <div className={styles.issues} style={{ marginTop: '0.5rem' }}>
+              <div style={{ fontSize: '0.83rem' }}>No websites are available to your company yet. Ask your admin to register (and share) a website under <strong>Domains</strong>; it&apos;ll then appear here.</div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.4rem' }}>
+              {offers.map((o, i) => (
+                <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ flex: 2, minWidth: '14rem' }}>
+                    <SearchSelect
+                      value={o.domainId}
+                      onChange={(v) => setOfferRow(i, { domainId: v })}
+                      disabled={readOnly}
+                      placeholder="Choose a website…"
+                      options={offerDomains.map((d) => ({ value: d.id, label: d.host, sublabel: d.afsLabel ?? undefined }))}
+                    />
+                  </div>
+                  <select className={styles.select} style={{ flex: 1, minWidth: '9rem' }} value={o.kind} disabled={readOnly} onChange={(e) => setOfferRow(i, { kind: e.target.value as OfferDraft['kind'] })}>
+                    <option value="PAID">Paid (ad traffic)</option>
+                    <option value="ORGANIC">Organic (fallback)</option>
+                  </select>
+                  <input
+                    className={styles.input}
+                    style={{ width: '6rem' }}
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={o.weightPct}
+                    disabled={o.kind === 'ORGANIC' || readOnly}
+                    onChange={(e) => setOfferRow(i, { weightPct: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
+                    aria-label="Traffic weight %"
+                  />
+                  <span className={styles.hint}>%</span>
+                  {offers.length > 1 && !readOnly && (
+                    <button type="button" className={styles.removeBtn} onClick={() => removeOfferRow(i)}>
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
+              {!readOnly && (
+                <button type="button" className={styles.addBtn} style={{ alignSelf: 'flex-start' }} onClick={addOfferRow}>
+                  + Add another website
+                </button>
+              )}
+              <span className={styles.hint}>Paid weights total {paidWeight}% (traffic is split across paid sites in proportion).</span>
+            </div>
+          )}
         </div>
         <div className={styles.field}>
           <label className={styles.label}>RAC (Related Ad Category)</label>
