@@ -14,6 +14,12 @@ x-app: &app
   env_file: [.env.staging]
   working_dir: /repo
   restart: unless-stopped
+  # Ad creatives (UPLOAD_DIR=/repo/var/uploads) MUST live on a persistent volume — they
+  # are written on upload and read at launch (FB image upload). Without this, every
+  # container recreate (`up`/rebuild) wipes them and a later launch 500s on ENOENT.
+  # Shared across api/worker so any creative read works regardless of which writes it.
+  volumes:
+    - knn_uploads:/repo/var/uploads
 
 services:
   postgres:
@@ -126,5 +132,6 @@ services:
 volumes:
   knn_pgdata: {}
   knn_redisdata: {}
+  knn_uploads: {}
   knn_caddydata: {}
   knn_caddyconfig: {}

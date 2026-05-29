@@ -213,6 +213,32 @@ describe('launchCampaign (Phase 8)', () => {
     await withSystem((tx) => tx.fbConnection.updateMany({ where: { orgId }, data: { status: 'ACTIVE', lastError: null } }));
   });
 
+  it('returns a clear 409 (not a 500) when the ad creative file is missing on disk', async () => {
+    // Simulate a creative whose DB row points at a file that no longer exists (e.g. the
+    // uploads dir was wiped before it lived on a persistent volume).
+    const badUploadId = (
+      await withSystem((tx) =>
+        tx.upload.create({ data: { orgId, buyerId, kind: 'IMAGE', filename: 'gone.png', mimeType: 'image/png', sizeBytes: 4, storageKey: `missing-${suffix}.png` } }),
+      )
+    ).id;
+    const campaignId = await withSystem((tx) =>
+      tx.campaign
+        .create({
+          data: {
+            orgId, buyerId, name: `Missing ${Math.random()}`, status: 'PROCESSING', keywords: ['x'], racValue: 'x', adAccountId, pageId, channelId: channelRef,
+            adSets: { create: [{ orgId, name: 'S', dailyBudgetCents: 5000, countries: ['US'], pixelId, ads: { create: [{ orgId, name: 'NoFile', headline: 'H', primaryText: 'P', uploadId: badUploadId, redirectId: `rm-${suffix}-${Math.random().toString(36).slice(2, 8)}` }] } }] },
+          },
+        })
+        .then((c) => c.id),
+    );
+
+    await expect(
+      launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('missing') });
+    const c = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { status: true } }));
+    expect(c?.status).toBe('PROCESSING'); // reverted, relaunchable after re-upload
+  });
+
   it('is idempotent — an already-launched campaign returns ACTIVE without re-creating', async () => {
     const campaignId = await makeCampaign();
     await withSystem((tx) => tx.campaign.update({ where: { id: campaignId }, data: { fbCampaignId: 'existing' } }));

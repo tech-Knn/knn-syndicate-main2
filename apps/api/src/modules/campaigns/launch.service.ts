@@ -241,7 +241,18 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
     const adResults: { id: string; fbAdId: string }[] = [];
     for (const { ad, storageKey } of ads) {
       if (!storageKey) throw new AppError(400, `Ad "${ad.name}" has no creative file`);
-      const bytes = await readFile(join(env.UPLOAD_DIR, storageKey));
+      let bytes: Buffer;
+      try {
+        bytes = await readFile(join(env.UPLOAD_DIR, storageKey));
+      } catch (err) {
+        // The DB references a creative file that's no longer on disk (e.g. uploaded
+        // before the uploads volume existed, or lost). Fail with an actionable message
+        // instead of a raw 500 — the buyer must reopen the campaign and re-upload it.
+        if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+          throw new AppError(409, `Ad "${ad.name}" — its creative image is missing on the server. Reopen the campaign, re-upload the ad's image, then relaunch.`);
+        }
+        throw err;
+      }
       const imageHash = await uploadFbAdImage(fbAccountId, token, bytes.toString('base64'));
       const destination = `${env.REDIRECT_DOMAIN}/go/${ad.redirectId}`;
       const creative = await createFbAdCreative(fbAccountId, token, {
