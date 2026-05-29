@@ -1,4 +1,4 @@
-import { AFS_TRACKING_PARAMS, afsConfigured, type SiteConfig } from '../_afs/csa';
+import { afsConfigured, type SiteConfig } from '../_afs/csa';
 import styles from './search.module.css';
 
 /**
@@ -59,8 +59,9 @@ export function SearchAds({
     ivt: false,
     // Open ads in a new tab so the results page stays put.
     linkTarget: '_blank',
+    // NB: no ignoredPageParams here — that's a content-page option (CSA rejects it on the
+    // 'ads' command, where the query is explicit). It only belongs on the relatedsearch unit.
     resultsPageQueryParam: 'q',
-    ignoredPageParams: AFS_TRACKING_PARAMS,
   };
   // Required (since 2025-11-01) when traffic comes from a source we control (our FB ads).
   if (referrerAdCreative) pageOptions.referrerAdCreative = referrerAdCreative;
