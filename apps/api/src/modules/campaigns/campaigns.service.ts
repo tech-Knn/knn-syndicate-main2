@@ -1,7 +1,8 @@
-import { type Prisma, type TxClient } from '@knn/db';
+import { type Prisma, type TxClient, withSystem } from '@knn/db';
 import {
   type AttributionWindow,
   CAMPAIGN_STATUS,
+  CHANNEL_STATUS,
   type CampaignDraft,
   type ConversionType,
   type CtaOption,
@@ -347,15 +348,26 @@ export async function reopenCampaign(
   auth: AuthContext,
   id: string,
 ): Promise<CampaignWithChildren> {
-  return runScoped(auth, async (tx) => {
+  // Reopen to an editable DRAFT. For a campaign that already grabbed channels
+  // (PROCESSING/BATCHED/QUEUED), release them back to the pool so editing + a fresh
+  // approval re-assigns cleanly. Only pre-launch states reach DRAFT (state machine);
+  // an ACTIVE/LAUNCHING campaign can't be reopened (it'd orphan the FB campaign).
+  const channelIds: string[] = [];
+  const result = await runScoped(auth, async (tx) => {
     const campaign = await loadOwnedCampaign(tx, auth, id);
     if (!canTransitionCampaign(campaign.status, CAMPAIGN_STATUS.DRAFT)) {
       throw new AppError(409, `Cannot reopen a campaign in ${campaign.status} state`);
     }
+    if (campaign.channelId) channelIds.push(campaign.channelId);
+    const offers = await tx.offer.findMany({ where: { campaignId: id }, select: { channelRef: true } });
+    for (const o of offers) if (o.channelRef) channelIds.push(o.channelRef);
+    // Detach channels from the campaign + its offers.
+    await tx.offer.updateMany({ where: { campaignId: id, channelRef: { not: null } }, data: { channelRef: null } });
     const updated = await tx.campaign.update({
       where: { id },
       data: {
         status: CAMPAIGN_STATUS.DRAFT,
+        channelId: null,
         submittedAt: null,
         reviewedAt: null,
         reviewedById: null,
@@ -369,9 +381,20 @@ export async function reopenCampaign(
       action: 'campaign.reopened',
       entityType: 'campaign',
       entityId: id,
+      details: { releasedChannels: channelIds.length },
     });
     return updated;
   });
+  // Channels are global (no org_id) → release them under withSystem, back to the pool.
+  if (channelIds.length > 0) {
+    await withSystem((tx) =>
+      tx.channel.updateMany({
+        where: { id: { in: channelIds } },
+        data: { status: CHANNEL_STATUS.AVAILABLE, currentCampaignId: null, lockedForDay: null, assignedAt: null },
+      }),
+    );
+  }
+  return result;
 }
 
 export async function deleteCampaign(auth: AuthContext, id: string): Promise<void> {

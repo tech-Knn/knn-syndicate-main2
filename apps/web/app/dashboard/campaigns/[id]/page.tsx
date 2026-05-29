@@ -10,12 +10,17 @@ import { OffersEditor } from './offers-editor';
 
 // Statuses where an admin can push the campaign live to Facebook (it has a channel).
 const LAUNCHABLE = new Set(['PROCESSING', 'BATCHED']);
+// Pre-launch states that can be reopened to DRAFT to fix config (releases the channel).
+// Excludes LAUNCHING/ACTIVE/PAUSED (already on Facebook — pause first) and the review
+// states (DRAFT/PENDING/REJECTED already have their own withdraw/revise paths).
+const REOPENABLE = new Set(['PROCESSING', 'BATCHED', 'QUEUED_NO_CHANNEL']);
 
 export default function EditCampaignPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { user } = useAuth();
   const [campaign, setCampaign] = useState<Campaign | null | 'error'>(null);
   const [launching, setLaunching] = useState(false);
+  const [reopening, setReopening] = useState(false);
   const [note, setNote] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
 
   const isAdmin = user?.role === 'SUPER_ADMIN' || user?.role === 'COMPANY_ADMIN';
@@ -54,9 +59,26 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
     }
   };
 
+  const reopen = async (): Promise<void> => {
+    if (typeof window !== 'undefined' && !window.confirm('Reopen this campaign for editing? It returns to draft and releases its assigned channel back to the pool. You can resubmit when you\'re done.')) {
+      return;
+    }
+    setReopening(true);
+    setNote(null);
+    try {
+      const updated = await campaigns.reopen(c.id);
+      setCampaign(updated);
+      setNote({ tone: 'ok', text: 'Campaign reopened — it\'s now an editable draft. Make your changes and submit again.' });
+    } catch (err) {
+      setNote({ tone: 'err', text: err instanceof ApiError ? err.message : 'Reopen failed.' });
+    } finally {
+      setReopening(false);
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {isAdmin && LAUNCHABLE.has(c.status) && (
+      {REOPENABLE.has(c.status) && (
         <div
           style={{
             display: 'flex',
@@ -70,12 +92,27 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
           }}
         >
           <div style={{ fontSize: '0.9rem', color: 'var(--cream)' }}>
-            <strong>{c.status === 'BATCHED' ? 'Rate-limited' : 'Ready to publish'}</strong> — a channel is assigned. Launching generates the article, wires the
-            redirect, and creates the ads on Facebook.
+            {c.status === 'QUEUED_NO_CHANNEL' ? (
+              <>
+                <strong>Waiting for a channel</strong> — no AdSense channel is free for this campaign yet. Reopen to edit it, or leave it queued.
+              </>
+            ) : (
+              <>
+                <strong>{c.status === 'BATCHED' ? 'Rate-limited' : 'Ready to publish'}</strong> — a channel is assigned. Launching generates the article, wires the
+                redirect, and creates the ads on Facebook. Need to fix something first? Reopen to edit.
+              </>
+            )}
           </div>
-          <Button onClick={() => void launch()} loading={launching}>
-            {launching ? 'Launching…' : 'Launch to Facebook'}
-          </Button>
+          <div style={{ display: 'flex', gap: '0.6rem', flexShrink: 0 }}>
+            <Button variant="ghost" onClick={() => void reopen()} loading={reopening} disabled={launching}>
+              {reopening ? 'Reopening…' : 'Reopen & edit'}
+            </Button>
+            {isAdmin && LAUNCHABLE.has(c.status) && (
+              <Button onClick={() => void launch()} loading={launching} disabled={reopening}>
+                {launching ? 'Launching…' : 'Launch to Facebook'}
+              </Button>
+            )}
+          </div>
         </div>
       )}
       {note && (

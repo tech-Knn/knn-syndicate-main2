@@ -25,6 +25,7 @@ vi.mock('@knn/fb', async (importOriginal) => {
 
 const fb = await import('@knn/fb');
 const { launchCampaign, setCampaignActive } = await import('./launch.service.js');
+const { reopenCampaign } = await import('./campaigns.service.js');
 
 const suffix = Date.now().toString(36);
 const storageKey = `launch-${suffix}.png`;
@@ -219,6 +220,52 @@ describe('launchCampaign (Phase 8)', () => {
     await expect(
       launchCampaign(auth(), c.id, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
     ).rejects.toMatchObject({ statusCode: 409 });
+  });
+});
+
+describe('reopenCampaign (edit/relaunch a stuck pre-launch campaign)', () => {
+  it('reopens a PROCESSING campaign to DRAFT and releases its single channel', async () => {
+    const campaignId = await makeCampaign(); // PROCESSING, channelId = channelRef
+    await withSystem((tx) =>
+      tx.channel.update({ where: { id: channelRef }, data: { status: 'ASSIGNED', currentCampaignId: campaignId, lockedForDay: '2026-05-29' } }),
+    );
+
+    const reopened = await reopenCampaign(auth(), campaignId);
+    expect(reopened.status).toBe('DRAFT');
+    expect(reopened.channelId).toBeNull();
+
+    // The channel is back in the pool, free for the next campaign.
+    const ch = await withSystem((tx) => tx.channel.findUnique({ where: { id: channelRef }, select: { status: true, currentCampaignId: true, lockedForDay: true } }));
+    expect(ch).toMatchObject({ status: 'AVAILABLE', currentCampaignId: null, lockedForDay: null });
+  });
+
+  it('releases every PAID offer channel when reopening an offers campaign', async () => {
+    const campaignId = await makeCampaign();
+    let chAId = '';
+    let chBId = '';
+    await withSystem(async (tx) => {
+      await tx.campaign.update({ where: { id: campaignId }, data: { channelId: null } });
+      const chA = await tx.channel.create({ data: { channelId: `oc-reopen-a-${suffix}`, domainId: domA, status: 'ASSIGNED', currentCampaignId: campaignId } });
+      const chB = await tx.channel.create({ data: { channelId: `oc-reopen-b-${suffix}`, domainId: domB, status: 'ASSIGNED', currentCampaignId: campaignId } });
+      chAId = chA.id;
+      chBId = chB.id;
+      await tx.offer.create({ data: { orgId, campaignId, domainId: domA, weightPct: 60, kind: 'PAID', channelRef: chA.id } });
+      await tx.offer.create({ data: { orgId, campaignId, domainId: domB, weightPct: 40, kind: 'PAID', channelRef: chB.id } });
+    });
+
+    const reopened = await reopenCampaign(auth(), campaignId);
+    expect(reopened.status).toBe('DRAFT');
+
+    // Both offer channels released; the offers no longer point at a channel.
+    const chans = await withSystem((tx) => tx.channel.findMany({ where: { id: { in: [chAId, chBId] } }, select: { status: true, currentCampaignId: true } }));
+    for (const ch of chans) expect(ch).toMatchObject({ status: 'AVAILABLE', currentCampaignId: null });
+    const offers = await withSystem((tx) => tx.offer.findMany({ where: { campaignId }, select: { channelRef: true } }));
+    for (const o of offers) expect(o.channelRef).toBeNull();
+  });
+
+  it('refuses to reopen a live (ACTIVE) campaign — must pause first (409)', async () => {
+    const c = await withSystem((tx) => tx.campaign.create({ data: { orgId, buyerId, name: 'Live no-reopen', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-active' } }));
+    await expect(reopenCampaign(auth(), c.id)).rejects.toMatchObject({ statusCode: 409 });
   });
 });
 

@@ -12,7 +12,7 @@ import {
   updateFbCampaignStatus,
   uploadFbAdImage,
 } from '@knn/fb';
-import { CAMPAIGN_STATUS, ROLES, campaignSubmitIssues, canTransitionCampaign } from '@knn/shared';
+import { CAMPAIGN_STATUS, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, canTransitionCampaign, goalRequiresPixel } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { KvNotConfiguredError, type RedirectConfigPayload, writeRedirectConfigs } from '../../lib/kv-sync.js';
@@ -193,6 +193,8 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
 
   const adSets: FbStructureResult['adSets'] = [];
   for (const { set, fbPixelId, ads } of plan.adSets) {
+    // ODAX: a website conversion-location ad set carries destination_type WEBSITE; the
+    // pixel promoted_object is sent ONLY for conversion goals that require it.
     const fbAdSet = await createFbAdSet(fbAccountId, token, {
       name: set.name,
       campaignId: fbCampaign.id,
@@ -200,9 +202,11 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
       billingEvent: set.billingEvent,
       dailyBudgetCents: cbo ? undefined : set.dailyBudgetCents ?? undefined,
       bidStrategy: cbo ? undefined : 'LOWEST_COST_WITHOUT_CAP',
-      promotedObject: fbPixelId
-        ? { pixel_id: fbPixelId, custom_event_type: PXE_TO_EVENT[set.pxeEvent] ?? 'SEARCH' }
-        : undefined,
+      destinationType: WEBSITE_DESTINATION_GOALS.has(set.optimizationGoal) ? 'WEBSITE' : undefined,
+      promotedObject:
+        goalRequiresPixel(set.optimizationGoal) && fbPixelId
+          ? { pixel_id: fbPixelId, custom_event_type: PXE_TO_EVENT[set.pxeEvent] ?? 'SEARCH' }
+          : undefined,
       targeting: buildTargeting(set),
       startTime: set.startTime?.toISOString(),
       endTime: set.endTime?.toISOString(),

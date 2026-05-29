@@ -80,6 +80,8 @@ export interface FbAdSetParams {
   dailyBudgetCents?: number;
   bidStrategy?: string;
   promotedObject?: Record<string, unknown>;
+  /** e.g. 'WEBSITE' — required for website conversion-location ad sets (ODAX). */
+  destinationType?: string;
   startTime?: string;
   endTime?: string;
   status?: string;
@@ -101,6 +103,7 @@ export function createFbAdSet(
   // Only ABO ad sets carry a bid strategy; under CBO it lives on the campaign and
   // the ad set must NOT set one (Facebook rejects the conflict). Caller decides.
   if (p.bidStrategy) params.bid_strategy = p.bidStrategy;
+  if (p.destinationType) params.destination_type = p.destinationType;
   if (p.dailyBudgetCents != null) params.daily_budget = String(p.dailyBudgetCents);
   if (p.promotedObject) params.promoted_object = JSON.stringify(p.promotedObject);
   if (p.startTime) params.start_time = p.startTime;

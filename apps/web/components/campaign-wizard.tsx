@@ -16,6 +16,7 @@ import {
   GENDERS,
   LANGUAGES,
   MOBILE_OS,
+  PERFORMANCE_GOAL_LABELS,
   PLACEMENT_OPTIONS,
   PXE_EVENTS,
   SPECIAL_AD_CATEGORIES,
@@ -32,6 +33,10 @@ import {
   type PxeEvent,
   type SpecialAdCategory,
   countryName,
+  defaultPerformanceGoal,
+  goalRequiresPixel,
+  isValidPerformanceGoal,
+  performanceGoalsFor,
 } from '@knn/shared';
 import { ApiError, campaigns as campaignsApi, facebook, uploads as uploadsApi } from '@/lib/api';
 import { type Campaign, type FbAccount, type FbPage, type FbPixel, type OfferDomainOption } from '@/lib/types';
@@ -68,6 +73,7 @@ interface AdSetForm {
   advantageAudience: boolean;
   placementMode: PlacementMode;
   placements: string[];
+  optimizationGoal: string;
   pixelId?: string;
   pxeEvent: PxeEvent;
   conversionType: ConversionType;
@@ -128,6 +134,7 @@ function emptyAdSet(n: number): AdSetForm {
     advantageAudience: false,
     placementMode: 'automatic',
     placements: [],
+    optimizationGoal: 'OFFSITE_CONVERSIONS', // valid for the default OUTCOME_SALES objective
     pxeEvent: 'search',
     conversionType: 'instant',
     bidStrategy: '',
@@ -189,6 +196,7 @@ function toForm(c?: Campaign): CampaignForm {
       advantageAudience: s.advantageAudience ?? false,
       placementMode: (s.placementMode as PlacementMode) ?? 'automatic',
       placements: s.placements ?? [],
+      optimizationGoal: s.optimizationGoal ?? 'OFFSITE_CONVERSIONS',
       pixelId: s.pixelId ?? undefined,
       pxeEvent: (s.pxeEvent as PxeEvent) ?? 'search',
       conversionType: (s.conversionType as ConversionType) ?? 'instant',
@@ -246,6 +254,7 @@ function toDraft(form: CampaignForm): CampaignDraftInput {
       advantageAudience: s.advantageAudience,
       placementMode: s.placementMode,
       placements: s.placementMode === 'manual' ? s.placements : [],
+      optimizationGoal: s.optimizationGoal,
       pixelId: s.pixelId || undefined,
       pxeEvent: s.pxeEvent,
       conversionType: s.conversionType,
@@ -324,7 +333,10 @@ function formIssues(form: CampaignForm): string[] {
     const L = `Ad set ${i + 1}`;
     if (form.budgetMode === 'AD_SET' && !centsOrUndef(s.dailyBudget)) issues.push(`${L} needs a daily budget.`);
     if (s.countries.length === 0) issues.push(`${L} needs at least one target country.`);
-    if (!s.pixelId) issues.push(`${L} needs a pixel.`);
+    if (!isValidPerformanceGoal(form.objective, s.optimizationGoal)) {
+      issues.push(`${L}: performance goal isn't valid for the ${form.objective.replace('OUTCOME_', '').toLowerCase()} objective.`);
+    }
+    if (goalRequiresPixel(s.optimizationGoal) && !s.pixelId) issues.push(`${L} optimizes for conversions → needs a pixel.`);
     if (s.placementMode === 'manual' && s.placements.length === 0) issues.push(`${L} needs at least one placement.`);
     if (s.ads.length === 0) issues.push(`${L} needs at least one ad.`);
     s.ads.forEach((a, j) => {
@@ -401,6 +413,14 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
   }, [form.adAccountId]);
 
   const patch = useCallback((p: Partial<CampaignForm>) => setForm((f) => ({ ...f, ...p })), []);
+  // Changing the objective re-snaps each ad set's performance goal to one valid for it.
+  const changeObjective = useCallback((objective: CampaignForm['objective']) => {
+    setForm((f) => ({
+      ...f,
+      objective,
+      adSets: f.adSets.map((s) => (isValidPerformanceGoal(objective, s.optimizationGoal) ? s : { ...s, optimizationGoal: defaultPerformanceGoal(objective) })),
+    }));
+  }, []);
   const patchAdSet = useCallback(
     (key: string, p: Partial<AdSetForm>) => setForm((f) => ({ ...f, adSets: f.adSets.map((s) => (s.key === key ? { ...s, ...p } : s)) })),
     [],
@@ -534,7 +554,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
 
       <Card className={styles.card}>
         {readOnly ? (
-          <ReviewStep form={form} accounts={accounts} pages={pages} issues={[]} />
+          <ReviewStep form={form} accounts={accounts} pages={pages} offers={offers} issues={[]} />
         ) : assetsLoading ? (
           <div className={styles.center}>
             <Spinner />
@@ -543,6 +563,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
           <OfferStep
             form={form}
             patch={patch}
+            onObjectiveChange={changeObjective}
             accounts={accounts}
             pages={pages}
             offers={offers}
@@ -553,7 +574,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
         ) : step === 1 ? (
           <AdSetsStep form={form} pixels={pixels} patchAdSet={patchAdSet} patchAd={patchAd} setForm={setForm} uploadingKey={uploadingKey} uploadCreative={uploadCreative} />
         ) : (
-          <ReviewStep form={form} accounts={accounts} pages={pages} issues={[...serverIssues, ...issues]} />
+          <ReviewStep form={form} accounts={accounts} pages={pages} offers={offers} issues={[...serverIssues, ...issues]} />
         )}
       </Card>
 
@@ -640,6 +661,7 @@ function ChipGroup<T extends string>({ options, selected, onToggle, allLabel }: 
 function OfferStep({
   form,
   patch,
+  onObjectiveChange,
   accounts,
   pages,
   offers,
@@ -649,6 +671,7 @@ function OfferStep({
 }: {
   form: CampaignForm;
   patch: (p: Partial<CampaignForm>) => void;
+  onObjectiveChange: (objective: CampaignForm['objective']) => void;
   accounts: FbAccount[];
   pages: FbPage[];
   offers: OfferDraft[];
@@ -684,7 +707,7 @@ function OfferStep({
         </div>
         <div className={styles.field}>
           <label className={styles.label}>Objective</label>
-          <select className={styles.select} value={form.objective} onChange={(e) => patch({ objective: e.target.value as CampaignForm['objective'] })}>
+          <select className={styles.select} value={form.objective} onChange={(e) => onObjectiveChange(e.target.value as CampaignForm['objective'])}>
             {CAMPAIGN_OBJECTIVES.map((o) => (
               <option key={o} value={o}>
                 {o.replace('OUTCOME_', '')}
@@ -985,7 +1008,20 @@ function AdSetsStep({
             </div>
             <div className={styles.grid}>
               <div className={styles.field}>
-                <label className={styles.label}>Pixel</label>
+                <label className={styles.label}>Performance goal</label>
+                <select className={styles.select} value={set.optimizationGoal} onChange={(e) => patchAdSet(set.key, { optimizationGoal: e.target.value })}>
+                  {performanceGoalsFor(form.objective).map((g) => (
+                    <option key={g} value={g}>
+                      {PERFORMANCE_GOAL_LABELS[g] ?? g}
+                    </option>
+                  ))}
+                </select>
+                <span className={styles.hint}>
+                  Conversion location: Website. {goalRequiresPixel(set.optimizationGoal) ? 'Optimizing for conversions — a pixel is required below.' : 'No pixel needed for this goal.'}
+                </span>
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Pixel{goalRequiresPixel(set.optimizationGoal) ? '' : ' (optional)'}</label>
                 <select className={styles.select} value={set.pixelId ?? ''} onChange={(e) => patchAdSet(set.key, { pixelId: e.target.value || undefined })} disabled={!hasAccount}>
                   <option value="">{hasAccount ? 'Select a pixel…' : 'Pick an ad account first'}</option>
                   {pixels.map((px) => (
@@ -1144,11 +1180,22 @@ function AdSetsStep({
   );
 }
 
-function ReviewStep({ form, accounts, pages, issues }: { form: CampaignForm; accounts: FbAccount[]; pages: FbPage[]; issues: string[] }) {
+function ReviewStep({ form, accounts, pages, offers, issues }: { form: CampaignForm; accounts: FbAccount[]; pages: FbPage[]; offers: OfferDraft[]; issues: string[] }) {
   const account = accounts.find((a) => a.id === form.adAccountId);
   const page = pages.find((p) => p.id === form.pageId);
   const totalAds = form.adSets.reduce((n, s) => n + s.ads.length, 0);
   const budget = form.budgetMode === 'CAMPAIGN' ? centsOrUndef(form.dailyBudget) ?? 0 : form.adSets.reduce((n, s) => n + (centsOrUndef(s.dailyBudget) ?? 0), 0);
+
+  // Pre-launch readiness — the things Facebook checks at launch, surfaced up front.
+  const checks: { label: string; ok: boolean }[] = [
+    { label: `Daily budget ≥ $2.00 (have ${MONEY(budget)})`, ok: budget >= 200 },
+    { label: 'Facebook ad account selected', ok: Boolean(account) },
+    { label: 'Facebook page selected', ok: Boolean(page) },
+    { label: 'At least one destination website', ok: offers.some((o) => o.kind === 'PAID' && o.domainId) },
+    { label: `Performance goals valid for the ${form.objective.replace('OUTCOME_', '').toLowerCase()} objective`, ok: form.adSets.every((s) => isValidPerformanceGoal(form.objective, s.optimizationGoal)) },
+    { label: 'Pixel assigned where the goal needs conversions', ok: form.adSets.every((s) => !goalRequiresPixel(s.optimizationGoal) || Boolean(s.pixelId)) },
+    { label: 'Every ad has a creative', ok: form.adSets.every((s) => s.ads.length > 0 && s.ads.every((a) => Boolean(a.uploadId))) },
+  ];
 
   return (
     <div>
@@ -1162,6 +1209,20 @@ function ReviewStep({ form, accounts, pages, issues }: { form: CampaignForm; acc
           </ul>
         </div>
       )}
+      <div className={styles.summary} style={{ marginBottom: '1rem' }}>
+        <div className={styles.summaryRow} style={{ borderBottom: '1px solid var(--border)' }}>
+          <span className={styles.summaryKey}>Pre-launch checks</span>
+          <span className={styles.summaryVal}>{checks.filter((c) => c.ok).length}/{checks.length} ready</span>
+        </div>
+        {checks.map((c) => (
+          <div key={c.label} className={styles.summaryRow}>
+            <span className={styles.summaryKey} style={{ color: c.ok ? 'var(--green)' : 'var(--red)' }}>
+              {c.ok ? '✓' : '⚠'} {c.label}
+            </span>
+            <span />
+          </div>
+        ))}
+      </div>
       <div className={styles.summary}>
         <div className={styles.summaryRow}>
           <span className={styles.summaryKey}>Campaign</span>

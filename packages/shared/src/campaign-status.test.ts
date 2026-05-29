@@ -46,6 +46,17 @@ describe('campaign state machine', () => {
     expect(canTransitionCampaign(CAMPAIGN_STATUS.LAUNCHING, CAMPAIGN_STATUS.META_REJECTED)).toBe(true);
   });
 
+  it('allows reopening a stuck pre-launch campaign back to DRAFT (edit/relaunch)', () => {
+    // A campaign that's been assigned a channel but never made it onto FB can be
+    // reopened to fix its config (the service releases the channel on the way back).
+    expect(canTransitionCampaign(CAMPAIGN_STATUS.PROCESSING, CAMPAIGN_STATUS.DRAFT)).toBe(true);
+    expect(canTransitionCampaign(CAMPAIGN_STATUS.BATCHED, CAMPAIGN_STATUS.DRAFT)).toBe(true);
+    expect(canTransitionCampaign(CAMPAIGN_STATUS.QUEUED_NO_CHANNEL, CAMPAIGN_STATUS.DRAFT)).toBe(true);
+    // ...but once it's live on FB it can't be silently reopened (must pause first).
+    expect(canTransitionCampaign(CAMPAIGN_STATUS.ACTIVE, CAMPAIGN_STATUS.DRAFT)).toBe(false);
+    expect(canTransitionCampaign(CAMPAIGN_STATUS.LAUNCHING, CAMPAIGN_STATUS.DRAFT)).toBe(false);
+  });
+
   it('rejects illegal transitions', () => {
     // can't skip review
     expect(canTransitionCampaign(CAMPAIGN_STATUS.DRAFT, CAMPAIGN_STATUS.APPROVED)).toBe(false);

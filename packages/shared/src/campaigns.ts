@@ -28,6 +28,57 @@ export const CAMPAIGN_OBJECTIVES = [
 ] as const;
 export type CampaignObjective = (typeof CAMPAIGN_OBJECTIVES)[number];
 
+/**
+ * Performance goals (Facebook `optimization_goal`) offered per campaign objective for a
+ * WEBSITE conversion location — our funnel always drives traffic to the article site.
+ * Encoded from Meta's Outcome-Driven Ads (ODAX) model; Facebook does the final
+ * validation at launch. Keep the first entry as the sensible default for each objective.
+ */
+export const PERFORMANCE_GOALS_BY_OBJECTIVE: Record<CampaignObjective, readonly string[]> = {
+  OUTCOME_SALES: ['OFFSITE_CONVERSIONS', 'VALUE', 'LANDING_PAGE_VIEWS', 'LINK_CLICKS', 'REACH', 'IMPRESSIONS'],
+  OUTCOME_LEADS: ['OFFSITE_CONVERSIONS', 'LANDING_PAGE_VIEWS', 'LINK_CLICKS', 'REACH', 'IMPRESSIONS'],
+  OUTCOME_ENGAGEMENT: ['OFFSITE_CONVERSIONS', 'LANDING_PAGE_VIEWS', 'LINK_CLICKS', 'POST_ENGAGEMENT', 'REACH', 'IMPRESSIONS'],
+  OUTCOME_TRAFFIC: ['LANDING_PAGE_VIEWS', 'LINK_CLICKS', 'REACH', 'IMPRESSIONS'],
+  OUTCOME_AWARENESS: ['REACH', 'IMPRESSIONS', 'AD_RECALL_LIFT'],
+  OUTCOME_APP_PROMOTION: ['LINK_CLICKS'],
+} as const;
+
+/** Goals that optimize for a pixel conversion → require a pixel `promoted_object`. */
+export const PIXEL_REQUIRED_GOALS: ReadonlySet<string> = new Set(['OFFSITE_CONVERSIONS', 'VALUE']);
+
+/** Goals that send people to a website → the ad set carries `destination_type: WEBSITE`. */
+export const WEBSITE_DESTINATION_GOALS: ReadonlySet<string> = new Set([
+  'OFFSITE_CONVERSIONS',
+  'VALUE',
+  'LANDING_PAGE_VIEWS',
+  'LINK_CLICKS',
+]);
+
+/** Human labels for the performance-goal dropdown. */
+export const PERFORMANCE_GOAL_LABELS: Record<string, string> = {
+  OFFSITE_CONVERSIONS: 'Conversions',
+  VALUE: 'Value (ROAS)',
+  LANDING_PAGE_VIEWS: 'Landing-page views',
+  LINK_CLICKS: 'Link clicks',
+  POST_ENGAGEMENT: 'Post engagement',
+  REACH: 'Reach',
+  IMPRESSIONS: 'Impressions',
+  AD_RECALL_LIFT: 'Ad recall lift',
+};
+
+export function performanceGoalsFor(objective: CampaignObjective): readonly string[] {
+  return PERFORMANCE_GOALS_BY_OBJECTIVE[objective] ?? [];
+}
+export function isValidPerformanceGoal(objective: CampaignObjective, goal: string): boolean {
+  return performanceGoalsFor(objective).includes(goal);
+}
+export function defaultPerformanceGoal(objective: CampaignObjective): string {
+  return performanceGoalsFor(objective)[0] ?? 'LINK_CLICKS';
+}
+export function goalRequiresPixel(goal: string): boolean {
+  return PIXEL_REQUIRED_GOALS.has(goal);
+}
+
 export const BUDGET_MODES = ['AD_SET', 'CAMPAIGN'] as const;
 export type BudgetMode = (typeof BUDGET_MODES)[number];
 
@@ -158,12 +209,25 @@ export function campaignSubmitIssues(c: CampaignDraft): string[] {
   if (c.budgetMode === 'CAMPAIGN' && !c.dailyBudgetCents) {
     issues.push('Set the campaign daily budget (campaign budget optimization is on).');
   }
+  if (c.budgetMode === 'CAMPAIGN' && c.dailyBudgetCents && c.dailyBudgetCents < 200) {
+    issues.push('Campaign daily budget must be at least $2.00 (Facebook minimum).');
+  }
   if (c.adSets.length === 0) issues.push('Add at least one ad set.');
   c.adSets.forEach((set, i) => {
     const label = `Ad set ${i + 1} ("${set.name}")`;
     if (c.budgetMode === 'AD_SET' && !set.dailyBudgetCents) issues.push(`${label} needs a daily budget.`);
+    if (c.budgetMode === 'AD_SET' && set.dailyBudgetCents && set.dailyBudgetCents < 200) {
+      issues.push(`${label} daily budget must be at least $2.00 (Facebook minimum).`);
+    }
     if (set.countries.length === 0) issues.push(`${label} needs at least one target country.`);
-    if (!set.pixelId) issues.push(`${label} needs a pixel.`);
+    // The performance goal must be valid for the campaign objective (ODAX).
+    if (!isValidPerformanceGoal(c.objective, set.optimizationGoal)) {
+      issues.push(`${label}: "${PERFORMANCE_GOAL_LABELS[set.optimizationGoal] ?? set.optimizationGoal}" isn't a valid performance goal for the ${c.objective.replace('OUTCOME_', '').toLowerCase()} objective.`);
+    }
+    // A pixel is only required when optimizing for a conversion (not for clicks/reach/etc.).
+    if (goalRequiresPixel(set.optimizationGoal) && !set.pixelId) {
+      issues.push(`${label} optimizes for conversions → it needs a pixel.`);
+    }
     if (set.placementMode === 'manual' && set.placements.length === 0) {
       issues.push(`${label} needs at least one placement.`);
     }

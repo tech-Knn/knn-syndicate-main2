@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { adInputSchema, adSetInputSchema, campaignDraftSchema, campaignSubmitIssues } from './campaigns.js';
+import {
+  adInputSchema,
+  adSetInputSchema,
+  campaignDraftSchema,
+  campaignSubmitIssues,
+  defaultPerformanceGoal,
+  goalRequiresPixel,
+  isValidPerformanceGoal,
+  performanceGoalsFor,
+} from './campaigns.js';
 
 const A = '11111111-1111-1111-1111-111111111111';
 const B = '22222222-2222-2222-2222-222222222222';
@@ -44,6 +53,35 @@ describe('campaign draft schema', () => {
   });
 });
 
+describe('ODAX performance-goal matrix', () => {
+  it('offers website-conversion goals for the sales objective', () => {
+    expect(performanceGoalsFor('OUTCOME_SALES')).toContain('OFFSITE_CONVERSIONS');
+    expect(isValidPerformanceGoal('OUTCOME_SALES', 'OFFSITE_CONVERSIONS')).toBe(true);
+  });
+
+  it('lets the engagement objective drive website conversions (user-confirmed ODAX path)', () => {
+    // Campaign objective Engagement → Conversion (website) is a valid Meta combo.
+    expect(isValidPerformanceGoal('OUTCOME_ENGAGEMENT', 'OFFSITE_CONVERSIONS')).toBe(true);
+  });
+
+  it('rejects conversion optimization under the awareness objective', () => {
+    expect(isValidPerformanceGoal('OUTCOME_AWARENESS', 'OFFSITE_CONVERSIONS')).toBe(false);
+  });
+
+  it('defaults each objective to its first (sensible) goal', () => {
+    expect(defaultPerformanceGoal('OUTCOME_SALES')).toBe('OFFSITE_CONVERSIONS');
+    expect(defaultPerformanceGoal('OUTCOME_TRAFFIC')).toBe('LANDING_PAGE_VIEWS');
+    expect(defaultPerformanceGoal('OUTCOME_AWARENESS')).toBe('REACH');
+  });
+
+  it('requires a pixel only for conversion/value goals', () => {
+    expect(goalRequiresPixel('OFFSITE_CONVERSIONS')).toBe(true);
+    expect(goalRequiresPixel('VALUE')).toBe(true);
+    expect(goalRequiresPixel('LINK_CLICKS')).toBe(false);
+    expect(goalRequiresPixel('REACH')).toBe(false);
+  });
+});
+
 describe('campaignSubmitIssues', () => {
   it('flags missing pieces of an empty draft', () => {
     const issues = campaignSubmitIssues(campaignDraftSchema.parse({ name: 'x' }));
@@ -79,6 +117,69 @@ describe('campaignSubmitIssues', () => {
       ],
     });
     expect(campaignSubmitIssues(draft).some((i) => i.includes('campaign daily budget'))).toBe(true);
+  });
+
+  it('flags a performance goal that is invalid for the objective (ODAX)', () => {
+    const draft = campaignDraftSchema.parse({
+      name: 'x',
+      keywords: ['a'],
+      racValue: 'health',
+      adAccountId: A,
+      pageId: B,
+      // AWARENESS can't optimize for OFFSITE_CONVERSIONS.
+      objective: 'OUTCOME_AWARENESS',
+      adSets: [
+        {
+          name: 's',
+          dailyBudgetCents: 5000,
+          countries: ['US'],
+          optimizationGoal: 'OFFSITE_CONVERSIONS',
+          ads: [{ name: 'a', headline: 'h', primaryText: 'p', uploadId: C }],
+        },
+      ],
+    });
+    expect(campaignSubmitIssues(draft).some((i) => i.includes("isn't a valid performance goal"))).toBe(true);
+  });
+
+  it('does not require a pixel when optimizing for link clicks', () => {
+    const draft = campaignDraftSchema.parse({
+      name: 'x',
+      keywords: ['a'],
+      racValue: 'health',
+      adAccountId: A,
+      pageId: B,
+      objective: 'OUTCOME_TRAFFIC',
+      adSets: [
+        {
+          name: 's',
+          dailyBudgetCents: 5000,
+          countries: ['US'],
+          optimizationGoal: 'LINK_CLICKS', // no pixel needed
+          ads: [{ name: 'a', headline: 'h', primaryText: 'p', uploadId: C }],
+        },
+      ],
+    });
+    expect(campaignSubmitIssues(draft)).toEqual([]);
+  });
+
+  it('flags an ad-set budget below the $2.00 Facebook minimum', () => {
+    const draft = campaignDraftSchema.parse({
+      name: 'x',
+      keywords: ['a'],
+      racValue: 'health',
+      adAccountId: A,
+      pageId: B,
+      adSets: [
+        {
+          name: 's',
+          dailyBudgetCents: 150, // parses (>= $1) but below the $2 launch floor
+          countries: ['US'],
+          pixelId: D,
+          ads: [{ name: 'a', headline: 'h', primaryText: 'p', uploadId: C }],
+        },
+      ],
+    });
+    expect(campaignSubmitIssues(draft).some((i) => i.includes('at least $2.00'))).toBe(true);
   });
 
   it('passes for a complete ABO campaign', () => {
