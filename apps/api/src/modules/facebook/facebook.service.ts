@@ -1,3 +1,4 @@
+import { env } from '@knn/config';
 import { FbConnectionStatus, withSystem } from '@knn/db';
 import {
   FB_SCOPES,
@@ -180,11 +181,14 @@ export async function handleCallback(code: string, state: string): Promise<void>
   const { userId, orgId } = await verifyFbState(state);
 
   const short = await exchangeCodeForToken(code);
-  const long = await exchangeForLongLivedToken(short.accessToken);
-  const me = await getMe(long.accessToken);
+  // Diagnostic: optionally keep the short-lived token (skip the long-lived exchange) to
+  // test whether the long-lived/never-expiring token is what trips the ad-publish
+  // security checkpoint (err 31/3858385). Default path exchanges for ~60-day long-lived.
+  const tok = env.FB_SKIP_LONGLIVED ? short : await exchangeForLongLivedToken(short.accessToken);
+  const me = await getMe(tok.accessToken);
 
-  const accessTokenEnc = encryptToken(long.accessToken);
-  const tokenExpiresAt = new Date(Date.now() + long.expiresInSec * 1_000);
+  const accessTokenEnc = encryptToken(tok.accessToken);
+  const tokenExpiresAt = new Date(Date.now() + tok.expiresInSec * 1_000);
   const scopes = FB_SCOPES.join(',');
 
   const conn = await withSystem((tx) =>
@@ -214,7 +218,7 @@ export async function handleCallback(code: string, state: string): Promise<void>
   // Best-effort initial sync. A broken token here is recorded; other transient
   // failures leave the connection ACTIVE so the buyer can retry from the UI.
   try {
-    await syncFromFacebook({ connectionId: conn.id, orgId, accessToken: long.accessToken });
+    await syncFromFacebook({ connectionId: conn.id, orgId, accessToken: tok.accessToken });
   } catch (err) {
     if (err instanceof FbConnectionBrokenError) {
       await markConnectionBroken(conn.id, err.message);

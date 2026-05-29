@@ -91,6 +91,10 @@ const EnvSchema = z.object({
   // ad creation isn't flagged as foreign-IP access from the EU server). Format:
   // http://user:pass@host:port. Empty = direct. Other outbound calls are unaffected.
   FB_HTTPS_PROXY: optionalString,
+  // Debug/diagnostic: when set, store the SHORT-lived token from OAuth instead of
+  // exchanging for a long-lived one — to test whether the long-lived/never-expiring
+  // token is what trips the ad-publish security checkpoint (err 31/3858385).
+  FB_SKIP_LONGLIVED: optionalString,
 
   // Google / AdSense
   GOOGLE_CLIENT_ID: optionalString,
