@@ -1,9 +1,11 @@
 import { CAMPAIGN_STATUS, type CampaignStatus, ROLES } from '@knn/shared';
 import type { TxClient } from '@knn/db';
 import { writeAudit } from '../../lib/audit.js';
+import { enqueueOfferRebalance } from '../../lib/channel-queue.js';
 import { AppError } from '../../lib/errors.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
+import { syncCampaignRedirectConfigs } from './launch.service.js';
 
 /**
  * Campaign offers (Phase E). An offer routes a slice of a campaign's traffic to one
@@ -133,8 +135,8 @@ export async function listOffers(auth: AuthContext, campaignId: string): Promise
   });
 }
 
-/** Replace a campaign's offer set (validate weights/kinds + LIVE domains; pre-approval only). */
-export async function setOffers(auth: AuthContext, campaignId: string, inputs: OfferInput[]): Promise<OfferRow[]> {
+/** Shape checks (no DB): at most one organic offer, and at least one weighted paid offer. */
+function assertOfferShape(inputs: { kind: 'PAID' | 'ORGANIC'; weightPct: number }[]): void {
   if (inputs.filter((o) => o.kind === 'ORGANIC').length > 1) {
     throw new AppError(400, 'A campaign can have at most one organic offer');
   }
@@ -142,7 +144,36 @@ export async function setOffers(auth: AuthContext, campaignId: string, inputs: O
   if (paid.length > 0 && !paid.some((o) => o.weightPct > 0)) {
     throw new AppError(400, 'At least one paid offer needs a weight greater than 0');
   }
+}
 
+/** DB validation: every domain is LIVE + usable by this org; every article variant is a READY org article. */
+async function assertDomainsAndVariants(
+  tx: TxClient,
+  orgId: string,
+  inputs: { domainId: string; articleId?: string | null }[],
+): Promise<void> {
+  for (const o of inputs) {
+    const d = await tx.domain.findUnique({ where: { id: o.domainId }, select: { host: true, status: true, ownerOrgId: true } });
+    if (!d) throw new AppError(400, 'Offer references an unknown domain');
+    if (d.status !== 'LIVE') throw new AppError(400, `Domain ${d.host} is not LIVE yet — verify it first`);
+    if (d.ownerOrgId && d.ownerOrgId !== orgId) throw new AppError(400, `Domain ${d.host} is restricted to another company`);
+  }
+  // RLS scopes the article query, so a foreign-org article simply won't be found.
+  const variantIds = [...new Set(inputs.map((o) => o.articleId).filter((x): x is string => Boolean(x)))];
+  if (variantIds.length > 0) {
+    const arts = await tx.article.findMany({ where: { id: { in: variantIds } }, select: { id: true, status: true } });
+    const byId = new Map(arts.map((a) => [a.id, a.status]));
+    for (const id of variantIds) {
+      const status = byId.get(id);
+      if (!status) throw new AppError(400, 'Offer references an unknown article variant');
+      if (status !== 'READY') throw new AppError(400, 'Article variant must be READY before it can serve traffic');
+    }
+  }
+}
+
+/** Replace a campaign's offer set (validate weights/kinds + LIVE domains; pre-approval only). */
+export async function setOffers(auth: AuthContext, campaignId: string, inputs: OfferInput[]): Promise<OfferRow[]> {
+  assertOfferShape(inputs);
   await runScoped(auth, async (tx) => {
     const c = await loadCampaignScoped(auth, tx, campaignId);
     if (!EDITABLE.includes(c.status)) {
@@ -152,28 +183,7 @@ export async function setOffers(auth: AuthContext, campaignId: string, inputs: O
     if (existing.some((o) => o.channelRef)) {
       throw new AppError(409, 'Offers already hold channels — release them before editing');
     }
-    // Validate every referenced domain: exists, is LIVE, and is usable by this org
-    // (shared, or owned by the campaign's company — never another company's domain).
-    for (const o of inputs) {
-      const d = await tx.domain.findUnique({ where: { id: o.domainId }, select: { host: true, status: true, ownerOrgId: true } });
-      if (!d) throw new AppError(400, 'Offer references an unknown domain');
-      if (d.status !== 'LIVE') throw new AppError(400, `Domain ${d.host} is not LIVE yet — verify it first`);
-      if (d.ownerOrgId && d.ownerOrgId !== c.orgId) {
-        throw new AppError(400, `Domain ${d.host} is restricted to another company`);
-      }
-    }
-    // Validate any article variants: must be a READY article in this org (RLS scopes the
-    // query, so a foreign-org article simply won't be found).
-    const variantIds = [...new Set(inputs.map((o) => o.articleId).filter((x): x is string => Boolean(x)))];
-    if (variantIds.length > 0) {
-      const arts = await tx.article.findMany({ where: { id: { in: variantIds } }, select: { id: true, status: true } });
-      const byId = new Map(arts.map((a) => [a.id, a.status]));
-      for (const id of variantIds) {
-        const status = byId.get(id);
-        if (!status) throw new AppError(400, 'Offer references an unknown article variant');
-        if (status !== 'READY') throw new AppError(400, 'Article variant must be READY before it can serve traffic');
-      }
-    }
+    await assertDomainsAndVariants(tx, c.orgId, inputs);
     await tx.offer.deleteMany({ where: { campaignId } });
     for (const o of inputs) {
       await tx.offer.create({
@@ -186,8 +196,90 @@ export async function setOffers(auth: AuthContext, campaignId: string, inputs: O
       action: 'campaign.offers.set',
       entityType: 'campaign',
       entityId: campaignId,
-      details: { count: inputs.length, paid: paid.length },
+      details: { count: inputs.length, paid: inputs.filter((o) => o.kind === 'PAID').length },
     });
   });
   return listOffers(auth, campaignId);
+}
+
+/** Campaign states where the campaign is past approval (channels held) and traffic routing
+ *  can be re-edited LIVE — without touching Facebook (we only rewrite edge KV). */
+const LIVE_EDITABLE: readonly CampaignStatus[] = [
+  CAMPAIGN_STATUS.PROCESSING,
+  CAMPAIGN_STATUS.LAUNCHING,
+  CAMPAIGN_STATUS.BATCHED,
+  CAMPAIGN_STATUS.ACTIVE,
+  CAMPAIGN_STATUS.PAUSED,
+];
+
+/** An offer in a live edit: existing offers carry their `id` (kept/updated); new offers omit it. */
+export interface LiveOfferInput extends OfferInput {
+  id?: string;
+}
+
+export interface LiveOffersResult {
+  /** True when the change needs channel assignment/release (add/remove) → routed async via the
+   *  worker; the KV re-sync lands once channels settle. False = weights/variants applied + KV
+   *  re-synced synchronously (takes effect on the next click). */
+  rebalancing: boolean;
+  offers: OfferRow[];
+}
+
+/**
+ * Edit a LIVE campaign's offers without touching Facebook (OQ#9). The FB creative only
+ * carries the stable `/go/{redirectId}` link, so re-routing = rewriting edge KV:
+ *  - **Weights / article-variant changes on existing offers** → applied + KV re-synced
+ *    synchronously (instant; takes effect on the next click).
+ *  - **Add / remove offers** → channel claim/release is the worker's job (single-writer,
+ *    SKIP LOCKED), so we apply the offer rows then enqueue a `rebalance` that assigns new
+ *    channels, releases removed ones, and re-syncs KV.
+ * Existing offers are matched by `id` (kept) so their channels are preserved.
+ */
+export async function updateLiveOffers(auth: AuthContext, campaignId: string, inputs: LiveOfferInput[]): Promise<LiveOffersResult> {
+  assertOfferShape(inputs);
+
+  const { added, removed } = await runScoped(auth, async (tx) => {
+    const c = await loadCampaignScoped(auth, tx, campaignId);
+    if (!LIVE_EDITABLE.includes(c.status)) {
+      throw new AppError(409, 'This campaign is not live yet — edit its offers from the campaign before it launches');
+    }
+    await assertDomainsAndVariants(tx, c.orgId, inputs);
+
+    const existing = await tx.offer.findMany({ where: { campaignId }, select: { id: true } });
+    const existingIds = new Set(existing.map((o) => o.id));
+    const keptIds = new Set(inputs.map((o) => o.id).filter((x): x is string => typeof x === 'string' && existingIds.has(x)));
+    const removedIds = existing.filter((o) => !keptIds.has(o.id)).map((o) => o.id);
+
+    // Update kept offers in place (preserve their channelRef); create new ones (channel TBD).
+    let addedCount = 0;
+    for (const o of inputs) {
+      if (o.id && keptIds.has(o.id)) {
+        await tx.offer.update({ where: { id: o.id }, data: { weightPct: o.weightPct, kind: o.kind, articleId: o.articleId ?? null } });
+      } else {
+        await tx.offer.create({ data: { orgId: c.orgId, campaignId, domainId: o.domainId, weightPct: o.weightPct, kind: o.kind, articleId: o.articleId ?? null } });
+        addedCount += 1;
+      }
+    }
+    if (removedIds.length > 0) await tx.offer.deleteMany({ where: { id: { in: removedIds } } });
+
+    await writeAudit(tx, {
+      orgId: c.orgId,
+      actorId: auth.userId,
+      action: 'campaign.offers.live_edit',
+      entityType: 'campaign',
+      entityId: campaignId,
+      details: { kept: keptIds.size, added: addedCount, removed: removedIds.length },
+    });
+    return { added: addedCount, removed: removedIds.length };
+  });
+
+  const rebalancing = added > 0 || removed > 0;
+  if (rebalancing) {
+    // Channel claim (new offers) / release (removed offers) is the worker's job; it re-syncs KV after.
+    await enqueueOfferRebalance(campaignId);
+  } else {
+    // Pure weight / article-variant change — re-sync KV now (instant, no Facebook).
+    await syncCampaignRedirectConfigs(campaignId);
+  }
+  return { rebalancing, offers: await listOffers(auth, campaignId) };
 }

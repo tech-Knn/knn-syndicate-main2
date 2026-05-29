@@ -336,6 +336,96 @@ export interface LaunchResult {
 }
 
 /**
+ * Rebuild + write each ad's redirect config to edge KV from the campaign's CURRENT
+ * offers / channel / article variants — **without touching Facebook**. The FB creative
+ * carries only the stable `/go/{redirectId}` link, so rewriting KV reroutes live traffic
+ * on the next click with zero ad republish. This is the engine behind post-launch offer
+ * rebalancing (weights, article A/B, add/remove). System-scoped (the caller authorizes;
+ * also called by the worker after it assigns/releases channels). Mirrors the split-build
+ * in `launchCampaign` (kept in sync deliberately — launch stays inline to avoid coupling
+ * the critical, stress-tested launch path to this helper).
+ */
+export async function syncCampaignRedirectConfigs(
+  campaignId: string,
+  deps: Pick<LaunchDeps, 'writeRedirectConfigs'> = { writeRedirectConfigs },
+): Promise<{ ads: number }> {
+  const campaign = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, include: campaignInclude }));
+  if (!campaign) throw new AppError(404, 'Campaign not found');
+
+  // Campaign default article slug.
+  let slug: string | null = null;
+  if (campaign.articleId) {
+    const a = await withSystem((tx) => tx.article.findUnique({ where: { id: campaign.articleId! }, select: { slug: true } }));
+    slug = a?.slug ?? null;
+  }
+  if (!slug) throw new AppError(409, 'Campaign has no article yet — nothing to route');
+
+  const offers = await withSystem((tx) =>
+    tx.offer.findMany({ where: { campaignId }, include: { domain: { select: { host: true } } } }),
+  );
+  const paidOffers = offers.filter((o) => o.kind === 'PAID' && o.channelRef);
+
+  let articleUrl = `${env.ARTICLE_DOMAIN}/a/${slug}`;
+  let channel: string | undefined;
+  let splits: RedirectConfigPayload['splits'];
+  let organicFallbackUrl: string | undefined;
+
+  if (paidOffers.length > 0) {
+    const chRows = await withSystem((tx) =>
+      tx.channel.findMany({ where: { id: { in: paidOffers.map((o) => o.channelRef!) } }, select: { id: true, channelId: true } }),
+    );
+    const chById = new Map(chRows.map((c) => [c.id, c.channelId]));
+    const variantIds = [...new Set(offers.map((o) => o.articleId).filter((x): x is string => Boolean(x)))];
+    const variantRows = variantIds.length
+      ? await withSystem((tx) => tx.article.findMany({ where: { id: { in: variantIds } }, select: { id: true, slug: true } }))
+      : [];
+    const slugByArticle = new Map(variantRows.map((a) => [a.id, a.slug]));
+    const slugFor = (articleId: string | null): string => (articleId ? slugByArticle.get(articleId) ?? slug! : slug!);
+    splits = paidOffers.map((o) => ({
+      url: `https://${o.domain.host}/a/${slugFor(o.articleId)}`,
+      weight: o.weightPct,
+      channel: chById.get(o.channelRef!),
+      offerId: o.id,
+    }));
+    const organic = offers.find((o) => o.kind === 'ORGANIC');
+    organicFallbackUrl = organic ? `https://${organic.domain.host}/a/${slugFor(organic.articleId)}` : undefined;
+    articleUrl = splits[0]?.url ?? articleUrl;
+  } else if (campaign.channelId) {
+    const ch = await withSystem((tx) => tx.channel.findUnique({ where: { id: campaign.channelId! }, select: { channelId: true } }));
+    channel = ch?.channelId;
+  }
+
+  const entries = campaign.adSets.flatMap((set) =>
+    set.ads
+      .filter((ad) => ad.redirectId)
+      .map((ad) => ({
+        redirectId: ad.redirectId,
+        config: {
+          campaignId: campaign.id,
+          active: campaign.status === CAMPAIGN_STATUS.ACTIVE,
+          articleUrl,
+          channel,
+          splits,
+          rac: campaign.racValue ?? undefined,
+          adCreative: buildAdCreativeText(ad),
+          fallbackUrl: organicFallbackUrl ?? ad.fallbackUrl ?? campaign.fallbackUrl ?? undefined,
+        } satisfies RedirectConfigPayload,
+      })),
+  );
+  try {
+    await deps.writeRedirectConfigs(entries);
+  } catch (err) {
+    // Tolerate an unconfigured edge (mirrors launchCampaign) — never throw on the rebalance path.
+    if (err instanceof KvNotConfiguredError) {
+      console.warn(`[resync] Cloudflare KV not configured — redirect configs not synced for ${campaignId}`);
+    } else {
+      throw err;
+    }
+  }
+  return { ads: entries.length };
+}
+
+/**
  * The real launch pipeline (Phase 8). For an approved campaign that already has a
  * channel (Phase 6): ensure its article (Phase 5) → write each ad's redirect config
  * to edge KV (Phase 7) → create the Campaign→AdSet→Ad on Facebook **ACTIVE** through

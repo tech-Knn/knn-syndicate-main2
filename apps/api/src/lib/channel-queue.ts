@@ -18,3 +18,17 @@ export async function enqueueChannelAssign(campaignId: string): Promise<void> {
     console.error('[channel-queue] failed to enqueue assign for', campaignId, err);
   }
 }
+
+/**
+ * Ask the worker to REBALANCE a live campaign's offers: assign channels to newly-added
+ * offers + release channels of removed offers (single-writer / SKIP LOCKED), then re-sync
+ * the edge KV redirect configs — all WITHOUT touching Facebook (OQ#9 live offer edit).
+ * Not best-effort: the caller surfaces a failure so the UI can prompt a retry.
+ */
+export async function enqueueOfferRebalance(campaignId: string): Promise<void> {
+  await getQueue(QUEUES.CHANNEL_MAINTENANCE).add(
+    'rebalance',
+    { action: 'rebalance', campaignId },
+    { removeOnComplete: 100, removeOnFail: 100 },
+  );
+}

@@ -210,6 +210,28 @@ export async function releaseChannelForCampaign(
 }
 
 /**
+ * Live offer rebalance (OQ#9): for a campaign whose offer set just changed post-launch,
+ * (1) release channels orphaned by REMOVED offers (held by this campaign but no offer points
+ * to them), (2) assign channels to NEWLY-ADDED paid offers (idempotent, SKIP-LOCKED, and
+ * status-safe on a live ACTIVE campaign — the PROCESSING transition is rejected so status is
+ * untouched), (3) re-drive the wait queue for any freed channels. The caller re-syncs KV
+ * afterward. Never touches Facebook.
+ */
+export async function rebalanceOfferChannels(campaignId: string): Promise<{ released: number; assigned: boolean }> {
+  const released = await withSystem(async (tx) => {
+    const offers = await tx.offer.findMany({ where: { campaignId }, select: { channelRef: true } });
+    const keep = new Set(offers.map((o) => o.channelRef).filter((x): x is string => Boolean(x)));
+    const held = await tx.channel.findMany({ where: { currentCampaignId: campaignId }, select: { id: true } });
+    const orphans = held.filter((c) => !keep.has(c.id));
+    for (const c of orphans) await releaseChannelRow(tx, c.id);
+    return orphans.length;
+  });
+  const result = await assignOfferChannels(campaignId);
+  if (released > 0) await processQueue();
+  return { released, assigned: result.assigned };
+}
+
+/**
  * Drain the FIFO wait queue: assign freed channels to the oldest WAITING campaigns
  * until the pool is empty or the queue is. Returns how many were assigned. Each
  * newly-assigned campaign fires `onAssigned` (best-effort — a hook failure never

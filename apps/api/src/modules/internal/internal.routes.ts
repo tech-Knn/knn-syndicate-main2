@@ -5,7 +5,7 @@ import { ROLES, USER_STATUS } from '@knn/shared';
 import { decryptToken, graphRequest } from '@knn/fb';
 import { handleRouteError } from '../../lib/http.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
-import { launchCampaign, relaunchCampaign } from '../campaigns/launch.service.js';
+import { launchCampaign, relaunchCampaign, syncCampaignRedirectConfigs } from '../campaigns/launch.service.js';
 
 /**
  * Internal worker→API routes (Phase 8 auto-launch). Guarded by the shared
@@ -32,6 +32,22 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
         status: USER_STATUS.ACTIVE,
       };
       return reply.send(await launchCampaign(auth, req.params.id));
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // Re-sync a campaign's edge KV redirect configs from its CURRENT offers/channels/articles
+  // — NO Facebook (OQ#9 live offer rebalance). Called by the worker after it assigns/releases
+  // channels for an add/remove. Token-guarded.
+  app.post<{ Params: { id: string } }>('/resync-offers/:id', async (req, reply) => {
+    const header = req.headers['x-internal-token'];
+    const tok = Array.isArray(header) ? header[0] : header;
+    if (!env.INTERNAL_API_TOKEN || tok !== env.INTERNAL_API_TOKEN) {
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+    try {
+      return reply.send(await syncCampaignRedirectConfigs(req.params.id));
     } catch (err) {
       return handleRouteError(err, reply);
     }

@@ -15,8 +15,8 @@ import {
   updateCampaign,
 } from './campaigns.service.js';
 import { launchCampaign, setCampaignActive, testLaunchCampaign } from './launch.service.js';
-import { listArticleVariants, listOfferDomains, listOffers, setOffers } from './offers.service.js';
-import { offerSetSchema } from './offers.schemas.js';
+import { listArticleVariants, listOfferDomains, listOffers, setOffers, updateLiveOffers } from './offers.service.js';
+import { liveOfferSetSchema, offerSetSchema } from './offers.schemas.js';
 
 const adminOnly = [authenticate, requireRole(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)];
 
@@ -181,6 +181,17 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
     try {
       const { offers } = offerSetSchema.parse(req.body);
       return reply.send({ offers: await setOffers(req.auth, req.params.id, offers) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // Live (post-launch) offer rebalance — rewrites edge KV, never touches Facebook (OQ#9).
+  app.put<{ Params: { id: string } }>('/:id/offers/live', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      const { offers } = liveOfferSetSchema.parse(req.body);
+      return reply.send(await updateLiveOffers(req.auth, req.params.id, offers));
     } catch (err) {
       return handleRouteError(err, reply);
     }

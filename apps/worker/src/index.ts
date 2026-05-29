@@ -8,15 +8,16 @@ import { type CapiDispatchJob, dispatchConversion } from './capi-dispatch.js';
 import {
   assignForCampaign,
   processQueue,
+  rebalanceOfferChannels,
   releaseChannelForCampaign,
   rolloverChannels,
 } from './channel-pool/channel.service.js';
 import { checkMetaRejections } from './jobs/meta-rejection.js';
 import { refreshFbTokens } from './jobs/token-refresh.js';
-import { type FbLaunchJob, runFbLaunch, triggerAutoLaunch } from './launch-trigger.js';
+import { type FbLaunchJob, resyncOffersToKv, runFbLaunch, triggerAutoLaunch } from './launch-trigger.js';
 
 interface ChannelJob {
-  action: 'assign' | 'release' | 'rollover' | 'process-queue';
+  action: 'assign' | 'release' | 'rollover' | 'process-queue' | 'rebalance';
   campaignId?: string;
 }
 
@@ -79,6 +80,15 @@ async function main(): Promise<void> {
           return rolloverChannels(undefined, triggerAutoLaunch);
         case 'process-queue':
           return processQueue(triggerAutoLaunch);
+        case 'rebalance': {
+          // Live offer edit (OQ#9): assign new offers' channels + release removed ones,
+          // then re-sync edge KV (no Facebook). KV re-sync runs even if nothing changed
+          // channel-wise, so the new weights/variants land.
+          if (!campaignId) return { skipped: true };
+          const result = await rebalanceOfferChannels(campaignId);
+          await resyncOffersToKv(campaignId);
+          return result;
+        }
         default:
           return { skipped: true };
       }

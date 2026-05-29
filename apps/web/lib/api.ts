@@ -327,6 +327,12 @@ export const campaigns = {
   // Phase E — campaign offers (the websites a campaign's traffic routes across).
   offers: async (id: string): Promise<OfferRow[]> =>
     (await parse<{ offers: OfferRow[] }>(await authedFetch(`/api/campaigns/${id}/offers`))).offers,
+  // Live (post-launch) offer rebalance — rewrites edge KV, never touches the Facebook ads.
+  updateLiveOffers: async (
+    id: string,
+    offers: (OfferInput & { id?: string })[],
+  ): Promise<{ rebalancing: boolean; offers: OfferRow[] }> =>
+    parse(await authedFetch(`/api/campaigns/${id}/offers/live`, { method: 'PUT', headers: jsonHeaders(), body: JSON.stringify({ offers }) })),
   setOffers: async (id: string, offers: OfferInput[]): Promise<OfferRow[]> =>
     (
       await parse<{ offers: OfferRow[] }>(

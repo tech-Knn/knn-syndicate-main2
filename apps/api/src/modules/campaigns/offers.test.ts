@@ -6,7 +6,7 @@ import { ROLES, USER_STATUS } from '@knn/shared';
 import { encryptToken } from '@knn/fb';
 import { AppError } from '../../lib/errors.js';
 import { submitCampaign } from './campaigns.service.js';
-import { listOfferDomains, listOffers, setOffers } from './offers.service.js';
+import { listOfferDomains, listOffers, setOffers, updateLiveOffers } from './offers.service.js';
 
 const suffix = Date.now().toString(36);
 let orgId = '';
@@ -38,6 +38,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await withSystem(async (tx) => {
     await tx.campaign.deleteMany({ where: { orgId } }); // cascades offers
+    await tx.channelAssignment.deleteMany({ where: { orgId } });
+    await tx.channel.deleteMany({ where: { channelId: { contains: suffix } } });
     await tx.article.deleteMany({ where: { orgId } });
     await tx.domain.deleteMany({ where: { afsAccountId: afsId } });
     await tx.googleConnection.deleteMany({ where: { id: afsId } });
@@ -164,5 +166,46 @@ describe('campaign offers', () => {
       setOffers(auth(), campaignId, [{ domainId: domLiveA, weightPct: 100, kind: 'PAID' }]),
     ).rejects.toThrow('before the campaign is approved');
     await withSystem((tx) => tx.campaign.update({ where: { id: campaignId }, data: { status: 'DRAFT' } }));
+  });
+});
+
+describe('live offer rebalance (post-launch, no Facebook — OQ#9)', () => {
+  let liveId = '';
+  let offerAId = '';
+  let offerBId = '';
+
+  beforeAll(async () => {
+    await withSystem(async (tx) => {
+      const art = await tx.article.create({ data: { orgId, slug: `live-art-${suffix}`, title: 'Live Art', rawContent: 'r', compliantContent: 'c', status: 'READY' } });
+      liveId = (await tx.campaign.create({ data: { orgId, buyerId, name: 'live', status: 'ACTIVE', keywords: ['x'], racValue: 'x', articleId: art.id } })).id;
+      const chA = await tx.channel.create({ data: { channelId: `live-a-${suffix}`, domainId: domLiveA, status: 'ASSIGNED', currentCampaignId: liveId } });
+      const chB = await tx.channel.create({ data: { channelId: `live-b-${suffix}`, domainId: domLiveB, status: 'ASSIGNED', currentCampaignId: liveId } });
+      offerAId = (await tx.offer.create({ data: { orgId, campaignId: liveId, domainId: domLiveA, weightPct: 50, kind: 'PAID', channelRef: chA.id } })).id;
+      offerBId = (await tx.offer.create({ data: { orgId, campaignId: liveId, domainId: domLiveB, weightPct: 50, kind: 'PAID', channelRef: chB.id } })).id;
+    });
+  });
+
+  it('rebalances weights on existing offers synchronously (no channel ops) + preserves channels', async () => {
+    const res = await updateLiveOffers(auth(), liveId, [
+      { id: offerAId, domainId: domLiveA, weightPct: 100, kind: 'PAID' },
+      { id: offerBId, domainId: domLiveB, weightPct: 0, kind: 'PAID' },
+    ]);
+    expect(res.rebalancing).toBe(false); // weight-only → applied + KV re-synced inline
+    const a = res.offers.find((o) => o.id === offerAId)!;
+    expect(a.weightPct).toBe(100);
+    expect(a.channelId).toBe(`live-a-${suffix}`); // channel preserved (matched by id)
+    expect(res.offers.find((o) => o.id === offerBId)!.weightPct).toBe(0);
+  });
+
+  it('flags rebalancing=true when an offer is removed (channel release routed to the worker)', async () => {
+    const res = await updateLiveOffers(auth(), liveId, [{ id: offerAId, domainId: domLiveA, weightPct: 100, kind: 'PAID' }]);
+    expect(res.rebalancing).toBe(true);
+    expect(res.offers).toHaveLength(1); // offer B deleted; its channel released asynchronously
+  });
+
+  it('rejects a live edit on a pre-launch (DRAFT) campaign', async () => {
+    const draft = await withSystem((tx) => tx.campaign.create({ data: { orgId, buyerId, name: 'draft-live', status: 'DRAFT', keywords: ['x'] } }));
+    await expect(updateLiveOffers(auth(), draft.id, [{ domainId: domLiveA, weightPct: 100, kind: 'PAID' }])).rejects.toBeInstanceOf(AppError);
+    await withSystem((tx) => tx.campaign.deleteMany({ where: { id: draft.id } }));
   });
 });

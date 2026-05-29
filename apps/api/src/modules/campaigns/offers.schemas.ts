@@ -16,3 +16,18 @@ export const offerSetSchema = z.object({
 });
 
 export type OfferSetInput = z.infer<typeof offerSetSchema>;
+
+/** Live (post-launch) offer edit — existing offers carry their `id`; new ones omit it. */
+export const liveOfferSetSchema = z.object({
+  offers: z
+    .array(
+      z.object({
+        id: z.string().uuid().optional(),
+        domainId: z.string().uuid(),
+        weightPct: z.number().int().min(0).max(100),
+        kind: z.enum(['PAID', 'ORGANIC']),
+        articleId: z.string().uuid().nullish(),
+      }),
+    )
+    .max(20),
+});

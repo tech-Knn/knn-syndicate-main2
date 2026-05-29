@@ -115,3 +115,23 @@ export async function runFbLaunch(
   const body = (await res.json().catch(() => ({}))) as { status?: string };
   return { status: body.status ?? 'unknown' };
 }
+
+/**
+ * Re-sync a campaign's edge KV redirect configs from its current offers — NO Facebook
+ * (OQ#9 live offer rebalance). POSTs the API's token-guarded internal resync endpoint
+ * after the worker has assigned/released channels for an add/remove.
+ */
+export async function resyncOffersToKv(
+  campaignId: string,
+  deps: RunFbLaunchDeps = defaultRunFbLaunchDeps,
+): Promise<void> {
+  if (!deps.token) throw new Error('INTERNAL_API_TOKEN is not configured — cannot re-sync offers');
+  const res = await deps.fetch(`${deps.baseUrl}/api/internal/resync-offers/${campaignId}`, {
+    method: 'POST',
+    headers: { 'x-internal-token': deps.token },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`internal offer resync failed (${res.status}) for ${campaignId}: ${text}`);
+  }
+}

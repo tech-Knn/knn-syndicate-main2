@@ -9,8 +9,12 @@ import styles from '../../admin.module.css';
 
 /** Campaign states where offers can still be edited (before channels are assigned). */
 const EDITABLE: CampaignStatus[] = ['DRAFT', 'PENDING_APPROVAL', 'REJECTED', 'QUEUED_NO_CHANNEL'];
+/** States where a LIVE campaign's offers can be rebalanced — rewrites edge KV, no Facebook (OQ#9). */
+const LIVE_EDITABLE: CampaignStatus[] = ['PROCESSING', 'LAUNCHING', 'BATCHED', 'ACTIVE', 'PAUSED'];
 
 interface Draft {
+  /** Existing offer id (kept on a live edit so its channel is preserved); undefined = new. */
+  id?: string;
   domainId: string;
   weightPct: number;
   kind: 'PAID' | 'ORGANIC';
@@ -25,6 +29,7 @@ interface Draft {
  */
 export function OffersEditor({ campaignId, status }: { campaignId: string; status: CampaignStatus }) {
   const editable = EDITABLE.includes(status);
+  const liveEditable = LIVE_EDITABLE.includes(status);
   const [domains, setDomains] = useState<OfferDomainOption[]>([]);
   const [articleVariants, setArticleVariants] = useState<ArticleVariantOption[]>([]);
   const [rows, setRows] = useState<Draft[]>([]);
@@ -36,7 +41,7 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
   const load = useCallback(() => {
     void campaigns.offers(campaignId).then((offers) => {
       setSaved(offers);
-      setRows(offers.map((o) => ({ domainId: o.domainId, weightPct: o.weightPct, kind: o.kind, articleId: o.articleId ?? '' })));
+      setRows(offers.map((o) => ({ id: o.id, domainId: o.domainId, weightPct: o.weightPct, kind: o.kind, articleId: o.articleId ?? '' })));
     });
     void campaigns.offerDomains().then(setDomains).catch(() => setDomains([]));
     void campaigns.articleVariants().then(setArticleVariants).catch(() => setArticleVariants([]));
@@ -58,15 +63,29 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
   const save = async (): Promise<void> => {
     setBusy(true);
     setNote(null);
+    const payload = rows.filter((r) => r.domainId);
     try {
-      const offers = await campaigns.setOffers(
-        campaignId,
-        rows
-          .filter((r) => r.domainId)
-          .map((r) => ({ domainId: r.domainId, weightPct: r.weightPct, kind: r.kind, articleId: r.articleId || null })),
-      );
-      setSaved(offers);
-      setNote('Saved.');
+      if (liveEditable) {
+        // Post-launch rebalance — rewrites edge KV, never touches the Facebook ads.
+        const res = await campaigns.updateLiveOffers(
+          campaignId,
+          payload.map((r) => ({ id: r.id, domainId: r.domainId, weightPct: r.weightPct, kind: r.kind, articleId: r.articleId || null })),
+        );
+        setSaved(res.offers);
+        setRows(res.offers.map((o) => ({ id: o.id, domainId: o.domainId, weightPct: o.weightPct, kind: o.kind, articleId: o.articleId ?? '' })));
+        setNote(
+          res.rebalancing
+            ? 'Rebalancing — assigning/releasing channels, then the new routing lands on the edge in a few seconds. No ad republish.'
+            : 'Saved — the new split is live on the edge and takes effect on the next click. No ad republish.',
+        );
+      } else {
+        const offers = await campaigns.setOffers(
+          campaignId,
+          payload.map((r) => ({ domainId: r.domainId, weightPct: r.weightPct, kind: r.kind, articleId: r.articleId || null })),
+        );
+        setSaved(offers);
+        setNote('Saved.');
+      }
     } catch (err) {
       setNote(err instanceof Error ? err.message : 'Could not save offers');
     } finally {
@@ -85,9 +104,16 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
         </span>
       </div>
 
+      {liveEditable && (
+        <p className={styles.fieldHint}>
+          This campaign is <strong>live</strong> — you can rebalance weights, swap article variants, and add/remove
+          offers on the fly. Changes rewrite the edge routing only; the Facebook ads are never touched or re-reviewed.
+        </p>
+      )}
+
       {note && <p className={note === 'Saved.' ? styles.savedNote : styles.fieldHint}>{note}</p>}
 
-      {!editable ? (
+      {!(editable || liveEditable) ? (
         // Read-only once approved/launched — show the assigned channels.
         saved && saved.length > 0 ? (
           <div className={styles.tableWrap}>
@@ -209,7 +235,7 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
                 Add offer
               </Button>
               <Button onClick={() => void save()} loading={busy}>
-                Save offers
+                {liveEditable ? 'Save — no ad republish' : 'Save offers'}
               </Button>
             </div>
             <span className={styles.subtle}>Paid weights total {paidWeight}% (split is proportional — need not equal 100).</span>
