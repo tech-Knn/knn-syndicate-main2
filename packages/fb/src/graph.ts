@@ -1,6 +1,20 @@
+import { createHmac } from 'node:crypto';
 import { env } from '@knn/config';
 import { classifyFbError, type FbErrorBody } from './errors.js';
 import { sharedRateLimiter, type FbRateLimiter } from './rate-limiter.js';
+
+/**
+ * `appsecret_proof` = HMAC-SHA256(access_token, app_secret), hex. Sent on every Graph
+ * call made with a user/page token: it proves to Facebook the request genuinely
+ * originates from OUR app's server (possession of the app secret), not a replayed/stolen
+ * token. This is the single strongest signal against the "someone may have tried to
+ * access your account" / pending-action security checkpoints on server-to-server ad
+ * calls (which look suspicious precisely because they're a token used from a datacenter
+ * IP). Pure + exported so it's unit-testable without env.
+ */
+export function computeAppSecretProof(accessToken: string, appSecret: string): string {
+  return createHmac('sha256', appSecret).update(accessToken).digest('hex');
+}
 
 /**
  * Thin fetch-based Facebook Graph API client. We use fetch (not the official
@@ -46,13 +60,18 @@ async function doRequest<T>(req: GraphRequest): Promise<T> {
   const url = new URL(graphBase() + req.path);
   const method = req.method ?? 'GET';
   const headers: Record<string, string> = {};
-  if (req.accessToken) headers.Authorization = `Bearer ${req.accessToken}`;
+  const params: Record<string, string> = { ...(req.params ?? {}) };
+  if (req.accessToken) {
+    headers.Authorization = `Bearer ${req.accessToken}`;
+    // Prove the call comes from our app's server (reduces token-replay security flags).
+    if (env.FB_APP_SECRET) params.appsecret_proof = computeAppSecretProof(req.accessToken, env.FB_APP_SECRET);
+  }
 
   const init: RequestInit = { method, headers };
   if (method === 'GET') {
-    for (const [k, v] of Object.entries(req.params ?? {})) url.searchParams.set(k, v);
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   } else {
-    init.body = new URLSearchParams(req.params ?? {});
+    init.body = new URLSearchParams(params);
   }
 
   const res = await fetch(url, init);

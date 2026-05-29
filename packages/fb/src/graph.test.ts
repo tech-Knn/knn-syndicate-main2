@@ -1,6 +1,7 @@
+import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FbAccountRestrictedError, FbConnectionBrokenError, FbRateLimitError, classifyFbError } from './errors.js';
-import { graphRequest } from './graph.js';
+import { computeAppSecretProof, graphRequest } from './graph.js';
 import { getMe } from './oauth.js';
 import { fetchAdAccounts } from './sync.js';
 
@@ -91,6 +92,14 @@ describe('graph client', () => {
     await expect(graphRequest({ path: '/me', accessToken: 'tok' })).rejects.toBeInstanceOf(
       FbRateLimitError,
     );
+  });
+
+  it('computes appsecret_proof as HMAC-SHA256(token, secret) hex', () => {
+    const proof = computeAppSecretProof('user-token', 'app-secret');
+    expect(proof).toBe(createHmac('sha256', 'app-secret').update('user-token').digest('hex'));
+    expect(proof).toMatch(/^[0-9a-f]{64}$/);
+    // Different token → different proof (it's bound to the specific token).
+    expect(computeAppSecretProof('other-token', 'app-secret')).not.toBe(proof);
   });
 
   it('maps /me/adaccounts to AdAccountDTO', async () => {
