@@ -69,7 +69,9 @@ export function RelatedSearchUnit({
     if (channel) pageOptions.channel = channel;
     runCsa('relatedsearch', pageOptions, {
       container: 'relatedsearches1',
-      relatedSearches: 10,
+      // ~6 (not 10): matches Google's official RSOC examples and keeps the unit a supplement
+      // to the article rather than the page's focus (a 10-chip block dominates the content).
+      relatedSearches: 6,
       adLoadedCallback: (containerName: string, adsLoaded: boolean) => {
         afsAdLoadedCallback(containerName, adsLoaded);
         // Reveal the unit's chrome only when it actually served terms.
