@@ -28,7 +28,7 @@ export async function WebResults(): Promise<React.ReactElement | null> {
 
   let articles: ArticleSummary[] = [];
   try {
-    const res = await fetch(`${API_BASE}/api/public/articles?host=${encodeURIComponent(host)}&limit=6`, {
+    const res = await fetch(`${API_BASE}/api/public/articles?host=${encodeURIComponent(host)}&limit=5`, {
       next: { revalidate: 300 },
     });
     if (res.ok) articles = ((await res.json()) as { articles?: ArticleSummary[] }).articles ?? [];

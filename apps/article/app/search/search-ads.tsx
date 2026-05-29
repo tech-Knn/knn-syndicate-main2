@@ -76,9 +76,10 @@ export function SearchAds({
   const bootstrap =
     `(function(g,o){g[o]=g[o]||function(){(g[o].q=g[o].q||[]).push(arguments)};g[o].t=1*new Date})(window,'_googCsa');` +
     `var po=${safeJson(pageOptions)};po.resultsPageBaseUrl=window.location.origin+'/search';` +
-    // Ads only — no relatedSearchBlock. The organic <WebResults> below ARE the search results
-    // the ads supplement (Google policy), so a related-search widget here is redundant.
-    `_googCsa('ads',po,{container:'afscontainer1'});` +
+    // Ads only (no relatedSearchBlock — the organic <WebResults> below ARE the results the ads
+    // supplement). `number:5` caps ads at 5 to match the ≤5 organic Web results, so ads ≤ results
+    // (Google policy: number of ads ≤ number of search results). Google may serve fewer.
+    `_googCsa('ads',po,{container:'afscontainer1',number:5});` +
     `var s=document.createElement('script');s.async=!0;s.src='https://www.google.com/adsense/search/ads.js';document.head.appendChild(s);`;
 
   return (
