@@ -160,55 +160,57 @@ export async function generateArticleForCampaign(
     throw new AppError(422, 'Campaign has no keywords to generate an article from');
   }
 
-  // 2. Engine work scoped to the campaign's org (within-org reuse only).
+  const orgId = campaign.orgId;
+  // CRITICAL: the AI calls (embed / generate / compliance) take many seconds — they
+  // must run OUTSIDE any DB transaction, or Prisma's 5s interactive-txn timeout kills
+  // it ("transaction already closed"). Each DB step below is its own short txn.
   try {
-    return await withTenant(campaign.orgId, async (tx) => {
-      if (campaign.articleId) {
-        const existing = await tx.article.findUnique({
-          where: { id: campaign.articleId },
-          select: { id: true, slug: true, title: true, status: true },
-        });
-        if (existing) return { ...existing, reused: true };
-      }
+    // Idempotent: already attached → done (a quick read).
+    if (campaign.articleId) {
+      const existing = await withTenant(orgId, (tx) =>
+        tx.article.findUnique({ where: { id: campaign.articleId! }, select: { id: true, slug: true, title: true, status: true } }),
+      );
+      if (existing) return { ...existing, reused: true };
+    }
 
-      const topic = (campaign.query ? `${campaign.query}. ` : '') + keywords.join(', ');
+    const topic = (campaign.query ? `${campaign.query}. ` : '') + keywords.join(', ');
 
-      // Embedding is best-effort: if OpenAI isn't configured we skip reuse and
-      // still generate (Claude). Other embedding errors propagate.
-      let vector: number[] | null = null;
-      try {
-        vector = await deps.embedText(topic);
-      } catch (err) {
-        if (!(err instanceof AiNotConfiguredError)) throw err;
-      }
+    // Embedding is best-effort (network, no txn): if OpenAI isn't configured we skip
+    // reuse and still generate. Other embedding errors propagate.
+    let vector: number[] | null = null;
+    try {
+      vector = await deps.embedText(topic);
+    } catch (err) {
+      if (!(err instanceof AiNotConfiguredError)) throw err;
+    }
 
-      if (vector) {
-        const similar = await findSimilarArticle(tx, toVectorLiteral(vector));
-        if (similar) {
+    // Reuse an existing similar article (short txn for the vector query only).
+    if (vector) {
+      const vectorLiteral = toVectorLiteral(vector);
+      const similar = await withTenant(orgId, (tx) => findSimilarArticle(tx, vectorLiteral));
+      if (similar) {
+        await withTenant(orgId, async (tx) => {
           await tx.campaign.update({ where: { id: campaignId }, data: { articleId: similar.id } });
-          await writeAudit(tx, {
-            orgId: campaign.orgId,
-            actorId: auth.userId,
-            action: 'article.reused',
-            entityType: 'article',
-            entityId: similar.id,
-            details: { campaignId },
-          });
-          return { id: similar.id, slug: similar.slug, title: similar.title, status: 'READY', reused: true };
-        }
+          await writeAudit(tx, { orgId, actorId: auth.userId, action: 'article.reused', entityType: 'article', entityId: similar.id, details: { campaignId } });
+        });
+        return { id: similar.id, slug: similar.slug, title: similar.title, status: 'READY', reused: true };
       }
+    }
 
-      const compliancePrompt = await getCompliancePrompt(tx);
-      const generated = await deps.generateArticle({ keywords, query: campaign.query ?? undefined });
-      // Only spend a second model call when an admin has actually set compliance rules.
-      const compliant = compliancePrompt.trim()
-        ? await deps.complianceRewrite({ content: generated.content, compliancePrompt })
-        : generated.content;
-      const slug = slugify(generated.title);
+    // Generate (network, no txn). compliance_prompt is a global setting (quick read).
+    const compliancePrompt = await withSystem((tx) => getCompliancePrompt(tx));
+    const generated = await deps.generateArticle({ keywords, query: campaign.query ?? undefined });
+    // Only spend a second model call when an admin has actually set compliance rules.
+    const compliant = compliancePrompt.trim()
+      ? await deps.complianceRewrite({ content: generated.content, compliancePrompt })
+      : generated.content;
+    const slug = slugify(generated.title);
 
+    // Persist (short txn — pure DB writes, no network).
+    return await withTenant(orgId, async (tx) => {
       const created = await tx.article.create({
         data: {
-          orgId: campaign.orgId,
+          orgId,
           slug,
           title: generated.title,
           keywords: keywords as Prisma.InputJsonValue,
@@ -221,23 +223,11 @@ export async function generateArticleForCampaign(
         },
         select: { id: true, slug: true, title: true, status: true },
       });
-
       if (vector) {
-        await tx.$executeRawUnsafe(
-          'UPDATE articles SET embedding = $1::vector WHERE id = $2::uuid',
-          toVectorLiteral(vector),
-          created.id,
-        );
+        await tx.$executeRawUnsafe('UPDATE articles SET embedding = $1::vector WHERE id = $2::uuid', toVectorLiteral(vector), created.id);
       }
       await tx.campaign.update({ where: { id: campaignId }, data: { articleId: created.id } });
-      await writeAudit(tx, {
-        orgId: campaign.orgId,
-        actorId: auth.userId,
-        action: 'article.generated',
-        entityType: 'article',
-        entityId: created.id,
-        details: { campaignId, hasEmbedding: vector !== null },
-      });
+      await writeAudit(tx, { orgId, actorId: auth.userId, action: 'article.generated', entityType: 'article', entityId: created.id, details: { campaignId, hasEmbedding: vector !== null } });
       return { ...created, reused: false };
     });
   } catch (err) {
