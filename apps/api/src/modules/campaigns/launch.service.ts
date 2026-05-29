@@ -514,3 +514,52 @@ export async function launchCampaign(
     throw err;
   }
 }
+
+/**
+ * Force a relaunch of an already-launched campaign: pause the existing FB campaign (so its
+ * stale ads stop delivering), clear the stored FB ids + reset to PROCESSING, then re-run
+ * launchCampaign to re-create Campaign→AdSet→Ad on Facebook with the CURRENT config —
+ * notably a corrected `REDIRECT_DOMAIN`/creative link. Used when a live campaign's creatives
+ * carry a stale/broken redirect domain. The old FB campaign is left PAUSED (no spend), and a
+ * fresh FB campaign is created.
+ */
+export async function relaunchCampaign(auth: AuthContext, campaignId: string): Promise<LaunchResult> {
+  // Resolve the current FB campaign + a token to pause the old delivery (best-effort).
+  const info = await runScoped(auth, async (tx) => {
+    const c = await tx.campaign.findUnique({
+      where: { id: campaignId },
+      select: { id: true, buyerId: true, fbCampaignId: true, adAccountId: true },
+    });
+    if (!c) throw new AppError(404, 'Campaign not found');
+    if (auth.role === ROLES.MEDIA_BUYER && c.buyerId !== auth.userId) throw new AppError(404, 'Campaign not found');
+    let pause: { fbCampaignId: string; fbAccountId: string; token: string } | null = null;
+    if (c.fbCampaignId && c.adAccountId) {
+      const acc = await tx.fbAdAccount.findUnique({
+        where: { id: c.adAccountId },
+        select: { fbAccountId: true, connection: { select: { accessTokenEnc: true } } },
+      });
+      if (acc) {
+        pause = { fbCampaignId: c.fbCampaignId, fbAccountId: acc.fbAccountId, token: decryptToken(acc.connection.accessTokenEnc) };
+      }
+    }
+    return { pause };
+  });
+
+  // Stop the old (stale-link) campaign on Facebook. Best-effort — never block the relaunch.
+  if (info.pause) {
+    try {
+      await updateFbCampaignStatus(info.pause.fbCampaignId, info.pause.fbAccountId, info.pause.token, 'PAUSED');
+    } catch (err) {
+      console.warn(`[relaunch] could not pause old FB campaign for ${campaignId}: ${(err as Error).message}`);
+    }
+  }
+
+  // Clear the stored FB ids + reset to PROCESSING so launchCampaign re-creates the structure.
+  await runScoped(auth, async (tx) => {
+    await tx.ad.updateMany({ where: { adSet: { campaignId } }, data: { fbAdId: null } });
+    await tx.adSet.updateMany({ where: { campaignId }, data: { fbAdSetId: null } });
+    await tx.campaign.update({ where: { id: campaignId }, data: { fbCampaignId: null, status: CAMPAIGN_STATUS.PROCESSING } });
+  });
+
+  return launchCampaign(auth, campaignId);
+}
