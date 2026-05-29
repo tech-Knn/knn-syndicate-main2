@@ -49,6 +49,14 @@ describe('graph client', () => {
     expect(err).toBeInstanceOf(FbAccountRestrictedError);
   });
 
+  it('classifies err 31 / subcode 3858385 ("pending action") as account-restricted', () => {
+    // The exact live signature of the "authenticate your account in Ads Manager" checkpoint.
+    const err = classifyFbError({ code: 31, error_subcode: 3858385, message: 'This request requires the user to take a pending action' }, 400);
+    expect(err).toBeInstanceOf(FbAccountRestrictedError);
+    expect(err.code).toBe(31);
+    expect(err.subcode).toBe(3858385);
+  });
+
   it('keeps a token break (190) as a broken connection, not account-restricted', () => {
     expect(classifyFbError({ code: 190, error_subcode: 459, message: 'checkpoint' }, 400)).toBeInstanceOf(
       FbConnectionBrokenError,

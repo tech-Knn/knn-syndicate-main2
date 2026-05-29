@@ -70,14 +70,17 @@ export const FINALIZATION = {
 export const FB_TOKEN_ERROR_SUBCODES = [458, 459, 460, 463, 466, 467] as const;
 export const FB_RATE_LIMIT_ERROR_CODES = [4, 17, 32, 613, 80004, 80000, 80003] as const;
 /**
- * FB error codes that mean the AD ACCOUNT (not the token) is under a security/policy
- * hold — create/modify is blocked until the account owner re-authenticates in Ads
- * Manager, but reads + existing ads keep running. 368 = "action deemed abusive or
- * otherwise disallowed" (the "authenticate your account" checkpoint); 1487390 is the
- * account-restricted subcode seen alongside it. Distinct from a token break (190) so
- * the launcher can give an actionable message + stop blind retries instead of looping. */
-export const FB_ACCOUNT_RESTRICTED_ERROR_CODES = [368] as const;
-export const FB_ACCOUNT_RESTRICTED_SUBCODES = [1487390] as const;
+ * FB error codes/subcodes that mean the AD ACCOUNT (not the token) is under a
+ * security/policy hold — create/modify is blocked until the account owner completes a
+ * pending action / re-authenticates in Ads Manager, but reads + existing ads keep
+ * running. Distinct from a token break (190) so the launcher gives an actionable
+ * message + stops blind retries instead of looping. Verified against live FB responses
+ * + Meta docs:
+ *  - code 368 = "action deemed abusive or otherwise disallowed" (often subcode 1487390).
+ *  - code 31  / subcode 3858385 = "This request requires the user to take a pending
+ *    action" — the exact "authenticate your account in Ads Manager" checkpoint. */
+export const FB_ACCOUNT_RESTRICTED_ERROR_CODES = [368, 31] as const;
+export const FB_ACCOUNT_RESTRICTED_SUBCODES = [1487390, 3858385] as const;
 
 /** Names of the BullMQ queues (single source of truth for worker + Bull-Board). */
 export const QUEUES = {
