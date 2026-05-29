@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AFS_TRACKING_PARAMS,
   afsAdLoadedCallback,
@@ -14,11 +14,14 @@ import styles from './article.module.css';
 /**
  * RSOC "Related Search on Content" unit for the article (content) page. Renders
  * search terms related to the article; clicking one navigates to our /search
- * results page (where the ads + revenue are). Matches the AdSense-generated
- * Content-page snippet: `_googCsa('relatedsearch', { relatedSearchTargeting:
- * 'content', ... }, { container: 'relatedsearches1', relatedSearches: 10 })`.
+ * results page (where the ads + revenue are).
  *
- * NOTE: terms only appear after Google has crawled this URL (~1h after first view).
+ * Compliance (Google Publisher Policies): a live monetized page must NEVER show an
+ * empty or placeholder unit ("under construction / low-value content"). Related-search
+ * terms only appear AFTER Google crawls the URL (~1h), so the container is mounted (CSA
+ * needs it to render into) but the visible chrome — the "Related searches" label + the
+ * bordered card — is revealed only once CSA reports the unit actually filled
+ * (`adLoadedCallback` → `adsLoaded === true`). Until then the unit is zero-height/invisible.
  */
 export function RelatedSearchUnit({
   referrerAdCreative,
@@ -37,6 +40,7 @@ export function RelatedSearchUnit({
   site: SiteConfig;
 }) {
   const live = afsConfigured(site);
+  const [filled, setFilled] = useState(false);
 
   useEffect(() => {
     if (!live) return;
@@ -63,16 +67,27 @@ export function RelatedSearchUnit({
     runCsa('relatedsearch', pageOptions, {
       container: 'relatedsearches1',
       relatedSearches: 10,
-      adLoadedCallback: afsAdLoadedCallback,
+      adLoadedCallback: (containerName: string, adsLoaded: boolean) => {
+        afsAdLoadedCallback(containerName, adsLoaded);
+        // Reveal the unit's chrome only when it actually served terms.
+        if (adsLoaded) setFilled(true);
+      },
     });
   }, [live, referrerAdCreative, terms, txid, channel, site]);
 
+  // No AFS account for this host → don't render a unit at all (no placeholder, ever).
+  if (!live) return null;
+
+  // The container (#relatedsearches1) is always mounted so CSA can render into it; the
+  // label + card border are added only once `filled`, so an uncrawled/empty unit is invisible.
+  // The DOM structure is kept STABLE (label always present, hidden via CSS) so revealing the
+  // chrome never remounts the container and discards CSA's injected unit.
   return (
-    <aside className={styles.afs} aria-label="Related searches">
-      <span className={styles.afsLabel}>Related searches</span>
-      <div id="relatedsearches1" className={styles.afsSlot}>
-        {!live && <p className={styles.afsPlaceholder}>Related searches appear here</p>}
-      </div>
+    <aside className={filled ? styles.afs : styles.afsPending} aria-label="Related searches" aria-hidden={!filled}>
+      <span className={styles.afsLabel} style={{ display: filled ? 'block' : 'none' }}>
+        Related searches
+      </span>
+      <div id="relatedsearches1" />
     </aside>
   );
 }

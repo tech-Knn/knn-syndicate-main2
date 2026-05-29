@@ -41,11 +41,12 @@ export function SearchAdsUnit({
     );
   }, [live, query, referrerAdCreative, channel, site]);
 
+  // No AFS account for this host → render nothing (never a placeholder on a live page).
+  if (!live) return null;
+
   return (
     <>
-      <div id="afscontainer1" className={styles.ads}>
-        {!live && <p className={styles.placeholder}>Sponsored results for “{query}”</p>}
-      </div>
+      <div id="afscontainer1" className={styles.ads} />
       <div id="relatedsearches1" className={styles.related} />
     </>
   );
