@@ -317,6 +317,9 @@ export const campaigns = {
     parse(await authedFetch(`/api/campaigns/${id}`, { method: 'DELETE' })),
   testLaunch: async (id: string): Promise<{ fbCampaignId: string; adSets: { fbAdSetId: string; ads: { fbAdId: string }[] }[] }> =>
     parse(await authedFetch(`/api/campaigns/${id}/test-launch`, { method: 'POST' })),
+  // Real launch (admin/super): generate article → redirect config → create on FB → ACTIVE.
+  launch: async (id: string): Promise<{ status: string; fbCampaignId?: string }> =>
+    parse(await authedFetch(`/api/campaigns/${id}/launch`, { method: 'POST' })),
   // Phase E — campaign offers (the websites a campaign's traffic routes across).
   offers: async (id: string): Promise<OfferRow[]> =>
     (await parse<{ offers: OfferRow[] }>(await authedFetch(`/api/campaigns/${id}/offers`))).offers,
