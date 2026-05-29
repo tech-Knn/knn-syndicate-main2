@@ -180,12 +180,15 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
   const { campaign, token, fbAccountId, fbPageId } = plan;
   const cbo = campaign.budgetMode === 'CAMPAIGN';
 
+  // Automatic bidding (no cap → no bid_amount needed). The bid strategy lives at the
+  // budget level: on the CAMPAIGN for CBO, on the AD SET for ABO — never both.
   const fbCampaign = await createFbCampaign(fbAccountId, token, {
     name: campaign.name,
     objective: campaign.objective,
     specialAdCategories: campaign.specialAdCategories,
     status,
     dailyBudgetCents: cbo ? campaign.dailyBudgetCents ?? undefined : undefined,
+    bidStrategy: cbo ? 'LOWEST_COST_WITHOUT_CAP' : undefined,
   });
 
   const adSets: FbStructureResult['adSets'] = [];
@@ -196,6 +199,7 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
       optimizationGoal: set.optimizationGoal,
       billingEvent: set.billingEvent,
       dailyBudgetCents: cbo ? undefined : set.dailyBudgetCents ?? undefined,
+      bidStrategy: cbo ? undefined : 'LOWEST_COST_WITHOUT_CAP',
       promotedObject: fbPixelId
         ? { pixel_id: fbPixelId, custom_event_type: PXE_TO_EVENT[set.pxeEvent] ?? 'SEARCH' }
         : undefined,
