@@ -78,15 +78,12 @@ export function RelatedSearchUnit({
   // No AFS account for this host → don't render a unit at all (no placeholder, ever).
   if (!live) return null;
 
-  // The container (#relatedsearches1) is always mounted so CSA can render into it; the
-  // label + card border are added only once `filled`, so an uncrawled/empty unit is invisible.
-  // The DOM structure is kept STABLE (label always present, hidden via CSS) so revealing the
-  // chrome never remounts the container and discards CSA's injected unit.
+  // The container (#relatedsearches1) is always mounted so CSA can render into it. We add NO
+  // label/border of our own — Google's related-search unit renders its own "Related searches"
+  // header (a duplicate label reads as placeholder/broken). The wrapper only adds spacing, and
+  // only once the unit actually fills (`adsLoaded`), so an uncrawled/empty unit takes zero space.
   return (
     <aside className={filled ? styles.afs : styles.afsPending} aria-label="Related searches" aria-hidden={!filled}>
-      <span className={styles.afsLabel} style={{ display: filled ? 'block' : 'none' }}>
-        Related searches
-      </span>
       <div id="relatedsearches1" />
     </aside>
   );

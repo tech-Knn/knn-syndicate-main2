@@ -24,27 +24,16 @@
   margin: 0 0 1.5rem;
 }
 
-/* Before the related-search unit fills (uncrawled / nothing served): zero chrome, so the
-   empty container is invisible — never a placeholder box on a live page. */
+/* Related-search unit wrapper. Before it fills (uncrawled / nothing served): zero footprint,
+   so the empty container is invisible — never a placeholder/empty box on a live page. */
 .afsPending {
   display: block;
 }
-/* Once CSA fills the unit, reveal the labeled card. */
+/* Once the unit fills, add spacing only — no border/background/label of our own (Google's
+   unit renders its own "Related searches" header + styling via the AdSense styleId). */
 .afs {
   display: block;
-  border: 1px solid #e6e6e6;
-  border-radius: 10px;
-  background: #fafafa;
-  padding: 1rem 1.1rem;
   margin: 1.5rem 0;
-}
-.afsLabel {
-  display: block;
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #8a8a8a;
-  margin-bottom: 0.6rem;
 }
 
 .body {
