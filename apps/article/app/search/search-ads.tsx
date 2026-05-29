@@ -81,10 +81,18 @@ export function SearchAds({
   return (
     <>
       {/* Containers first so they exist in the DOM before the bootstrap (below) runs.
-          suppressHydrationWarning: ads.js injects ad iframes into these before/around
-          hydration — React must NOT try to reconcile (and wipe) that injected content. */}
-      <div id="afscontainer1" className={styles.ads} suppressHydrationWarning />
-      <div id="relatedsearches1" className={styles.related} suppressHydrationWarning />
+          ads.js injects ad <iframe>s into these DURING parse (before hydration). React
+          must not reconcile (and wipe) that injected content, so the containers are marked
+          as externally-managed via dangerouslySetInnerHTML={{__html:''}} — React then treats
+          their contents as opaque and never recurses into them on hydration. (suppressHydration-
+          Warning alone is NOT enough: it covers an element's own attrs/text, not child nodes.) */}
+      <div id="afscontainer1" className={styles.ads} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: '' }} />
+      <div
+        id="relatedsearches1"
+        className={styles.related}
+        suppressHydrationWarning
+        dangerouslySetInnerHTML={{ __html: '' }}
+      />
       {/* Trusted bootstrap; the only dynamic values (query/rc/channel) are safeJson-escaped above. */}
       <script dangerouslySetInnerHTML={{ __html: bootstrap }} />
     </>
