@@ -166,6 +166,18 @@ describe('launchCampaign (Phase 8)', () => {
     expect(c?.status).toBe('BATCHED');
   });
 
+  it('reverts LAUNCHING → PROCESSING (not stuck) on a non-rate-limit FB error', async () => {
+    const campaignId = await makeCampaign();
+    vi.mocked(fb.createFbCampaign).mockImplementationOnce(async () => {
+      throw new fb.FbApiError('Invalid objective/optimization combination', { code: 100 });
+    });
+    await expect(
+      launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
+    ).rejects.toThrow('Invalid objective');
+    const c = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { status: true } }));
+    expect(c?.status).toBe('PROCESSING'); // retryable, not stuck at LAUNCHING
+  });
+
   it('is idempotent — an already-launched campaign returns ACTIVE without re-creating', async () => {
     const campaignId = await makeCampaign();
     await withSystem((tx) => tx.campaign.update({ where: { id: campaignId }, data: { fbCampaignId: 'existing' } }));

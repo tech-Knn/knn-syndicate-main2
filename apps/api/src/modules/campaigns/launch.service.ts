@@ -426,6 +426,12 @@ export async function launchCampaign(
       );
       return { status: 'BATCHED' };
     }
+    // Any other failure (FB rejection, creative/pixel error, …): revert LAUNCHING →
+    // PROCESSING so the campaign isn't stuck and an admin can fix + relaunch. The real
+    // error is rethrown to the caller (surfaced in the UI).
+    await runScoped(auth, (tx) =>
+      tx.campaign.update({ where: { id: campaignId }, data: { status: CAMPAIGN_STATUS.PROCESSING } }),
+    ).catch(() => undefined);
     throw err;
   }
 }
