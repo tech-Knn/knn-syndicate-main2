@@ -21,7 +21,8 @@
     "@prisma/client": "^6.2.1",
     "bullmq": "^5.34.6",
     "ioredis": "^5.11.0",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "undici": "^6.21.2"
   },
   "devDependencies": {
     "@types/node-cron": "^3.0.11",

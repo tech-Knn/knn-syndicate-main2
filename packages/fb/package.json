@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@knn/config": "workspace:*",
-    "@knn/shared": "workspace:*"
+    "@knn/shared": "workspace:*",
+    "undici": "^6.21.2"
   }
 }

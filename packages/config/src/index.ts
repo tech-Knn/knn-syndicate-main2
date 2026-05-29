@@ -87,6 +87,10 @@ const EnvSchema = z.object({
   // Debug: when set, log the exact ad-build Graph POSTs (secrets/image redacted) so a
   // launch sequence can be reproduced. Leave empty in normal operation.
   FB_DEBUG_LOG: optionalString,
+  // Optional egress proxy for OUTBOUND Facebook Graph calls only (e.g. an India exit so
+  // ad creation isn't flagged as foreign-IP access from the EU server). Format:
+  // http://user:pass@host:port. Empty = direct. Other outbound calls are unaffected.
+  FB_HTTPS_PROXY: optionalString,
 
   // Google / AdSense
   GOOGLE_CLIENT_ID: optionalString,

@@ -1,7 +1,24 @@
 import { createHmac } from 'node:crypto';
+import { ProxyAgent, fetch as undiciFetch } from 'undici';
 import { env } from '@knn/config';
 import { classifyFbError, type FbErrorBody } from './errors.js';
 import { sharedRateLimiter, type FbRateLimiter } from './rate-limiter.js';
+
+/**
+ * Optional egress proxy for outbound Facebook calls only (env `FB_HTTPS_PROXY`). Lets all
+ * Graph traffic exit from a chosen region/IP (e.g. India) so server-side ad creation isn't
+ * flagged as foreign-IP access from the EU host — without touching any other outbound call.
+ * Built lazily + once; undefined when unconfigured → normal direct fetch.
+ */
+let fbProxyResolved = false;
+let fbProxyAgent: ProxyAgent | undefined;
+function getFbProxyAgent(): ProxyAgent | undefined {
+  if (!fbProxyResolved) {
+    fbProxyResolved = true;
+    if (env.FB_HTTPS_PROXY) fbProxyAgent = new ProxyAgent(env.FB_HTTPS_PROXY);
+  }
+  return fbProxyAgent;
+}
 
 /**
  * `appsecret_proof` = HMAC-SHA256(access_token, app_secret), hex. Sent on every Graph
@@ -34,8 +51,9 @@ function graphBase(): string {
   return `https://graph.facebook.com/${env.FB_API_VERSION}`;
 }
 
-/** Derive a backoff hint from Facebook's rate-limit headers, if present. */
-function parseRetryAfterMs(headers: Headers): number | undefined {
+/** Derive a backoff hint from Facebook's rate-limit headers, if present. (Minimal header
+ *  shape so it works for both the global fetch Response and undici's when proxied.) */
+function parseRetryAfterMs(headers: { get(name: string): string | null }): number | undefined {
   const buc = headers.get('x-business-use-case-usage') ?? headers.get('x-app-usage');
   if (buc) {
     try {
@@ -85,7 +103,12 @@ async function doRequest<T>(req: GraphRequest): Promise<T> {
     console.log(`[fb-call] POST ${graphBase()}${req.path} :: ${JSON.stringify(redacted)}`);
   }
 
-  const res = await fetch(url, init);
+  // Route FB calls through the egress proxy when configured (undici dispatcher); else
+  // direct global fetch (unchanged path — what the tests stub).
+  const proxy = getFbProxyAgent();
+  const res = proxy
+    ? await undiciFetch(url, { method, headers, body: init.body as URLSearchParams | undefined, dispatcher: proxy })
+    : await fetch(url, init);
   const text = await res.text();
   let json: unknown = {};
   try {
