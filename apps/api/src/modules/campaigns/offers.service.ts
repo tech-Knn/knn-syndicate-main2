@@ -237,24 +237,45 @@ export interface LiveOffersResult {
  */
 export async function updateLiveOffers(auth: AuthContext, campaignId: string, inputs: LiveOfferInput[]): Promise<LiveOffersResult> {
   assertOfferShape(inputs);
+  // A live campaign must keep at least one paid offer — otherwise it would have no monetized
+  // route left and silently fall back to the bare article domain.
+  if (!inputs.some((o) => o.kind === 'PAID')) {
+    throw new AppError(400, 'A live campaign needs at least one paid offer — pause or archive it instead of removing them all');
+  }
 
-  const { added, removed } = await runScoped(auth, async (tx) => {
+  const { added, removed, kindChanged } = await runScoped(auth, async (tx) => {
     const c = await loadCampaignScoped(auth, tx, campaignId);
     if (!LIVE_EDITABLE.includes(c.status)) {
       throw new AppError(409, 'This campaign is not live yet — edit its offers from the campaign before it launches');
     }
     await assertDomainsAndVariants(tx, c.orgId, inputs);
 
-    const existing = await tx.offer.findMany({ where: { campaignId }, select: { id: true } });
-    const existingIds = new Set(existing.map((o) => o.id));
-    const keptIds = new Set(inputs.map((o) => o.id).filter((x): x is string => typeof x === 'string' && existingIds.has(x)));
+    const existing = await tx.offer.findMany({ where: { campaignId }, select: { id: true, domainId: true, kind: true } });
+    const existingById = new Map(existing.map((o) => [o.id, o]));
+    // An input "keeps" an existing offer only when its id matches AND the domain is unchanged.
+    // A domain change means a different channel/attribution target → handled as remove + add so
+    // the worker releases the old channel and claims one from the NEW domain's pool.
+    const keptIds = new Set<string>();
+    let kindFlipped = false;
+    for (const o of inputs) {
+      const ex = o.id ? existingById.get(o.id) : undefined;
+      if (ex && ex.domainId === o.domainId) {
+        keptIds.add(o.id!);
+        if (ex.kind !== o.kind) kindFlipped = true;
+      }
+    }
     const removedIds = existing.filter((o) => !keptIds.has(o.id)).map((o) => o.id);
 
-    // Update kept offers in place (preserve their channelRef); create new ones (channel TBD).
     let addedCount = 0;
     for (const o of inputs) {
-      if (o.id && keptIds.has(o.id)) {
-        await tx.offer.update({ where: { id: o.id }, data: { weightPct: o.weightPct, kind: o.kind, articleId: o.articleId ?? null } });
+      const ex = o.id ? existingById.get(o.id) : undefined;
+      if (o.id && keptIds.has(o.id) && ex) {
+        // Flipping PAID→ORGANIC drops the channel (organic offers hold none) so the worker frees it.
+        const dropChannel = ex.kind === 'PAID' && o.kind === 'ORGANIC';
+        await tx.offer.update({
+          where: { id: o.id },
+          data: { weightPct: o.weightPct, kind: o.kind, articleId: o.articleId ?? null, ...(dropChannel ? { channelRef: null } : {}) },
+        });
       } else {
         await tx.offer.create({ data: { orgId: c.orgId, campaignId, domainId: o.domainId, weightPct: o.weightPct, kind: o.kind, articleId: o.articleId ?? null } });
         addedCount += 1;
@@ -268,12 +289,13 @@ export async function updateLiveOffers(auth: AuthContext, campaignId: string, in
       action: 'campaign.offers.live_edit',
       entityType: 'campaign',
       entityId: campaignId,
-      details: { kept: keptIds.size, added: addedCount, removed: removedIds.length },
+      details: { kept: keptIds.size, added: addedCount, removed: removedIds.length, kindFlipped },
     });
-    return { added: addedCount, removed: removedIds.length };
+    return { added: addedCount, removed: removedIds.length, kindChanged: kindFlipped };
   });
 
-  const rebalancing = added > 0 || removed > 0;
+  // Channel ops are needed when offers are added/removed OR a kept offer flipped paid↔organic.
+  const rebalancing = added > 0 || removed > 0 || kindChanged;
   if (rebalancing) {
     // Channel claim (new offers) / release (removed offers) is the worker's job; it re-syncs KV after.
     await enqueueOfferRebalance(campaignId);

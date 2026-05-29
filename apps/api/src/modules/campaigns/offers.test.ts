@@ -203,6 +203,13 @@ describe('live offer rebalance (post-launch, no Facebook — OQ#9)', () => {
     expect(res.offers).toHaveLength(1); // offer B deleted; its channel released asynchronously
   });
 
+  it('rejects a live edit that would leave the campaign with no paid offer', async () => {
+    await expect(updateLiveOffers(auth(), liveId, [])).rejects.toBeInstanceOf(AppError);
+    await expect(
+      updateLiveOffers(auth(), liveId, [{ domainId: domLiveA, weightPct: 0, kind: 'ORGANIC' }]),
+    ).rejects.toBeInstanceOf(AppError);
+  });
+
   it('rejects a live edit on a pre-launch (DRAFT) campaign', async () => {
     const draft = await withSystem((tx) => tx.campaign.create({ data: { orgId, buyerId, name: 'draft-live', status: 'DRAFT', keywords: ['x'] } }));
     await expect(updateLiveOffers(auth(), draft.id, [{ domainId: domLiveA, weightPct: 100, kind: 'PAID' }])).rejects.toBeInstanceOf(AppError);
