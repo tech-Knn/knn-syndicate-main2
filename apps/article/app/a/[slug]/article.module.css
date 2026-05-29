@@ -65,3 +65,37 @@
 .body li {
   margin: 0 0 0.5rem;
 }
+
+/* ── Mobile-first RSOC placement ─────────────────────────────────────────────
+   Most orders come from mobile, and the RSOC unit must sit in the FIRST FOLD
+   (visible without scrolling) right under a short headline + a few lead lines.
+   We cap the headline (2 lines) and lead (3 lines) heights so a long generated
+   title can never push the unit below the fold, and tighten the top spacing.
+   Real content stays above the unit (headline + lead) → still Google-compliant. */
+@media (max-width: 600px) {
+  .page {
+    padding: 1.1rem 1rem 3rem;
+  }
+  .title {
+    font-size: 1.45rem;
+    line-height: 1.22;
+    margin: 0 0 0.55rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .lead {
+    font-size: 1rem;
+    line-height: 1.5;
+    margin: 0 0 0.7rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  /* The unit sits immediately after the lead — minimal margin so it's in-fold. */
+  .afs {
+    margin: 0.7rem 0 1.25rem;
+  }
+}

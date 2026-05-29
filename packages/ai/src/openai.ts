@@ -68,8 +68,10 @@ const ARTICLE_SYSTEM =
   'a concrete details section with numbers, "## How to Get Started" (3-4 numbered steps), and ' +
   '"## Frequently Asked Questions" (exactly 3 Q&As). ' +
   'Respond with STRICT JSON only, no prose around it, with keys: ' +
-  '"title" (string, like "The Complete Guide to {topic}: {short benefit}"), ' +
-  '"teaser" (string, the 60-90 word opening paragraph, plain text), ' +
+  '"title" (string, a CONCISE specific headline — at most ~7 words / 55 characters, fits two ' +
+  'lines on a phone; do NOT use boilerplate like "The Complete Guide to" or a colon subtitle), ' +
+  '"teaser" (string, a short 35-55 word opening hook, plain text — a few lines that set up the ' +
+  'topic so the related-search unit sits high on the page), ' +
   '"body_markdown" (string, the full article in markdown starting with the opening paragraph), ' +
   '"related_search_terms" (array of 6 short, high-commercial-intent search queries a buyer in this ' +
   'vertical would type — the kind that carry high ad CPC).';
