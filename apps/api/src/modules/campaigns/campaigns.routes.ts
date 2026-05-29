@@ -198,9 +198,12 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
 
   // Real launch (Phase 8): article → KV redirect sync → create on FB ACTIVE → ACTIVE.
   // Requires the campaign to already have a channel (assigned post-approval, Phase 6).
+  // Any authenticated user — a MEDIA_BUYER may manually launch THEIR OWN approved
+  // campaign (the service owner-scopes via buyerId); admins launch any in their org.
+  // Approval stays admin-only (see /approve below) — launch ≠ approval.
   app.post<{ Params: { id: string } }>(
     '/:id/launch',
-    { preHandler: adminOnly },
+    { preHandler: [authenticate] },
     async (req, reply) => {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {

@@ -5,10 +5,10 @@ import { CampaignWizard } from '@/components/campaign-wizard';
 import { ApiError, campaigns } from '@/lib/api';
 import { Button, Spinner } from '@/components/ui';
 import { type Campaign } from '@/lib/types';
-import { useAuth } from '../../../providers';
 import { OffersEditor } from './offers-editor';
 
-// Statuses where an admin can push the campaign live to Facebook (it has a channel).
+// Statuses where the campaign can be pushed live to Facebook (it has a channel). Manual
+// launch is available to the owning buyer + admins (the API owner-scopes it).
 const LAUNCHABLE = new Set(['PROCESSING', 'BATCHED']);
 // Pre-launch states that can be reopened to DRAFT to fix config (releases the channel).
 // Excludes LAUNCHING/ACTIVE/PAUSED (already on Facebook — pause first) and the review
@@ -17,13 +17,10 @@ const REOPENABLE = new Set(['PROCESSING', 'BATCHED', 'QUEUED_NO_CHANNEL']);
 
 export default function EditCampaignPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { user } = useAuth();
   const [campaign, setCampaign] = useState<Campaign | null | 'error'>(null);
   const [launching, setLaunching] = useState(false);
   const [reopening, setReopening] = useState(false);
   const [note, setNote] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
-
-  const isAdmin = user?.role === 'SUPER_ADMIN' || user?.role === 'COMPANY_ADMIN';
 
   const load = useCallback(() => {
     void campaigns
@@ -107,7 +104,9 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
             <Button variant="ghost" onClick={() => void reopen()} loading={reopening} disabled={launching}>
               {reopening ? 'Reopening…' : 'Reopen & edit'}
             </Button>
-            {isAdmin && LAUNCHABLE.has(c.status) && (
+            {/* Manual launch is available to the campaign owner (buyer) and admins alike —
+                the API owner-scopes it. Approval stays admin-only; launch ≠ approval. */}
+            {LAUNCHABLE.has(c.status) && (
               <Button onClick={() => void launch()} loading={launching} disabled={reopening}>
                 {launching ? 'Launching…' : 'Launch to Facebook'}
               </Button>

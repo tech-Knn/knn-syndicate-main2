@@ -34,12 +34,19 @@ const defaultAutoLaunchDeps: AutoLaunchDeps = { enqueueLaunch: defaultEnqueueLau
 
 /**
  * Auto-launch trigger (Phase 8, org toggle). Called right after a campaign acquires
- * a channel. If the owning org has `autoLaunch` on and the campaign holds a channel
+ * a channel. If the owning org has `autoLaunch` on and the campaign holds its channel(s)
  * but hasn't been pushed to Facebook yet, enqueue an `FB_LAUNCH` job. The gate is
  * cheap and idempotent — re-runs (queue drain, rollover, re-approval) are no-ops once
  * `fbCampaignId` is set or auto-launch is off. The actual launch runs on the API
  * process (which owns the FB client + creative files on disk), reached over HTTP by
  * the `FB_LAUNCH` worker.
+ *
+ * "Holds a channel" depends on the campaign model (mirrors `launchCampaign`'s gate):
+ *  - **Offers campaign** (the standard model — submit requires ≥1 PAID offer): EVERY
+ *    PAID offer must hold a `channelRef`. The channel lives on the offer, NOT on
+ *    `campaign.channelId`, so checking only `channelId` would wrongly bail and the
+ *    campaign would sit in PROCESSING forever even with auto-launch on.
+ *  - **Legacy single-channel campaign**: `campaign.channelId` is set.
  */
 export async function triggerAutoLaunch(
   campaignId: string,
@@ -53,13 +60,20 @@ export async function triggerAutoLaunch(
         channelId: true,
         fbCampaignId: true,
         organization: { select: { autoLaunch: true } },
+        offers: { where: { kind: 'PAID' }, select: { channelRef: true } },
       },
     }),
   );
   if (!campaign) return { enqueued: false };
   if (!campaign.organization.autoLaunch) return { enqueued: false };
-  if (!campaign.channelId) return { enqueued: false };
   if (campaign.fbCampaignId) return { enqueued: false }; // already on Facebook
+
+  const paidOffers = campaign.offers;
+  const hasChannels =
+    paidOffers.length > 0
+      ? paidOffers.every((o) => o.channelRef != null) // offers campaign: all PAID offers assigned
+      : campaign.channelId != null; // legacy single-channel
+  if (!hasChannels) return { enqueued: false };
 
   await deps.enqueueLaunch(campaignId);
   return { enqueued: true };

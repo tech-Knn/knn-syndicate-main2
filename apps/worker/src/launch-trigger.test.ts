@@ -7,6 +7,9 @@ import { type FbLaunchJob, runFbLaunch, triggerAutoLaunch } from './launch-trigg
 const suffix = Date.now().toString(36);
 let orgId = '';
 let buyerId = '';
+let afsId = '';
+let domA = '';
+let domB = '';
 
 interface CampaignShape {
   channelId?: string | null;
@@ -30,6 +33,26 @@ async function makeCampaign({ channelId = null, fbCampaignId = null }: CampaignS
   return c.id;
 }
 
+/**
+ * An OFFERS campaign (the standard model): channel lives on each PAID offer's
+ * `channelRef`, NOT on `campaign.channelId`. `bothAssigned=false` leaves one PAID
+ * offer without a channel (assignment not complete yet).
+ */
+async function makeOffersCampaign({ bothAssigned = true }: { bothAssigned?: boolean } = {}): Promise<string> {
+  return withSystem(async (tx) => {
+    const c = await tx.campaign.create({
+      data: { orgId, buyerId, name: `ALO ${Math.random()}`, status: 'PROCESSING', keywords: [], channelId: null },
+    });
+    const chA = await tx.channel.create({ data: { channelId: `al-${suffix}-${Math.random().toString(36).slice(2, 8)}`, domainId: domA, status: 'ASSIGNED', currentCampaignId: c.id } });
+    await tx.offer.create({ data: { orgId, campaignId: c.id, domainId: domA, weightPct: 60, kind: 'PAID', channelRef: chA.id } });
+    const chB = bothAssigned
+      ? await tx.channel.create({ data: { channelId: `al-${suffix}-${Math.random().toString(36).slice(2, 8)}`, domainId: domB, status: 'ASSIGNED', currentCampaignId: c.id } })
+      : null;
+    await tx.offer.create({ data: { orgId, campaignId: c.id, domainId: domB, weightPct: 40, kind: 'PAID', channelRef: chB?.id ?? null } });
+    return c.id;
+  });
+}
+
 async function setOrgAutoLaunch(value: boolean): Promise<void> {
   await withSystem((tx) => tx.organization.update({ where: { id: orgId }, data: { autoLaunch: value } }));
 }
@@ -42,17 +65,23 @@ beforeAll(async () => {
       data: { orgId, email: `al-${suffix}@a.com`, name: 'B', passwordHash: 'x', role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE },
     });
     buyerId = buyer.id;
+    afsId = (await tx.googleConnection.create({ data: { accessTokenEnc: 'enc', tokenExpiresAt: new Date(Date.now() + 3_600_000), adsenseAccount: `acc-${suffix}`, adsenseAdClient: `adc-${suffix}`, afsPubId: `pub-${suffix}`, label: 'AFS', status: 'ACTIVE' } })).id;
+    domA = (await tx.domain.create({ data: { host: `ala-${suffix}.example.com`, afsAccountId: afsId, status: 'LIVE', verifyToken: `a-${suffix}` } })).id;
+    domB = (await tx.domain.create({ data: { host: `alb-${suffix}.example.com`, afsAccountId: afsId, status: 'LIVE', verifyToken: `b-${suffix}` } })).id;
   });
 });
 
 beforeEach(async () => {
   await setOrgAutoLaunch(true);
-  await withSystem((tx) => tx.campaign.deleteMany({ where: { orgId } }));
+  await withSystem((tx) => tx.campaign.deleteMany({ where: { orgId } })); // cascades offers
 });
 
 afterAll(async () => {
   await withSystem(async (tx) => {
     await tx.campaign.deleteMany({ where: { orgId } });
+    await tx.channel.deleteMany({ where: { channelId: { startsWith: `al-${suffix}-` } } });
+    await tx.domain.deleteMany({ where: { afsAccountId: afsId } });
+    await tx.googleConnection.deleteMany({ where: { id: afsId } });
     await tx.organization.deleteMany({ where: { id: orgId } });
   });
   await prisma.$disconnect();
@@ -105,6 +134,29 @@ describe('triggerAutoLaunch', () => {
     const enqueueLaunch = vi.fn(async () => {});
 
     const res = await triggerAutoLaunch(randomUUID(), { enqueueLaunch });
+
+    expect(res.enqueued).toBe(false);
+    expect(enqueueLaunch).not.toHaveBeenCalled();
+  });
+
+  // Regression: an offers campaign carries its channel on each PAID offer's `channelRef`,
+  // NOT on `campaign.channelId`. The trigger must recognize that or auto-launch never fires
+  // and the campaign sits in PROCESSING even with both org toggles on.
+  it('enqueues an OFFERS campaign once every PAID offer holds a channel (channelId is null)', async () => {
+    const id = await makeOffersCampaign({ bothAssigned: true });
+    const enqueueLaunch = vi.fn(async () => {});
+
+    const res = await triggerAutoLaunch(id, { enqueueLaunch });
+
+    expect(res.enqueued).toBe(true);
+    expect(enqueueLaunch).toHaveBeenCalledWith(id);
+  });
+
+  it('does NOT enqueue an offers campaign while a PAID offer still lacks a channel', async () => {
+    const id = await makeOffersCampaign({ bothAssigned: false });
+    const enqueueLaunch = vi.fn(async () => {});
+
+    const res = await triggerAutoLaunch(id, { enqueueLaunch });
 
     expect(res.enqueued).toBe(false);
     expect(enqueueLaunch).not.toHaveBeenCalled();
