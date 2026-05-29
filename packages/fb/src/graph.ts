@@ -74,6 +74,17 @@ async function doRequest<T>(req: GraphRequest): Promise<T> {
     init.body = new URLSearchParams(params);
   }
 
+  // Debug: log the exact ad-build POSTs (campaign/adset/image/creative/ad) with secrets
+  // and the image blob redacted, so we can reproduce the precise sequence. Gated on
+  // FB_DEBUG_LOG so it's off unless explicitly enabled.
+  if (env.FB_DEBUG_LOG && method === 'POST' && /\/(campaigns|adsets|ads|adimages|adcreatives)$/.test(req.path)) {
+    const redacted: Record<string, string> = {};
+    for (const [k, v] of Object.entries(params)) {
+      redacted[k] = k === 'access_token' || k === 'appsecret_proof' ? '***' : k === 'bytes' ? `<base64 image, ${v.length} chars>` : v;
+    }
+    console.log(`[fb-call] POST ${graphBase()}${req.path} :: ${JSON.stringify(redacted)}`);
+  }
+
   const res = await fetch(url, init);
   const text = await res.text();
   let json: unknown = {};

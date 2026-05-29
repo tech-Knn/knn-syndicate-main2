@@ -84,6 +84,9 @@ const EnvSchema = z.object({
   // OAuth dialog requests permissions from that config instead of a `scope` list.
   FB_LOGIN_CONFIG_ID: optionalString,
   FB_WEBHOOK_VERIFY_TOKEN: optionalString,
+  // Debug: when set, log the exact ad-build Graph POSTs (secrets/image redacted) so a
+  // launch sequence can be reproduced. Leave empty in normal operation.
+  FB_DEBUG_LOG: optionalString,
 
   // Google / AdSense
   GOOGLE_CLIENT_ID: optionalString,
