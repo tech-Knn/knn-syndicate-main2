@@ -80,9 +80,11 @@ export function SearchAds({
 
   return (
     <>
-      {/* Containers first so they exist in the DOM before the bootstrap (below) runs. */}
-      <div id="afscontainer1" className={styles.ads} />
-      <div id="relatedsearches1" className={styles.related} />
+      {/* Containers first so they exist in the DOM before the bootstrap (below) runs.
+          suppressHydrationWarning: ads.js injects ad iframes into these before/around
+          hydration — React must NOT try to reconcile (and wipe) that injected content. */}
+      <div id="afscontainer1" className={styles.ads} suppressHydrationWarning />
+      <div id="relatedsearches1" className={styles.related} suppressHydrationWarning />
       {/* Trusted bootstrap; the only dynamic values (query/rc/channel) are safeJson-escaped above. */}
       <script dangerouslySetInnerHTML={{ __html: bootstrap }} />
     </>
