@@ -1,35 +1,12 @@
 /* RSOC results page — light, search-results look (AdSense-friendly).
-   Flex column with explicit `order` so the visual order is: header → ads → Web results →
-   related searches. The related-search container is rendered EARLY (inside SearchAds, in the
-   first flushed chunk, so ads.js always finds it) but displayed LAST — otherwise its tall
-   unit pushes the organic Web results below the fold. align-items:center + width:100% keeps
-   each block centered at its max-width (margin:auto alone won't center a flex item). */
+   Natural block flow gives the order: header → ads → organic Web results (each block is
+   max-width 720 + margin:auto, centered). No related-search unit here — the organic Web
+   results ARE the search results the ads supplement (it stays on the content page only). */
 .page {
   min-height: 100vh;
   background: #ffffff;
   color: #1a1a1a;
   padding: 1.5rem 1.25rem 4rem;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.header,
-.ads,
-.web,
-.related {
-  width: 100%;
-}
-.header {
-  order: 0;
-}
-.ads {
-  order: 1;
-}
-.web {
-  order: 2;
-}
-.related {
-  order: 3;
 }
 .header {
   max-width: 720px;
@@ -56,12 +33,6 @@
   max-width: 720px;
   margin: 0 auto;
   min-height: 120px;
-}
-.related {
-  max-width: 720px;
-  margin: 2rem auto 0;
-  padding-top: 1.25rem;
-  border-top: 1px solid #ececec;
 }
 
 /* Organic "Web results" — the host's own articles, rendered as a real SERP listing so the

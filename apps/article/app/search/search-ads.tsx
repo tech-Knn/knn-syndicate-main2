@@ -76,24 +76,20 @@ export function SearchAds({
   const bootstrap =
     `(function(g,o){g[o]=g[o]||function(){(g[o].q=g[o].q||[]).push(arguments)};g[o].t=1*new Date})(window,'_googCsa');` +
     `var po=${safeJson(pageOptions)};po.resultsPageBaseUrl=window.location.origin+'/search';` +
-    `_googCsa('ads',po,{container:'afscontainer1'},{container:'relatedsearches1',relatedSearches:10});` +
+    // Ads only — no relatedSearchBlock. The organic <WebResults> below ARE the search results
+    // the ads supplement (Google policy), so a related-search widget here is redundant.
+    `_googCsa('ads',po,{container:'afscontainer1'});` +
     `var s=document.createElement('script');s.async=!0;s.src='https://www.google.com/adsense/search/ads.js';document.head.appendChild(s);`;
 
   return (
     <>
-      {/* Containers first so they exist in the DOM before the bootstrap (below) runs.
-          ads.js injects ad <iframe>s into these DURING parse (before hydration). React
-          must not reconcile (and wipe) that injected content, so the containers are marked
-          as externally-managed via dangerouslySetInnerHTML={{__html:''}} — React then treats
-          their contents as opaque and never recurses into them on hydration. (suppressHydration-
-          Warning alone is NOT enough: it covers an element's own attrs/text, not child nodes.) */}
+      {/* Container first so it exists in the DOM before the bootstrap (below) runs.
+          ads.js injects ad <iframe>s into it DURING parse (before hydration). React must not
+          reconcile (and wipe) that injected content, so the container is marked as externally-
+          managed via dangerouslySetInnerHTML={{__html:''}} — React then treats its contents as
+          opaque and never recurses into them on hydration. (suppressHydrationWarning alone is
+          NOT enough: it covers an element's own attrs/text, not child nodes.) */}
       <div id="afscontainer1" className={styles.ads} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: '' }} />
-      <div
-        id="relatedsearches1"
-        className={styles.related}
-        suppressHydrationWarning
-        dangerouslySetInnerHTML={{ __html: '' }}
-      />
       {/* Trusted bootstrap; the only dynamic values (query/rc/channel) are safeJson-escaped above. */}
       <script dangerouslySetInnerHTML={{ __html: bootstrap }} />
     </>
