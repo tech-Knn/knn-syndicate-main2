@@ -277,13 +277,13 @@ function hardErrors(form: CampaignForm): string[] {
   if (!form.name.trim()) errs.push('Campaign name is required.');
   if (form.budgetMode === 'CAMPAIGN') {
     const c = centsOrUndef(form.dailyBudget);
-    if (c !== undefined && c < 100) errs.push('Campaign daily budget must be at least $1.00.');
+    if (c !== undefined && c < 200) errs.push('Campaign daily budget must be at least $2.00 (Facebook minimum).');
   }
   form.adSets.forEach((s, i) => {
     if (!s.name.trim()) errs.push(`Ad set ${i + 1}: name is required.`);
     if (form.budgetMode === 'AD_SET') {
       const c = centsOrUndef(s.dailyBudget);
-      if (c !== undefined && c < 100) errs.push(`Ad set ${i + 1}: daily budget must be at least $1.00.`);
+      if (c !== undefined && c < 200) errs.push(`Ad set ${i + 1}: daily budget must be at least $2.00 (Facebook minimum).`);
     }
     if (s.ageMax < s.ageMin) errs.push(`Ad set ${i + 1}: max age must be ≥ min age.`);
     s.ads.forEach((a, j) => {
