@@ -3,6 +3,13 @@ import { ROLES } from '@knn/shared';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate, requireRole } from '../../middleware/authenticate.js';
 import {
+  createRedirectDomain,
+  deleteRedirectDomain,
+  listRedirectDomains,
+  setDefaultRedirectDomain,
+  verifyRedirectDomain,
+} from './redirect-domains.service.js';
+import {
   addOrgUserSchema,
   autoApproveSchema,
   autoLaunchSchema,
@@ -257,4 +264,54 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       }
     },
   );
+
+  // Redirect domains (super-admin): the go.* hosts the edge Worker serves; the default is
+  // what new ad creatives link to. Reachability check via /verify.
+  const superOnly = { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] };
+
+  app.get('/redirect-domains', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ domains: await listRedirectDomains() });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  app.post<{ Body: { host?: string; label?: string } }>('/redirect-domains', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.code(201).send({ domain: await createRedirectDomain(req.body?.host ?? '', req.body?.label) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  app.post<{ Params: { id: string } }>('/redirect-domains/:id/default', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ domain: await setDefaultRedirectDomain(req.params.id) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  app.post<{ Params: { id: string } }>('/redirect-domains/:id/verify', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ domain: await verifyRedirectDomain(req.params.id) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  app.delete<{ Params: { id: string } }>('/redirect-domains/:id', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      await deleteRedirectDomain(req.params.id);
+      return reply.code(204).send();
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
 }

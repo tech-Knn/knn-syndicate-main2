@@ -7,6 +7,7 @@ import { Badge, Button, Card, Skeleton } from '@/components/ui';
 import { adsense, admin } from '@/lib/api';
 import { type AfsAccountRow } from '@/lib/types';
 import { useAuth } from '../../providers';
+import { RedirectDomainsPanel } from './redirect-domains-panel';
 import styles from '../admin.module.css';
 
 export default function PlatformPage() {
@@ -215,6 +216,9 @@ export default function PlatformPage() {
           </>
         )}
       </Card>
+
+      {/* Redirect domains — the go.* hosts the edge Worker serves (default = ad link target) */}
+      <RedirectDomainsPanel />
 
       {/* Settings */}
       <Card className={styles.section}>

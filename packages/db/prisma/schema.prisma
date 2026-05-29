@@ -874,6 +874,25 @@ model Domain {
   @@map("domains")
 }
 
+/// Platform redirect domains — the `go.*` hosts the Cloudflare redirect Worker serves.
+/// The DEFAULT one is what new ad creatives link to (`https://{host}/go/{redirectId}`);
+/// the launch pipeline reads it (falling back to env `REDIRECT_DOMAIN`). Distinct from
+/// `domains` (article/offer sites). Global (no org_id) — super-admin managed, accessed via
+/// withSystem. At most one default (partial unique index in the migration).
+model RedirectDomain {
+  id         String    @id @default(uuid()) @db.Uuid
+  host       String    @unique
+  label      String?
+  isDefault  Boolean   @default(false) @map("is_default")
+  /// Last reachability check, e.g. "ok 200" or "unreachable: …".
+  lastCheck  String?   @map("last_check")
+  verifiedAt DateTime? @map("verified_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@map("redirect_domains")
+}
+
 enum OfferKind {
   PAID
   ORGANIC

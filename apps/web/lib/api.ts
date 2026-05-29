@@ -409,7 +409,28 @@ export const admin = {
       body: JSON.stringify({ pct }),
     });
   },
+  redirectDomains: async (): Promise<RedirectDomain[]> =>
+    (await parse<{ domains: RedirectDomain[] }>(await authedFetch('/api/admin/redirect-domains'))).domains,
+  addRedirectDomain: async (host: string, label?: string): Promise<RedirectDomain> =>
+    (await parse<{ domain: RedirectDomain }>(await authedFetch('/api/admin/redirect-domains', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ host, label }) }))).domain,
+  setDefaultRedirectDomain: async (id: string): Promise<RedirectDomain> =>
+    (await parse<{ domain: RedirectDomain }>(await authedFetch(`/api/admin/redirect-domains/${id}/default`, { method: 'POST' }))).domain,
+  verifyRedirectDomain: async (id: string): Promise<RedirectDomain> =>
+    (await parse<{ domain: RedirectDomain }>(await authedFetch(`/api/admin/redirect-domains/${id}/verify`, { method: 'POST' }))).domain,
+  deleteRedirectDomain: async (id: string): Promise<void> => {
+    await authedFetch(`/api/admin/redirect-domains/${id}`, { method: 'DELETE' });
+  },
 };
+
+export interface RedirectDomain {
+  id: string;
+  host: string;
+  label: string | null;
+  isDefault: boolean;
+  lastCheck: string | null;
+  verifiedAt: string | null;
+  createdAt: string;
+}
 
 export const stats = {
   summary: async (range?: RangeArg): Promise<StatsSummary> =>

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { env } from '@knn/config';
-import { FbConnectionStatus } from '@knn/db';
+import { FbConnectionStatus, withSystem } from '@knn/db';
 import {
   FbAccountRestrictedError,
   FbApiError,
@@ -201,9 +201,20 @@ export async function setCampaignActive(
 }
 
 /** FB write phase — campaign → ad sets → (image, creative, ad), all at `status`. */
+/**
+ * The base URL ad creatives link to: `https://{default redirect domain}`. Super-admin
+ * manages these in the Redirect Domains panel; falls back to env `REDIRECT_DOMAIN` when
+ * none is marked default (e.g. fresh install). The host must point at the edge Worker.
+ */
+async function resolveRedirectBase(): Promise<string> {
+  const def = await withSystem((tx) => tx.redirectDomain.findFirst({ where: { isDefault: true }, select: { host: true } }));
+  return def?.host ? `https://${def.host}` : env.REDIRECT_DOMAIN;
+}
+
 async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'): Promise<FbStructureResult> {
   const { campaign, token, fbAccountId, fbPageId } = plan;
   const cbo = campaign.budgetMode === 'CAMPAIGN';
+  const redirectBase = await resolveRedirectBase();
 
   // Automatic bidding (no cap → no bid_amount needed). The bid strategy lives at the
   // budget level: on the CAMPAIGN for CBO, on the AD SET for ABO — never both.
@@ -254,7 +265,7 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
         throw err;
       }
       const imageHash = await uploadFbAdImage(fbAccountId, token, bytes.toString('base64'));
-      const destination = `${env.REDIRECT_DOMAIN}/go/${ad.redirectId}`;
+      const destination = `${redirectBase}/go/${ad.redirectId}`;
       const creative = await createFbAdCreative(fbAccountId, token, {
         name: ad.name,
         objectStorySpec: {
