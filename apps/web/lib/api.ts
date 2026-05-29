@@ -24,12 +24,14 @@ import {
 } from './types';
 import {
   type ArticleRow,
+  type ArticleUsage,
   type BuyerRollup,
   type CampaignBreakdown,
   type CampaignDraftInput,
   type CampaignPerf,
   type ChannelRow,
   type ChannelSummary,
+  type ChannelUsage,
   type CompanyRollup,
   type DimStat,
   type OfferStat,
@@ -388,8 +390,12 @@ export const admin = {
   channels: async (): Promise<ChannelRow[]> =>
     (await parse<{ channels: ChannelRow[] }>(await authedFetch('/api/admin/channels'))).channels,
   channelSummary: async (): Promise<ChannelSummary> => parse(await authedFetch('/api/admin/channel-summary')),
+  channelUsage: async (idOrChannelId: string): Promise<ChannelUsage> =>
+    (await parse<{ usage: ChannelUsage }>(await authedFetch(`/api/admin/channels/${encodeURIComponent(idOrChannelId)}/usage`))).usage,
   articles: async (): Promise<ArticleRow[]> =>
     (await parse<{ articles: ArticleRow[] }>(await authedFetch('/api/admin/articles'))).articles,
+  articleUsage: async (id: string): Promise<ArticleUsage> =>
+    (await parse<{ usage: ArticleUsage }>(await authedFetch(`/api/admin/articles/${id}/usage`))).usage,
   settings: async (): Promise<PlatformSettings> =>
     (await parse<{ settings: PlatformSettings }>(await authedFetch('/api/admin/settings'))).settings,
   updateSettings: async (input: Partial<PlatformSettings>): Promise<PlatformSettings> =>

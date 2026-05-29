@@ -32,7 +32,9 @@ import {
   setUserStatus,
 } from './admin.service.js';
 import {
+  getArticleUsage,
   getChannelSummary,
+  getChannelUsage,
   getPlatformSettings,
   listArticles,
   listChannels,
@@ -196,7 +198,39 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
+  // Article lineage: which campaigns/domains/channels it's live on + for what time.
+  app.get<{ Params: { id: string } }>(
+    '/articles/:id/usage',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const usage = await getArticleUsage(req.auth, req.params.id);
+        if (!usage) return reply.code(404).send({ error: 'Article not found' });
+        return reply.send({ usage });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
   // --- Super-admin platform surfaces (global channel pool + settings + revenue cut) ---
+  // Channel usage lineage: where one channel id is used (campaign/article/domain) + time.
+  app.get<{ Params: { id: string } }>(
+    '/channels/:id/usage',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const usage = await getChannelUsage(req.params.id);
+        if (!usage) return reply.code(404).send({ error: 'Channel not found' });
+        return reply.send({ usage });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
   app.get(
     '/channels',
     { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] },

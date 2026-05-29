@@ -2,7 +2,7 @@
 
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { type ChannelSummary, type PlatformSettings } from '@knn/shared';
+import { type PlatformSettings } from '@knn/shared';
 import { Badge, Button, Card, Skeleton } from '@/components/ui';
 import { adsense, admin } from '@/lib/api';
 import { type AfsAccountRow } from '@/lib/types';
@@ -13,7 +13,6 @@ import styles from '../admin.module.css';
 export default function PlatformPage() {
   const { user } = useAuth();
   const router = useRouter();
-  const [summary, setSummary] = useState<ChannelSummary | null>(null);
   const [settings, setSettings] = useState<PlatformSettings | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
   const [savedAt, setSavedAt] = useState(false);
@@ -27,9 +26,6 @@ export default function PlatformPage() {
 
   const loadAfsAccounts = useCallback(() => {
     void adsense.accounts().then(setAfsAccounts).catch(() => setAfsAccounts([]));
-  }, []);
-  const loadSummary = useCallback(() => {
-    void admin.channelSummary().then(setSummary).catch(() => setSummary(null));
   }, []);
 
   // Surface the OAuth return (?adsense=connected / ?adsense_error=…).
@@ -69,10 +65,9 @@ export default function PlatformPage() {
   };
 
   useEffect(() => {
-    loadSummary();
     loadAfsAccounts();
     void admin.settings().then(setSettings).catch(() => setSettings({ compliancePrompt: '', articleDomain: '', redirectDomain: '' }));
-  }, [loadSummary, loadAfsAccounts]);
+  }, [loadAfsAccounts]);
 
   const saveSettings = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
@@ -94,8 +89,8 @@ export default function PlatformPage() {
       <div className={styles.head}>
         <div>
           <span className="eyebrow">Platform</span>
-          <h1 className={`serif ${styles.title}`}>Platform control</h1>
-          <p className={styles.sub}>AdSense accounts, the channel pool, and platform settings. Company revenue &amp; cuts live in the Companies tab.</p>
+          <h1 className={`serif ${styles.title}`}>Setup</h1>
+          <p className={styles.sub}>AdSense accounts, redirect domains, and platform settings. Companies, Domains, Channels &amp; Articles are in the left nav.</p>
         </div>
       </div>
 
@@ -156,65 +151,9 @@ export default function PlatformPage() {
         )}
         <p className={styles.fieldHint}>
           <strong>In AdSense</strong> = channels mirrored to the local catalog by &ldquo;Sync catalog&rdquo; (≈ the account&apos;s total).{' '}
-          <strong>Imported</strong> = channels added into a website&apos;s usable pool. Assign channels to a website in{' '}
-          <strong>Domains → Channels</strong>.
+          <strong>Imported</strong> = channels added into a website&apos;s usable pool. Browse, import &amp; trace channels in{' '}
+          <strong>Channels</strong>.
         </p>
-      </Card>
-
-      {/* Channel pool — accurate counts, per website */}
-      <Card className={styles.section}>
-        <div className={styles.sectionHead}>
-          <span className={styles.sectionTitle}>Channel pool</span>
-          {summary && (
-            <span className={styles.subtle}>
-              {summary.available.toLocaleString()} available · {summary.assigned.toLocaleString()} in use ·{' '}
-              {summary.total.toLocaleString()} total
-            </span>
-          )}
-        </div>
-        {!summary ? (
-          <Skeleton className={styles.rowSkel} />
-        ) : summary.total === 0 ? (
-          <p className={styles.empty}>No channels imported yet. Sync an AdSense account above, then import channels per website in Domains → Channels.</p>
-        ) : (
-          <>
-            <div className={styles.tableWrap}>
-              <table className={styles.table}>
-                <thead>
-                  <tr>
-                    <th className={styles.thLeft}>Website</th>
-                    <th>Channels</th>
-                    <th>Available</th>
-                    <th>In use</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {summary.byDomain.length === 0 ? (
-                    <tr>
-                      <td className={styles.subtle} colSpan={4}>
-                        No channels are tied to a website yet.
-                      </td>
-                    </tr>
-                  ) : (
-                    summary.byDomain.map((d) => (
-                      <tr key={d.domainId}>
-                        <td className={styles.name}>{d.host}</td>
-                        <td className={styles.num}>{d.total.toLocaleString()}</td>
-                        <td className={styles.num}>{d.available.toLocaleString()}</td>
-                        <td className={styles.num}>{(d.total - d.available).toLocaleString()}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-            {summary.untagged > 0 && (
-              <p className={styles.fieldHint}>
-                {summary.untagged.toLocaleString()} channel(s) are untagged (legacy/placeholder, not tied to a website) — these are ignored by the offer funnel.
-              </p>
-            )}
-          </>
-        )}
       </Card>
 
       {/* Redirect domains — the go.* hosts the edge Worker serves (default = ad link target) */}

@@ -181,3 +181,64 @@ export interface PlatformSettings {
   articleDomain: string;
   redirectDomain: string;
 }
+
+/**
+ * One contiguous span a channel was held by a campaign — consecutive per-IST-day
+ * `ChannelAssignment` rows collapsed into a single range. Revenue is GROSS platform USD.
+ */
+export interface ChannelAssignmentSpan {
+  campaignId: string;
+  campaignName: string | null;
+  companyName: string | null;
+  articleId: string | null;
+  articleTitle: string | null;
+  articleSlug: string | null;
+  host: string | null; // the offer's domain host this channel served
+  liveUrl: string | null; // https://{host}/a/{slug}
+  firstDay: string; // "YYYY-MM-DD"
+  lastDay: string;
+  active: boolean; // still currently assigned (a row has releasedAt == null)
+  revenueUsd: number; // gross platform revenue over the span
+  afsClicks: number;
+}
+
+/** Full usage lineage for ONE channel id (super-admin Channels page). */
+export interface ChannelUsage {
+  id: string; // channels.id (uuid)
+  channelId: string; // the AFS `ch` value
+  label: string | null;
+  status: string;
+  host: string | null; // the pool/domain this channel belongs to
+  spans: ChannelAssignmentSpan[]; // newest-first
+}
+
+/** A campaign that uses an article + the channels/domains it ran on (Articles page). */
+export interface ArticleUsageCampaign {
+  campaignId: string;
+  campaignName: string;
+  companyName: string | null;
+  status: string;
+  channels: {
+    channelDbId: string;
+    channelId: string; // AFS ch value
+    host: string | null;
+    liveUrl: string | null;
+    firstDay: string | null;
+    lastDay: string | null;
+    active: boolean;
+    revenueUsd: number;
+    afsClicks: number;
+  }[];
+}
+
+/** Per-article lineage: where it's live (domains/channels) and for how long. */
+export interface ArticleUsage {
+  id: string;
+  title: string;
+  slug: string;
+  status: string;
+  createdAt: string; // ISO
+  liveHosts: string[]; // distinct hosts it's/was live on
+  totalRevenueUsd: number;
+  campaigns: ArticleUsageCampaign[];
+}
