@@ -35,3 +35,43 @@
   max-width: 720px;
   margin: 1.5rem auto 0;
 }
+
+/* Organic "Web results" — the host's own articles, rendered as a real SERP listing so the
+   AFS ads above supplement genuine search results (Google policy). Plain, search-engine look. */
+.web {
+  max-width: 720px;
+  margin: 2rem auto 0;
+  padding-top: 1.25rem;
+  border-top: 1px solid #ececec;
+}
+.webHead {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #555;
+  margin: 0 0 1.1rem;
+}
+.webItem {
+  margin: 0 0 1.4rem;
+}
+.webTitle {
+  display: inline-block;
+  font-size: 1.2rem;
+  line-height: 1.3;
+  color: #1a0dab;
+  text-decoration: none;
+}
+.webTitle:hover {
+  text-decoration: underline;
+}
+.webCite {
+  font-size: 0.82rem;
+  color: #0a7d33;
+  margin: 0.15rem 0 0.25rem;
+  word-break: break-all;
+}
+.webSnippet {
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: #4d5156;
+  margin: 0;
+}

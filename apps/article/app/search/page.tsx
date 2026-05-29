@@ -1,7 +1,9 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import { resolveSiteConfig } from '../_afs/site-config';
 import { ConversionTracker } from './conversion-tracker';
 import { SearchAds } from './search-ads';
+import { WebResults } from './web-results';
 import styles from './search.module.css';
 
 export const metadata: Metadata = { title: 'Search results', robots: { index: false } };
@@ -46,6 +48,12 @@ export default async function SearchPage({
         )}
       </div>
       <SearchAds query={query} referrerAdCreative={referrerAdCreative} channel={channel} site={site} />
+      {/* Organic results stream in via <Suspense> — they never block the ad request above
+          (which fires from an inline script in the first flushed chunk). The AFS ads thus
+          supplement REAL search results, per Google's Search-ads policy. */}
+      <Suspense fallback={null}>
+        <WebResults />
+      </Suspense>
       <ConversionTracker clickId={clickId} value={value} currency={currency} />
     </main>
   );

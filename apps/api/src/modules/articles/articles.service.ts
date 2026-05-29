@@ -80,6 +80,70 @@ export async function getPublicArticleBySlug(slug: string): Promise<PublicArticl
   });
 }
 
+/** Normalize a host: lowercase, strip scheme/path/port (mirrors domains.service). */
+function normalizeHost(raw: string): string {
+  return raw.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
+}
+
+/** Strip markdown to a plain-text snippet (~160 chars) for a SERP-style result line. */
+function toSnippet(markdown: string, max = 160): string {
+  const text = markdown
+    .replace(/```[\s\S]*?```/g, ' ') // fenced code
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ') // images
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // links → their text
+    .replace(/^#{1,6}\s+/gm, ' ') // headings
+    .replace(/[*_`>#]+/g, ' ') // residual md punctuation
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max).replace(/\s+\S*$/, '')}…`;
+}
+
+export interface PublicArticleSummary {
+  slug: string;
+  title: string;
+  /** Plain-text snippet (article opening) for the organic result line. */
+  snippet: string;
+}
+
+/**
+ * Organic "Web results" for the RSOC results page (`/search`): the READY articles
+ * actually routed to THIS host (via its offers — the offer's article variant, else its
+ * campaign's article). Two reasons this is host-scoped, not global:
+ *  1. Compliance — the AFS ads must SUPPLEMENT real search results (Google Search-ads
+ *     policy), so the results page needs genuine, on-topic content links.
+ *  2. Tenant isolation — only content actually published on this host appears (never
+ *     another org's article titles leaking onto someone else's domain).
+ * `withSystem` (the article site is public, no tenant ctx); newest first; capped.
+ */
+export async function listArticlesForHost(rawHost: string, limit = 6): Promise<PublicArticleSummary[]> {
+  const host = normalizeHost(rawHost);
+  if (!host) return [];
+  const take = Math.min(Math.max(limit, 1), 10);
+  return withSystem(async (tx) => {
+    const domain = await tx.domain.findUnique({ where: { host }, select: { id: true } });
+    if (!domain) return [];
+    // Articles reachable on this host = each offer's variant article, else its campaign's.
+    const offers = await tx.offer.findMany({
+      where: { domainId: domain.id },
+      select: { articleId: true, campaign: { select: { articleId: true } } },
+    });
+    const ids = [
+      ...new Set(
+        offers.flatMap((o) => [o.articleId, o.campaign?.articleId]).filter((x): x is string => Boolean(x)),
+      ),
+    ];
+    if (ids.length === 0) return [];
+    const articles = await tx.article.findMany({
+      where: { id: { in: ids }, status: 'READY' },
+      select: { slug: true, title: true, compliantContent: true },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+    return articles.map((a) => ({ slug: a.slug, title: a.title, snippet: toSnippet(a.compliantContent) }));
+  });
+}
+
 /** URL-safe slug from the title + a short random suffix to guarantee uniqueness. */
 function slugify(title: string): string {
   const base =
