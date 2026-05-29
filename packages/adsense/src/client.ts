@@ -70,6 +70,14 @@ export function parseChannelReport(report: AdsenseReportResponse): ChannelDayRev
   return out;
 }
 
+/** Per-channel revenue TOTAL over a range (no date breakdown) — the preview unit. */
+export interface ChannelRevenueTotal {
+  channelId: string;
+  revenueMinor: number;
+  currency: string;
+  afsClicks: number;
+}
+
 export interface FetchChannelReportParams {
   /** Google OAuth access token with AdSense Management scope. */
   accessToken: string;
@@ -125,4 +133,76 @@ export async function fetchChannelReport(
   }
   const json = (await res.json()) as AdsenseReportResponse;
   return parseChannelReport(json);
+}
+
+export interface FetchChannelTotalsParams {
+  accessToken: string;
+  account: string;
+  since: string; // YYYY-MM-DD
+  until: string; // YYYY-MM-DD
+  /** Top-N earning channels to return (the report is ordered by earnings desc). */
+  limit?: number;
+}
+
+/**
+ * Build the `reports:generate` query for top-earning channel TOTALS over [since, until]
+ * (CUSTOM_CHANNEL_ID only, no date breakdown), ordered by earnings desc + capped — so an
+ * account with 100k channels returns just the top N rows. Powers the super-admin revenue
+ * preview / live-pull validation (no per-day rows = bounded response).
+ */
+export function buildTotalsQuery(p: FetchChannelTotalsParams): string {
+  const [sy, sm, sd] = p.since.split('-');
+  const [uy, um, ud] = p.until.split('-');
+  const q = new URLSearchParams();
+  q.set('dateRange', 'CUSTOM');
+  q.set('startDate.year', sy ?? '');
+  q.set('startDate.month', String(Number(sm)));
+  q.set('startDate.day', String(Number(sd)));
+  q.set('endDate.year', uy ?? '');
+  q.set('endDate.month', String(Number(um)));
+  q.set('endDate.day', String(Number(ud)));
+  q.append('dimensions', DIM_CHANNEL);
+  q.append('metrics', MET_EARNINGS);
+  q.append('metrics', MET_CLICKS);
+  q.append('orderBy', `-${MET_EARNINGS}`);
+  q.set('limit', String(p.limit ?? 50));
+  return q.toString();
+}
+
+/** Parse a totals report (CUSTOM_CHANNEL_ID + earnings + clicks) → per-channel totals. */
+export function parseChannelTotals(report: AdsenseReportResponse): { rows: ChannelRevenueTotal[]; currency: string } {
+  const headers = report.headers ?? [];
+  const idx = (name: string): number => headers.findIndex((h) => h.name === name);
+  const ci = idx(DIM_CHANNEL);
+  const ei = idx(MET_EARNINGS);
+  const ki = idx(MET_CLICKS);
+  const currency = (ei >= 0 ? headers[ei]?.currencyCode : undefined) ?? 'USD';
+  const rows: ChannelRevenueTotal[] = [];
+  for (const row of report.rows ?? []) {
+    const cell = (i: number): string | undefined => (i >= 0 ? row.cells[i]?.value : undefined);
+    const channelId = cell(ci);
+    if (!channelId) continue;
+    rows.push({
+      channelId,
+      revenueMinor: Math.round((Number(cell(ei)) || 0) * 100),
+      currency,
+      afsClicks: Math.round(Number(cell(ki)) || 0),
+    });
+  }
+  return { rows, currency };
+}
+
+/** Fetch the top-earning channel totals over [since, until] (the preview path). */
+export async function fetchChannelTotals(
+  params: FetchChannelTotalsParams,
+  deps: FetchDeps = defaultDeps,
+): Promise<{ rows: ChannelRevenueTotal[]; currency: string }> {
+  if (!params.accessToken) throw new AdsenseNotConfiguredError();
+  const url = `${deps.baseUrl}/${params.account}/reports:generate?${buildTotalsQuery(params)}`;
+  const res = await deps.fetch(url, { headers: { Authorization: `Bearer ${params.accessToken}` } });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new AdsenseRequestError(`AdSense report failed (${res.status}): ${body.slice(0, 200)}`, res.status);
+  }
+  return parseChannelTotals((await res.json()) as AdsenseReportResponse);
 }

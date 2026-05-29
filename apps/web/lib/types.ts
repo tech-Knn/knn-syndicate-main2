@@ -293,6 +293,26 @@ export interface AdsenseStatus {
   tokenExpiresAt?: string;
 }
 
+export interface AdsenseRevenuePreviewRow {
+  channelId: string;
+  label: string | null;
+  inPool: boolean;
+  revenueMinor: number;
+  afsClicks: number;
+}
+
+export interface AdsenseRevenuePreview {
+  account: string | null;
+  since: string;
+  until: string;
+  currency: string;
+  totalRevenueMinor: number;
+  totalClicks: number;
+  channelsWithRevenue: number;
+  matchedInPool: number;
+  rows: AdsenseRevenuePreviewRow[];
+}
+
 export interface UploadResult {
   id: string;
   filename: string;

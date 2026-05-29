@@ -1,5 +1,6 @@
 import {
   type AdminOrg,
+  type AdsenseRevenuePreview,
   type AdsenseStatus,
   type AfsAccountRow,
   type AuditRow,
@@ -489,6 +490,12 @@ export const adsense = {
   // Sync an AFS account's full channel list into the local catalog (fast browsing of ~100k).
   syncCatalog: async (accountId: string): Promise<{ synced: number; account: string | null }> =>
     parse(await authedFetch(`/api/adsense/accounts/${accountId}/catalog/sync`, { method: 'POST' })),
+  // Live AFS revenue preview for an account over [since, until] (top-earning channels + pool match).
+  report: async (accountId: string, since: string, until: string): Promise<AdsenseRevenuePreview> =>
+    parse(await authedFetch(`/api/adsense/accounts/${accountId}/report?since=${since}&until=${until}`)),
+  // Enqueue an on-demand attribution run (pull FB + AdSense, re-allocate) so revenue lands now.
+  runAttribution: async (): Promise<{ enqueued: boolean }> =>
+    parse(await authedFetch('/api/adsense/attribution/run', { method: 'POST' })),
 };
 
 export const domains = {

@@ -10,9 +10,11 @@ import {
   getStatus,
   handleCallback,
   listAfsAccounts,
+  previewAccountRevenue,
   setAccountLabel,
   syncChannelCatalog,
   syncChannels,
+  triggerAttribution,
 } from './adsense.service.js';
 
 const superOnly = [authenticate, requireRole(ROLES.SUPER_ADMIN)];
@@ -73,6 +75,34 @@ export async function adsenseRoutes(app: FastifyInstance): Promise<void> {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     try {
       return reply.send(await syncChannelCatalog(req.auth, req.params.id));
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // Live AFS revenue preview for one account over a date range (top-earning channels +
+  // pool-mapping check). Read-only — proves the live pull + the CUSTOM_CHANNEL_ID ↔ `ch` mapping.
+  app.get<{ Params: { id: string }; Querystring: { since?: string; until?: string } }>(
+    '/accounts/:id/report',
+    { preHandler: superOnly },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      const { since, until } = req.query;
+      const isDay = (s?: string): boolean => Boolean(s && /^\d{4}-\d{2}-\d{2}$/.test(s));
+      if (!isDay(since) || !isDay(until)) return reply.code(400).send({ error: 'since & until (YYYY-MM-DD) required' });
+      try {
+        return reply.send(await previewAccountRevenue(req.params.id, since!, until!));
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Enqueue an on-demand attribution run (pull FB + AdSense, re-allocate) so revenue lands now.
+  app.post('/attribution/run', { preHandler: superOnly }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await triggerAttribution(req.auth));
     } catch (err) {
       return handleRouteError(err, reply);
     }

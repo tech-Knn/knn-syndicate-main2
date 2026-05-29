@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   AdsenseNotConfiguredError,
   buildReportQuery,
+  buildTotalsQuery,
   fetchChannelReport,
+  fetchChannelTotals,
   parseChannelReport,
+  parseChannelTotals,
 } from './index.js';
 
 describe('parseChannelReport', () => {
@@ -98,5 +101,62 @@ describe('fetchChannelReport', () => {
     const init = fetchMock.mock.calls[0]?.[1];
     expect(url).toContain('/accounts/pub-1/reports:generate?');
     expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+  });
+});
+
+describe('buildTotalsQuery', () => {
+  it('requests channel totals ordered by earnings desc, capped, with no DATE dimension', () => {
+    const q = buildTotalsQuery({ accessToken: 't', account: 'accounts/pub-1', since: '2026-05-01', until: '2026-05-07', limit: 25 });
+    expect(q).toContain('dimensions=CUSTOM_CHANNEL_ID');
+    expect(q).not.toContain('dimensions=DATE');
+    expect(q).toContain('metrics=ESTIMATED_EARNINGS');
+    expect(q).toContain('metrics=CLICKS');
+    expect(q).toContain('orderBy=-ESTIMATED_EARNINGS');
+    expect(q).toContain('limit=25');
+  });
+});
+
+describe('parseChannelTotals', () => {
+  it('maps a totals report → per-channel totals (earnings→minor, currency from header)', () => {
+    const { rows, currency } = parseChannelTotals({
+      headers: [{ name: 'CUSTOM_CHANNEL_ID' }, { name: 'ESTIMATED_EARNINGS', currencyCode: 'INR' }, { name: 'CLICKS' }],
+      rows: [
+        { cells: [{ value: '05219' }, { value: '12.34' }, { value: '57' }] },
+        { cells: [{ value: '00500' }, { value: '0.00' }, { value: '2' }] },
+      ],
+    });
+    expect(currency).toBe('INR');
+    expect(rows).toEqual([
+      { channelId: '05219', revenueMinor: 1234, currency: 'INR', afsClicks: 57 },
+      { channelId: '00500', revenueMinor: 0, currency: 'INR', afsClicks: 2 },
+    ]);
+  });
+});
+
+describe('fetchChannelTotals', () => {
+  it('throws AdsenseNotConfiguredError without a token', async () => {
+    await expect(
+      fetchChannelTotals({ accessToken: '', account: 'accounts/pub-1', since: '2026-05-01', until: '2026-05-07' }),
+    ).rejects.toBeInstanceOf(AdsenseNotConfiguredError);
+  });
+
+  it('fetches with a bearer token and parses channel totals', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      new Response(
+        JSON.stringify({
+          headers: [{ name: 'CUSTOM_CHANNEL_ID' }, { name: 'ESTIMATED_EARNINGS', currencyCode: 'USD' }, { name: 'CLICKS' }],
+          rows: [{ cells: [{ value: 'ch-A' }, { value: '3.50' }, { value: '12' }] }],
+        }),
+        { status: 200 },
+      ),
+    );
+    const { rows } = await fetchChannelTotals(
+      { accessToken: 'tok', account: 'accounts/pub-1', since: '2026-05-27', until: '2026-05-27', limit: 10 },
+      { fetch: fetchMock as unknown as typeof fetch, baseUrl: 'https://adsense.googleapis.com/v2' },
+    );
+    expect(rows).toEqual([{ channelId: 'ch-A', revenueMinor: 350, currency: 'USD', afsClicks: 12 }]);
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).toContain('/accounts/pub-1/reports:generate?');
+    expect(url).toContain('orderBy=-ESTIMATED_EARNINGS');
   });
 });

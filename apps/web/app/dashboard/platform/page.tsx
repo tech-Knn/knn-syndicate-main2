@@ -1,11 +1,11 @@
 'use client';
 
-import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, Fragment, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { type PlatformSettings } from '@knn/shared';
+import { type PlatformSettings, addBusinessDays, currentBusinessDay } from '@knn/shared';
 import { Badge, Button, Card, Skeleton } from '@/components/ui';
 import { adsense, admin } from '@/lib/api';
-import { type AfsAccountRow } from '@/lib/types';
+import { type AdsenseRevenuePreview, type AfsAccountRow } from '@/lib/types';
 import { useAuth } from '../../providers';
 import { RedirectDomainsPanel } from './redirect-domains-panel';
 import styles from '../admin.module.css';
@@ -19,6 +19,39 @@ export default function PlatformPage() {
   const [afsAccounts, setAfsAccounts] = useState<AfsAccountRow[] | null>(null);
   const [catSyncing, setCatSyncing] = useState<string | null>(null);
   const [adsNote, setAdsNote] = useState<string | null>(null);
+
+  // Live AFS revenue preview (per account) + on-demand attribution pull.
+  const [revOpen, setRevOpen] = useState<string | null>(null);
+  const [revData, setRevData] = useState<Record<string, AdsenseRevenuePreview | 'loading' | 'error'>>({});
+  const [pulling, setPulling] = useState(false);
+
+  const previewRevenue = useCallback((accountId: string): void => {
+    if (revOpen === accountId) {
+      setRevOpen(null);
+      return;
+    }
+    setRevOpen(accountId);
+    setRevData((d) => ({ ...d, [accountId]: 'loading' }));
+    const until = currentBusinessDay();
+    const since = addBusinessDays(until, -6); // last 7 IST days
+    void adsense
+      .report(accountId, since, until)
+      .then((r) => setRevData((d) => ({ ...d, [accountId]: r })))
+      .catch(() => setRevData((d) => ({ ...d, [accountId]: 'error' })));
+  }, [revOpen]);
+
+  const pullRevenueNow = async (): Promise<void> => {
+    setPulling(true);
+    setAdsNote('Pulling FB + AdSense and re-allocating revenue… (refresh dashboards in ~1 min)');
+    try {
+      await adsense.runAttribution();
+      setAdsNote('Attribution run queued — revenue will appear in campaign dashboards shortly.');
+    } catch {
+      setAdsNote('Could not queue the attribution run — check the worker is up.');
+    } finally {
+      setPulling(false);
+    }
+  };
 
   useEffect(() => {
     if (user && user.role !== 'SUPER_ADMIN') router.replace('/dashboard');
@@ -98,7 +131,14 @@ export default function PlatformPage() {
       <Card className={styles.section}>
         <div className={styles.sectionHead}>
           <span className={styles.sectionTitle}>AdSense accounts</span>
-          <Button onClick={() => void connectAdsense()}>Connect AdSense account</Button>
+          <div className={styles.actions}>
+            {afsAccounts && afsAccounts.length > 0 && (
+              <Button variant="ghost" loading={pulling} onClick={() => void pullRevenueNow()} title="Pull FB + AdSense now and re-allocate revenue into the dashboards">
+                Pull revenue now
+              </Button>
+            )}
+            <Button onClick={() => void connectAdsense()}>Connect AdSense account</Button>
+          </div>
         </div>
         {adsNote && <p className={styles.adsNote}>{adsNote}</p>}
         {!afsAccounts ? (
@@ -121,30 +161,87 @@ export default function PlatformPage() {
                 </tr>
               </thead>
               <tbody>
-                {afsAccounts.map((a) => (
-                  <tr key={a.id}>
-                    <td>
-                      <div className={styles.name}>{a.label ?? a.account ?? 'AFS account'}</div>
-                      {a.account && <div className={styles.subtle}>{a.account}</div>}
-                    </td>
-                    <td className="mono">{a.afsPubId ?? '—'}</td>
-                    <td className={styles.num}>{a.catalogCount ? a.catalogCount.toLocaleString() : '—'}</td>
-                    <td className={styles.num}>{a.importedCount.toLocaleString()}</td>
-                    <td>
-                      <Badge tone={a.status === 'CONNECTION_BROKEN' ? 'danger' : 'success'}>{a.status.toLowerCase()}</Badge>
-                    </td>
-                    <td>
-                      <div className={styles.actions}>
-                        <button type="button" className={styles.actionBtn} disabled={catSyncing === a.id} onClick={() => void syncCatalog(a.id)}>
-                          {catSyncing === a.id ? 'Syncing…' : 'Sync catalog'}
-                        </button>
-                        <button type="button" className={`${styles.actionBtn} ${styles.actionDanger}`} onClick={() => void disconnectAfs(a.id)}>
-                          Disconnect
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {afsAccounts.map((a) => {
+                  const rev = revData[a.id];
+                  return (
+                    <Fragment key={a.id}>
+                      <tr>
+                        <td>
+                          <div className={styles.name}>{a.label ?? a.account ?? 'AFS account'}</div>
+                          {a.account && <div className={styles.subtle}>{a.account}</div>}
+                        </td>
+                        <td className="mono">{a.afsPubId ?? '—'}</td>
+                        <td className={styles.num}>{a.catalogCount ? a.catalogCount.toLocaleString() : '—'}</td>
+                        <td className={styles.num}>{a.importedCount.toLocaleString()}</td>
+                        <td>
+                          <Badge tone={a.status === 'CONNECTION_BROKEN' ? 'danger' : 'success'}>{a.status.toLowerCase()}</Badge>
+                        </td>
+                        <td>
+                          <div className={styles.actions}>
+                            <button type="button" className={styles.actionBtn} onClick={() => previewRevenue(a.id)}>
+                              {revOpen === a.id ? 'Hide revenue' : 'Revenue (7d)'}
+                            </button>
+                            <button type="button" className={styles.actionBtn} disabled={catSyncing === a.id} onClick={() => void syncCatalog(a.id)}>
+                              {catSyncing === a.id ? 'Syncing…' : 'Sync catalog'}
+                            </button>
+                            <button type="button" className={`${styles.actionBtn} ${styles.actionDanger}`} onClick={() => void disconnectAfs(a.id)}>
+                              Disconnect
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      {revOpen === a.id && (
+                        <tr>
+                          <td colSpan={6} style={{ background: 'var(--surface-2, rgba(255,255,255,0.02))' }}>
+                            {rev === 'loading' || rev === undefined ? (
+                              <Skeleton className={styles.rowSkel} />
+                            ) : rev === 'error' ? (
+                              <p className={styles.empty}>Could not load the live report — confirm AFS reporting access is granted for this account.</p>
+                            ) : (
+                              <div style={{ padding: '0.4rem 0' }}>
+                                <p className={styles.fieldHint}>
+                                  <strong>{rev.since} → {rev.until}</strong> · gross{' '}
+                                  <strong>{rev.currency} {(rev.totalRevenueMinor / 100).toFixed(2)}</strong> ·{' '}
+                                  {rev.totalClicks.toLocaleString()} AFS clicks · top {rev.rows.length} channels ·{' '}
+                                  <strong>{rev.matchedInPool}</strong> map to your pool
+                                  {rev.rows.length > 0 && rev.matchedInPool === 0 && (
+                                    <> — <span style={{ color: 'var(--rust, #d9512c)' }}>none match: the report&apos;s channel ids differ from imported ids (re-sync / mapping fix needed)</span></>
+                                  )}.
+                                </p>
+                                {rev.rows.length === 0 ? (
+                                  <p className={styles.empty}>No channel earnings reported in this window.</p>
+                                ) : (
+                                  <div className={styles.tableWrap}>
+                                    <table className={styles.table}>
+                                      <thead>
+                                        <tr>
+                                          <th className={styles.thLeft}>Channel id</th>
+                                          <th className={styles.thLeft}>Pool</th>
+                                          <th>Revenue</th>
+                                          <th>AFS clicks</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {rev.rows.slice(0, 25).map((r) => (
+                                          <tr key={r.channelId}>
+                                            <td className="mono">{r.channelId}</td>
+                                            <td className={styles.subtle}>{r.inPool ? (r.label ?? 'imported') : '—'}</td>
+                                            <td className={styles.num}>{rev.currency} {(r.revenueMinor / 100).toFixed(2)}</td>
+                                            <td className={styles.num}>{r.afsClicks.toLocaleString()}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

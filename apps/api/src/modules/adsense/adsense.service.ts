@@ -4,6 +4,7 @@ import {
   buildGoogleAuthUrl,
   discoverChannelsInRanges,
   exchangeGoogleCode,
+  fetchChannelTotals,
   isGoogleConfigured,
   listAccounts,
   listAdClients,
@@ -11,6 +12,7 @@ import {
   parseChannelRanges,
   refreshGoogleToken,
 } from '@knn/adsense';
+import { QUEUES, getQueue } from '@knn/queue';
 import { decryptToken, encryptToken } from '@knn/fb';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
@@ -347,6 +349,91 @@ export async function syncChannelCatalog(
     writeAudit(tx, { orgId: actor.orgId, actorId: actor.userId, action: 'adsense.catalog.synced', entityType: 'google_connection', entityId: accountId, details: { synced: channels.length } }),
   );
   return { synced: channels.length, account: conn.adsenseAccount };
+}
+
+// ── Live revenue preview + on-demand attribution (Phase 9 go-live) ────────────
+
+export interface AdsenseRevenuePreviewRow {
+  channelId: string;
+  /** Our pool label for this channel, if it's imported. */
+  label: string | null;
+  /** Whether this reported channel id matches a channel in our pool (the mapping check). */
+  inPool: boolean;
+  revenueMinor: number;
+  afsClicks: number;
+}
+
+export interface AdsenseRevenuePreview {
+  account: string | null;
+  since: string;
+  until: string;
+  currency: string;
+  totalRevenueMinor: number;
+  totalClicks: number;
+  /** Channels (in the top-N) that earned anything in the window. */
+  channelsWithRevenue: number;
+  /** How many of the reported channels map to our pool — the live CUSTOM_CHANNEL_ID ↔ `ch` check (OQ#4). */
+  matchedInPool: number;
+  rows: AdsenseRevenuePreviewRow[];
+}
+
+/**
+ * Live AFS revenue preview for ONE connected account over [since, until] — pulls the
+ * top-earning channels straight from the AdSense Management API v2, then cross-references
+ * the reported channel ids against our pool. This is the operator's "is money flowing +
+ * does the channel mapping line up" view (resolves OPEN_QUESTIONS #4 against the live
+ * account). Read-only; never writes attribution.
+ */
+export async function previewAccountRevenue(
+  accountId: string,
+  since: string,
+  until: string,
+): Promise<AdsenseRevenuePreview> {
+  const conn = await withSystem((tx) => tx.googleConnection.findUnique({ where: { id: accountId } }));
+  if (!conn) throw new AppError(404, 'AFS account not found');
+  if (!conn.adsenseAccount) throw new AppError(409, 'AdSense account not resolved yet — reconnect');
+
+  const token = await freshAccountToken(conn);
+  const { rows, currency } = await fetchChannelTotals({ accessToken: token, account: conn.adsenseAccount, since, until, limit: 100 });
+
+  const ids = rows.map((r) => r.channelId);
+  const pool = ids.length
+    ? await withSystem((tx) => tx.channel.findMany({ where: { channelId: { in: ids } }, select: { channelId: true, label: true } }))
+    : [];
+  const poolMap = new Map(pool.map((c) => [c.channelId, c.label]));
+
+  const out: AdsenseRevenuePreviewRow[] = rows.map((r) => ({
+    channelId: r.channelId,
+    label: poolMap.get(r.channelId) ?? null,
+    inPool: poolMap.has(r.channelId),
+    revenueMinor: r.revenueMinor,
+    afsClicks: r.afsClicks,
+  }));
+
+  return {
+    account: conn.adsenseAccount,
+    since,
+    until,
+    currency,
+    totalRevenueMinor: out.reduce((s, r) => s + r.revenueMinor, 0),
+    totalClicks: out.reduce((s, r) => s + r.afsClicks, 0),
+    channelsWithRevenue: out.filter((r) => r.revenueMinor > 0).length,
+    matchedInPool: out.filter((r) => r.inPool).length,
+    rows: out,
+  };
+}
+
+/**
+ * Enqueue an on-demand attribution run (the worker's `finalize` job: re-pull the trailing
+ * FB + AdSense windows and re-allocate). Lets a super-admin pull revenue into the dashboards
+ * immediately instead of waiting for the hourly cron. Idempotent (every write is an upsert).
+ */
+export async function triggerAttribution(actor: AuthContext): Promise<{ enqueued: boolean }> {
+  await getQueue(QUEUES.ATTRIBUTION).add('finalize', { kind: 'finalize' }, { removeOnComplete: 50, removeOnFail: 50 });
+  await withSystem((tx) =>
+    writeAudit(tx, { orgId: actor.orgId, actorId: actor.userId, action: 'adsense.attribution.triggered', entityType: 'attribution', entityId: 'manual' }),
+  );
+  return { enqueued: true };
 }
 
 export async function disconnect(actor: AuthContext): Promise<void> {
