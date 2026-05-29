@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   AdsenseNotConfiguredError,
+  bareChannelId,
   buildReportQuery,
   buildTotalsQuery,
   fetchChannelReport,
   fetchChannelTotals,
   parseChannelReport,
   parseChannelTotals,
+  qualifyChannelId,
 } from './index.js';
 
 describe('parseChannelReport', () => {
@@ -51,6 +53,23 @@ describe('parseChannelReport', () => {
       rows: [{ cells: [{ value: '2026-05-27' }, {}, { value: '1.00' }, { value: '1' }] }],
     });
     expect(rows).toEqual([]);
+  });
+});
+
+describe('channel-id form mapping (OQ#4)', () => {
+  it('qualifyChannelId prefixes the bare code with the account pubId for the report', () => {
+    expect(qualifyChannelId('partner-pub-6567805284657549', '05219')).toBe('partner-pub-6567805284657549:05219');
+    // No pubId → leave the bare code as-is (legacy / dormant).
+    expect(qualifyChannelId(null, '05219')).toBe('05219');
+    expect(qualifyChannelId(undefined, '00869')).toBe('00869');
+  });
+
+  it('bareChannelId strips the `{pubId}:` prefix back to our pool code', () => {
+    expect(bareChannelId('partner-pub-6567805284657549:05219')).toBe('05219');
+    expect(bareChannelId('partner-pub-6567805284657549:6895555411')).toBe('6895555411');
+    // Already bare → unchanged (round-trips with qualifyChannelId).
+    expect(bareChannelId('05219')).toBe('05219');
+    expect(bareChannelId(qualifyChannelId('partner-pub-X', '00686'))).toBe('00686');
   });
 });
 

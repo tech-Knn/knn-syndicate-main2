@@ -1,5 +1,5 @@
 import { withSystem } from '@knn/db';
-import { type ChannelDayRevenue, fetchChannelReport, refreshGoogleToken } from '@knn/adsense';
+import { type ChannelDayRevenue, bareChannelId, fetchChannelReport, qualifyChannelId, refreshGoogleToken } from '@knn/adsense';
 import { decryptToken, encryptToken } from '@knn/fb';
 
 /**
@@ -19,6 +19,7 @@ interface ConnRow {
   accessTokenEnc: string;
   refreshTokenEnc: string | null;
   tokenExpiresAt: Date;
+  afsPubId?: string | null;
 }
 
 async function freshTokenFor(c: ConnRow): Promise<string | null> {
@@ -63,14 +64,17 @@ export async function liveAdsenseFetch(params: {
     const token = await freshTokenFor(conn);
     if (!token) continue;
     try {
+      // The report keys channels as `{afsPubId}:{code}` (OQ#4, confirmed live); our pool
+      // stores the bare code. Qualify the filter with the account's pubId, then strip it
+      // back so the returned channelId matches `Channel.channelId` upstream.
       const rows = await fetchChannelReport({
         accessToken: token,
         account: conn.adsenseAccount,
         since: params.since,
         until: params.until,
-        channelIds: acc.channelIds,
+        channelIds: acc.channelIds.map((id) => qualifyChannelId(conn.afsPubId, id)),
       });
-      out.push(...rows);
+      for (const r of rows) out.push({ ...r, channelId: bareChannelId(r.channelId) });
     } catch (err) {
       console.error(`[attribution] AdSense revenue pull failed for account ${acc.afsAccountId}:`, String(err).slice(0, 200));
     }

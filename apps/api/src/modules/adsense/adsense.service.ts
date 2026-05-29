@@ -1,6 +1,7 @@
 import { env } from '@knn/config';
 import { withSystem } from '@knn/db';
 import {
+  bareChannelId,
   buildGoogleAuthUrl,
   discoverChannelsInRanges,
   exchangeGoogleCode,
@@ -396,19 +397,23 @@ export async function previewAccountRevenue(
   const token = await freshAccountToken(conn);
   const { rows, currency } = await fetchChannelTotals({ accessToken: token, account: conn.adsenseAccount, since, until, limit: 100 });
 
-  const ids = rows.map((r) => r.channelId);
-  const pool = ids.length
-    ? await withSystem((tx) => tx.channel.findMany({ where: { channelId: { in: ids } }, select: { channelId: true, label: true } }))
+  // The report keys channels as `{afsPubId}:{code}`; our pool stores the bare code (OQ#4).
+  const bareIds = rows.map((r) => bareChannelId(r.channelId));
+  const pool = bareIds.length
+    ? await withSystem((tx) => tx.channel.findMany({ where: { channelId: { in: bareIds } }, select: { channelId: true, label: true } }))
     : [];
   const poolMap = new Map(pool.map((c) => [c.channelId, c.label]));
 
-  const out: AdsenseRevenuePreviewRow[] = rows.map((r) => ({
-    channelId: r.channelId,
-    label: poolMap.get(r.channelId) ?? null,
-    inPool: poolMap.has(r.channelId),
-    revenueMinor: r.revenueMinor,
-    afsClicks: r.afsClicks,
-  }));
+  const out: AdsenseRevenuePreviewRow[] = rows.map((r) => {
+    const bare = bareChannelId(r.channelId);
+    return {
+      channelId: bare,
+      label: poolMap.get(bare) ?? null,
+      inPool: poolMap.has(bare),
+      revenueMinor: r.revenueMinor,
+      afsClicks: r.afsClicks,
+    };
+  });
 
   return {
     account: conn.adsenseAccount,

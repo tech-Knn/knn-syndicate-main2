@@ -39,6 +39,21 @@ const MET_EARNINGS = 'ESTIMATED_EARNINGS';
 const MET_CLICKS = 'CLICKS';
 
 /**
+ * Channel-id form mapping (confirmed against a live AFS account, OPEN_QUESTIONS #4):
+ * the v2 report keys custom channels as `{afsPubId}:{code}`
+ * (e.g. `partner-pub-6567805284657549:05219`), but our pool stores the bare `code`
+ * (the `ch` value). `qualifyChannelId` builds the report filter/dimension value from a
+ * bare code + the account's pubId; `bareChannelId` strips it back for pool matching.
+ */
+export function qualifyChannelId(afsPubId: string | null | undefined, channelId: string): string {
+  return afsPubId ? `${afsPubId}:${channelId}` : channelId;
+}
+export function bareChannelId(reportedId: string): string {
+  const i = reportedId.lastIndexOf(':');
+  return i >= 0 ? reportedId.slice(i + 1) : reportedId;
+}
+
+/**
  * Map a v2 report response → ChannelDayRevenue rows. Resolves columns by header
  * name (order-independent). Earnings (a decimal in the header's currency) → minor
  * units; currency from the earnings header's `currencyCode` (default USD). Rows
