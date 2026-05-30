@@ -247,10 +247,7 @@ export default function DashboardHome() {
           <Card className={`${styles.chartCard} ${isNewBuyer ? styles.deEmphasized : ''}`}>
             <div className={styles.chartHead}>
               <span className={styles.cardTitle}>Revenue vs. Spend</span>
-              <div className={styles.legend}>
-                <span className={styles.legRev}>Revenue</span>
-                <span className={styles.legSpend}>Spend</span>
-              </div>
+              {/* Legend is rendered inside <RevenueChart> (colorblind-safe: solid vs dashed). */}
             </div>
             {summary ? <RevenueChart series={series} /> : <Skeleton className={styles.chartSkel} />}
           </Card>
