@@ -14,6 +14,25 @@ const ROLE_LABEL: Record<Role, string> = {
   MEDIA_BUYER: 'Buyer',
 };
 
+// Per-route document title (client pages can't export `metadata`); longest-prefix match.
+const TITLES: { prefix: string; label: string }[] = [
+  { prefix: '/dashboard/campaigns/new', label: 'New campaign' },
+  { prefix: '/dashboard/campaigns', label: 'Campaigns' },
+  { prefix: '/dashboard/analytics', label: 'Analytics' },
+  { prefix: '/dashboard/approvals', label: 'Approvals' },
+  { prefix: '/dashboard/team', label: 'Team' },
+  { prefix: '/dashboard/facebook', label: 'Facebook' },
+  { prefix: '/dashboard/platform/companies', label: 'Companies · Platform' },
+  { prefix: '/dashboard/platform/domains', label: 'Domains · Platform' },
+  { prefix: '/dashboard/platform/channels', label: 'Channels · Platform' },
+  { prefix: '/dashboard/platform/articles', label: 'Articles · Platform' },
+  { prefix: '/dashboard/platform', label: 'Platform' },
+  { prefix: '/dashboard', label: 'Overview' },
+];
+function titleFor(pathname: string): string {
+  return TITLES.find((t) => pathname === t.prefix || pathname.startsWith(`${t.prefix}/`))?.label ?? 'Dashboard';
+}
+
 function navFor(role: Role): { href: string; label: string }[] {
   const isAdmin = role === 'SUPER_ADMIN' || role === 'COMPANY_ADMIN';
   return [
@@ -39,6 +58,11 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (state === 'anon') router.replace('/login');
   }, [state, router]);
+
+  // Keep the document title in sync with the route (client pages have no metadata export).
+  useEffect(() => {
+    document.title = `${titleFor(pathname)} · KNN Syndicate`;
+  }, [pathname]);
 
   // Close the mobile drawer on navigation + on Escape.
   useEffect(() => setMenuOpen(false), [pathname]);

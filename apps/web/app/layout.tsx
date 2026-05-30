@@ -5,7 +5,10 @@ import { UIProvider } from '@/components/ui';
 import { AuthProvider } from './providers';
 
 export const metadata: Metadata = {
-  title: 'KNN Syndicate — Search Arbitrage Platform',
+  title: {
+    default: 'KNN Syndicate — Search Arbitrage Platform',
+    template: '%s · KNN Syndicate',
+  },
   description: 'Launch Facebook ads, monetize with AFS, attribute revenue in real time.',
 };
 

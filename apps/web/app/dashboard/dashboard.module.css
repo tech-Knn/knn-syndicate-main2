@@ -15,6 +15,13 @@
   background: rgba(14, 14, 16, 0.8);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
+  box-shadow: 0 6px 16px -14px rgba(0, 0, 0, 0.9);
+}
+/* Browsers without backdrop-filter (the blur) need an opaque bar so content doesn't bleed through. */
+@supports not ((backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px))) {
+  .topbar {
+    background: rgba(14, 14, 16, 0.97);
+  }
 }
 
 .brand {
