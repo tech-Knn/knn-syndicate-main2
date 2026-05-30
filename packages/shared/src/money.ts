@@ -20,6 +20,21 @@ export function formatUsd(dollars: number): string {
 }
 
 /**
+ * Compact USD for dashboard KPI tiles where space is tight ($1.2M, $48.3K).
+ * Below $10k it falls back to the full formatting (no information lost on small
+ * numbers); keep the full value in a `title`/tooltip for the exact figure.
+ */
+export function formatUsdCompact(dollars: number): string {
+  if (Math.abs(dollars) < 10_000) return formatUsd(dollars);
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(dollars);
+}
+
+/**
  * Split `totalCents` across buckets by integer/float `weights` (e.g. per-ad
  * conversions). Largest-remainder rounding guarantees the result sums to
  * `totalCents`. If all weights are <= 0, returns all zeros — the caller applies

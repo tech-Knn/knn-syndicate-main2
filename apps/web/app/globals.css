@@ -7,14 +7,26 @@
   --border-strong: #34343c;
   --rust: #d9512c;
   --rust-rgb: 217, 81, 44;
+  /* Darker rust used for the white-on-rust primary button fill so the label clears WCAG AA
+     (white on --rust is only 4.07:1; on --rust-strong it is ~5.0:1). --rust stays for accents/links. */
+  --rust-strong: #c2461f;
   --gold: #c89b3c;
   --gold-rgb: 200, 155, 60;
   --cream: #f4ede0;
-  --muted: #8a857a;
-  --muted-2: #6a665e;
+  /* Muted text ramp — both tiers now clear WCAG AA (4.5:1) on every surface, ordered light→dim:
+     --muted #9a958c ≈6.5:1, --muted-2 #928c80 ≈5.8:1 on --bg. (Were #8a857a / #6a665e — the
+     latter failed AA at 3.0–3.4:1 yet was used for table headers, hints, timestamps, presets.) */
+  --muted: #9a958c;
+  --muted-2: #928c80;
   --green: #3fb27f;
+  --green-rgb: 63, 178, 127;
   --amber: #d8a13a;
+  --amber-rgb: 216, 161, 58;
   --red: #d9483b;
+  --red-rgb: 217, 72, 59;
+  /* Brighter red for red-on-dark TEXT (errors, negative deltas, danger badges); --red itself
+     (4.2:1 as text on a red tint) stays for borders/fills/dots. --red-text ≈6.5:1 on the tint. */
+  --red-text: #f0796c;
 
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif;
@@ -24,6 +36,43 @@
   --radius-sm: 9px;
   --shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 12px 32px -16px rgba(0, 0, 0, 0.7);
   --shadow-lg: 0 24px 64px -24px rgba(0, 0, 0, 0.8);
+
+  /* Spacing scale (8px base, 4px half-step) — replaces ad-hoc rem literals so density is consistent
+     and retunable from one place. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-8: 48px;
+
+  /* Type scale (rem) + line-heights + weights. */
+  --text-xs: 0.72rem;
+  --text-sm: 0.82rem;
+  --text-md: 0.9rem;
+  --text-base: 0.95rem;
+  --text-lg: 1.15rem;
+  --text-xl: 1.45rem;
+  --text-2xl: 1.7rem;
+  --leading-tight: 1.15;
+  --leading-snug: 1.35;
+  --leading-normal: 1.55;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* Elevation + stacking. */
+  --elevation-1: var(--shadow);
+  --elevation-2: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 18px 44px -20px rgba(0, 0, 0, 0.78);
+  --elevation-3: var(--shadow-lg);
+  --z-sticky: 20;
+  --z-dropdown: 40;
+  --z-overlay: 60;
+  --z-modal: 70;
+  --z-toast: 80;
+
+  --disabled-opacity: 0.55;
+  --control-h: 38px;
 }
 
 * {
@@ -68,8 +117,43 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid rgba(var(--rust-rgb), 0.7);
+  /* Solid rust (was rgba(...,0.7) ≈2.8:1 — failed WCAG 2.2 SC 1.4.11/2.4.13). Solid --rust is
+     ~4.7:1 on --bg; the outer dark halo keeps it visible even on rust-filled primary buttons. */
+  outline: 2px solid var(--rust);
   outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.55);
+  border-radius: 4px;
+}
+
+/* Visually-hidden utility (skip links, SR-only labels, chart data tables). */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+/* Skip-to-content link — off-screen until focused. */
+.skipLink {
+  position: fixed;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: var(--z-toast);
+  transform: translateY(-150%);
+  background: var(--surface-2);
+  color: var(--cream);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-4);
+  font-weight: var(--weight-semibold);
+  transition: transform 0.15s ease;
+}
+.skipLink:focus-visible {
+  transform: none;
 }
 
 ::-webkit-scrollbar {
@@ -119,5 +203,17 @@ button {
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* Respect users who ask for reduced motion: neutralize spinner/shimmer/rise + all transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }
