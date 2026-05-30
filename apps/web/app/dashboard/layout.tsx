@@ -1,6 +1,6 @@
 'use client';
 
-import { type ReactNode, useEffect } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Badge, Button, Spinner } from '@/components/ui';
@@ -33,37 +33,63 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const { user, state, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     if (state === 'anon') router.replace('/login');
   }, [state, router]);
 
+  // Close the mobile drawer on navigation + on Escape.
+  useEffect(() => setMenuOpen(false), [pathname]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setMenuOpen(false);
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
+
   if (state !== 'authed' || !user) {
     return (
-      <div className={styles.center}>
+      <div className={styles.center} role="status" aria-live="polite">
         <Spinner />
+        <span className={styles.centerLabel}>Loading your workspace…</span>
       </div>
     );
   }
 
+  const items = navFor(user.role);
+  const isActive = (href: string) =>
+    href === '/dashboard' ? pathname === '/dashboard' : pathname.startsWith(href);
+
+  const onSignOut = async () => {
+    setSigningOut(true);
+    try {
+      await logout();
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
   return (
     <div className={styles.shell}>
+      <a href="#main-content" className="skipLink">
+        Skip to content
+      </a>
       <header className={styles.topbar}>
-        <Link href="/dashboard" className={styles.brand}>
+        <Link href="/dashboard" className={styles.brand} aria-label="KNN Syndicate — home">
           <span className={styles.brandMark}>KNN</span>
           <span className={styles.brandName}>Syndicate</span>
         </Link>
 
-        <nav className={styles.nav}>
-          {navFor(user.role).map((item) => {
-            const active =
-              item.href === '/dashboard'
-                ? pathname === '/dashboard'
-                : pathname.startsWith(item.href);
+        <nav className={styles.nav} aria-label="Primary">
+          {items.map((item) => {
+            const active = isActive(item.href);
             return (
               <Link
                 key={item.href}
                 href={item.href}
+                aria-current={active ? 'page' : undefined}
                 className={`${styles.navLink} ${active ? styles.navActive : ''}`}
               >
                 {item.label}
@@ -79,16 +105,61 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             <div className={styles.userName}>{user.name}</div>
             <div className={styles.userEmail}>{user.email}</div>
           </div>
-          <Badge tone={user.role === 'SUPER_ADMIN' ? 'brand' : 'neutral'}>
-            {ROLE_LABEL[user.role]}
-          </Badge>
-          <Button variant="ghost" onClick={() => void logout()}>
+          <Badge tone={user.role === 'SUPER_ADMIN' ? 'brand' : 'neutral'}>{ROLE_LABEL[user.role]}</Badge>
+          <Button variant="ghost" onClick={() => void onSignOut()} loading={signingOut} className={styles.signOut}>
             Sign out
           </Button>
         </div>
+
+        <button
+          type="button"
+          className={styles.hamburger}
+          aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={menuOpen}
+          aria-controls="mobile-nav"
+          onClick={() => setMenuOpen((o) => !o)}
+        >
+          <span aria-hidden>{menuOpen ? '✕' : '☰'}</span>
+        </button>
       </header>
 
-      <main className={styles.main}>{children}</main>
+      {menuOpen && (
+        <>
+          <button
+            type="button"
+            className={styles.drawerScrim}
+            aria-label="Close menu"
+            tabIndex={-1}
+            onClick={() => setMenuOpen(false)}
+          />
+          <nav id="mobile-nav" className={styles.drawer} aria-label="Primary">
+            {items.map((item) => {
+              const active = isActive(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={active ? 'page' : undefined}
+                  className={`${styles.drawerLink} ${active ? styles.drawerActive : ''}`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+            <div className={styles.drawerUser}>
+              <div className={styles.userName}>{user.name}</div>
+              <div className={styles.userEmail}>{user.email}</div>
+            </div>
+            <Button variant="ghost" block onClick={() => void onSignOut()} loading={signingOut}>
+              Sign out
+            </Button>
+          </nav>
+        </>
+      )}
+
+      <main id="main-content" tabIndex={-1} className={styles.main}>
+        {children}
+      </main>
     </div>
   );
 }

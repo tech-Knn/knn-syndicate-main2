@@ -1,0 +1,73 @@
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  text-align: center;
+  padding: var(--space-8) var(--space-5);
+}
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: 640px;
+}
+.title {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: clamp(2.1rem, 6vw, 3.8rem);
+  line-height: 1.05;
+  color: var(--cream);
+  letter-spacing: -0.01em;
+}
+.lede {
+  color: var(--muted);
+  font-size: var(--text-lg);
+  line-height: var(--leading-normal);
+  max-width: 52ch;
+}
+.ctaRow {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: var(--space-2);
+}
+.points {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+  max-width: 760px;
+  width: 100%;
+  margin-top: var(--space-4);
+}
+.point {
+  text-align: left;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--surface), var(--surface-2));
+}
+.pointTitle {
+  font-weight: var(--weight-semibold);
+  color: var(--cream);
+  font-size: var(--text-md);
+  margin-bottom: var(--space-1);
+}
+.pointBody {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+.trust {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+@media (max-width: 680px) {
+  .points {
+    grid-template-columns: 1fr;
+  }
+}

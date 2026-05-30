@@ -14,6 +14,23 @@
   margin-top: 0.35rem;
   font-size: 0.92rem;
 }
+.headerActions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.presetSelect {
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--cream);
+  font-size: var(--text-sm);
+}
+.presetSelect:focus-visible {
+  border-color: var(--rust);
+}
 
 .list {
   overflow: hidden;
@@ -41,11 +58,11 @@
 }
 .nameSub {
   font-size: 0.76rem;
-  color: var(--muted-2);
+  color: var(--muted);
 }
 .reason {
   font-size: 0.76rem;
-  color: var(--red);
+  color: var(--red-text);
   max-width: 60ch;
 }
 .meta {
@@ -56,30 +73,61 @@
   display: flex;
   gap: 0.5rem;
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 .linkBtn {
+  display: inline-flex;
+  align-items: center;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
   color: var(--cream);
   border-radius: var(--radius-sm);
   font-size: 0.82rem;
   font-weight: 600;
-  padding: 0.4rem 0.8rem;
+  padding: 0.42rem 0.8rem;
+  min-height: 32px;
   cursor: pointer;
   transition:
     border-color 0.15s ease,
     background 0.15s ease;
 }
 .linkBtn:hover {
-  border-color: var(--muted-2);
+  border-color: var(--muted);
+}
+/* The primary per-row action (Edit/View) reads as the default next step. */
+.linkBtnPrimary {
+  border-color: rgba(var(--rust-rgb), 0.5);
+  color: var(--cream);
+}
+.linkBtnPrimary:hover {
+  border-color: var(--rust);
+  background: rgba(var(--rust-rgb), 0.1);
 }
 .del {
-  color: var(--red);
-  border-color: rgba(217, 72, 59, 0.4);
+  color: var(--red-text);
+  border-color: rgba(var(--red-rgb), 0.4);
   background: transparent;
 }
 .del:hover {
-  background: rgba(217, 72, 59, 0.12);
+  background: rgba(var(--red-rgb), 0.14);
+  border-color: rgba(var(--red-rgb), 0.7);
+}
+
+/* Phone: stack the row so the name, status and actions don't crush into 4 columns. */
+@media (max-width: 720px) {
+  .row {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.55rem;
+  }
+  .name {
+    min-width: 0;
+  }
+  .actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
 }
 
 .empty {

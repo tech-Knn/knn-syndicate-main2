@@ -7,11 +7,11 @@
 .topbar {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: var(--z-sticky);
   display: flex;
   align-items: center;
-  gap: 1.75rem;
-  padding: 0.9rem 1.5rem;
+  gap: var(--space-6);
+  padding: var(--space-3) var(--space-5);
   background: rgba(14, 14, 16, 0.8);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
@@ -56,10 +56,74 @@
 .navActive {
   color: var(--cream);
   background: var(--surface-2);
+  /* Non-color active affordance (WCAG 1.4.1) — an underline bar that doesn't rely on hue. */
+  box-shadow: inset 0 -2px 0 var(--rust);
 }
 
 .spacer {
   flex: 1;
+}
+
+/* Hamburger + drawer — hidden on desktop, shown ≤860px (see media query below). */
+.hamburger {
+  display: none;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  color: var(--cream);
+  border-radius: var(--radius-sm);
+  width: 40px;
+  height: 40px;
+  font-size: 1.1rem;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+}
+.drawerScrim {
+  position: fixed;
+  inset: 0;
+  top: 0;
+  z-index: var(--z-overlay);
+  background: rgba(6, 6, 8, 0.55);
+  border: none;
+  cursor: pointer;
+}
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: var(--z-modal);
+  width: min(80vw, 300px);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-5) var(--space-4);
+  background: linear-gradient(180deg, var(--surface), var(--surface-2));
+  border-left: 1px solid var(--border-strong);
+  box-shadow: var(--elevation-3);
+  animation: knn-rise 0.18s ease;
+  overflow-y: auto;
+}
+.drawerLink {
+  color: var(--muted);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  padding: var(--space-3) var(--space-3);
+  border-radius: var(--radius-sm);
+}
+.drawerLink:hover {
+  color: var(--cream);
+  background: var(--surface-2);
+}
+.drawerActive {
+  color: var(--cream);
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--rust);
+}
+.drawerUser {
+  margin-top: auto;
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-top: 1px solid var(--border);
 }
 
 .user {
@@ -76,8 +140,8 @@
   color: var(--cream);
 }
 .userEmail {
-  font-size: 0.72rem;
-  color: var(--muted-2);
+  font-size: var(--text-xs);
+  color: var(--muted);
 }
 
 .main {
@@ -88,12 +152,36 @@
   padding: 2.25rem 1.5rem 4rem;
   animation: knn-rise 0.35s ease both;
 }
+.main:focus {
+  outline: none;
+}
 
 .center {
   min-height: 100vh;
   display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
   align-items: center;
   justify-content: center;
   color: var(--muted);
-  font-size: 1.5rem;
+}
+.centerLabel {
+  font-size: var(--text-md);
+}
+
+/* Tablet/phone: collapse the inline nav + user meta into the hamburger drawer. */
+@media (max-width: 860px) {
+  .topbar {
+    gap: var(--space-3);
+  }
+  .nav,
+  .user {
+    display: none;
+  }
+  .hamburger {
+    display: inline-flex;
+  }
+  .main {
+    padding: 1.5rem 1.1rem 3rem;
+  }
 }

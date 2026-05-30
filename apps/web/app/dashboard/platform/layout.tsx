@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Spinner } from '@/components/ui';
 import { useAuth } from '../../providers';
+import styles from './platform.module.css';
 
 /**
  * Platform hub — a settings-style left sub-nav over all super-admin setup surfaces, with
@@ -32,7 +33,7 @@ export default function PlatformLayout({ children }: { children: ReactNode }) {
 
   if (!user) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }} role="status" aria-live="polite">
         <Spinner />
       </div>
     );
@@ -40,20 +41,9 @@ export default function PlatformLayout({ children }: { children: ReactNode }) {
   if (user.role !== 'SUPER_ADMIN') return null;
 
   return (
-    <div style={{ display: 'flex', gap: '1.75rem', alignItems: 'flex-start' }}>
-      <aside
-        style={{
-          flex: '0 0 11rem',
-          position: 'sticky',
-          top: '1.25rem',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '0.15rem',
-        }}
-      >
-        <div style={{ fontSize: '0.7rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', padding: '0 0.7rem 0.4rem' }}>
-          Platform
-        </div>
+    <div className={styles.hub}>
+      <nav className={styles.sidebar} aria-label="Platform">
+        <div className={styles.eyebrow}>Platform</div>
         {SUB_NAV.map((item) => {
           const active = item.external
             ? pathname.startsWith(item.href)
@@ -64,22 +54,15 @@ export default function PlatformLayout({ children }: { children: ReactNode }) {
             <Link
               key={item.href}
               href={item.href}
-              style={{
-                padding: '0.5rem 0.7rem',
-                borderRadius: 'var(--radius-sm, 8px)',
-                fontSize: '0.9rem',
-                textDecoration: 'none',
-                color: active ? 'var(--cream)' : 'var(--muted)',
-                background: active ? 'rgba(217,81,44,0.12)' : 'transparent',
-                borderLeft: active ? '2px solid var(--rust, #d9512c)' : '2px solid transparent',
-              }}
+              aria-current={active ? 'page' : undefined}
+              className={`${styles.link} ${active ? styles.active : ''}`}
             >
               {item.label}
             </Link>
           );
         })}
-      </aside>
-      <div style={{ flex: '1 1 auto', minWidth: 0 }}>{children}</div>
+      </nav>
+      <div className={styles.body}>{children}</div>
     </div>
   );
 }

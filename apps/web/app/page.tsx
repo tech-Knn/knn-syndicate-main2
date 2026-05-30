@@ -1,57 +1,65 @@
+'use client';
+
+import { useEffect } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { Button } from '@/components/ui';
+import { useAuth } from './providers';
+import styles from './landing.module.css';
+
+const POINTS = [
+  {
+    title: 'Launch in minutes',
+    body: 'Build Facebook ad campaigns — objectives, audiences, creatives — from one guided launcher.',
+  },
+  {
+    title: 'Monetized landings',
+    body: 'Traffic is cloaked to AI-built article pages with a Google AdSense search unit, tuned per offer.',
+  },
+  {
+    title: 'Revenue, attributed',
+    body: 'AFS earnings flow back to the originating ad and campaign, so every dollar of ROI is visible in real time.',
+  },
+];
+
 export default function HomePage() {
+  const { state } = useAuth();
+  const router = useRouter();
+
+  // Already signed in? Go straight to the workspace.
+  useEffect(() => {
+    if (state === 'authed') router.replace('/dashboard');
+  }, [state, router]);
+
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '1rem',
-        textAlign: 'center',
-        padding: '2rem',
-      }}
-    >
-      <span
-        style={{
-          fontFamily: 'monospace',
-          letterSpacing: '0.4em',
-          color: 'var(--muted)',
-          fontSize: '0.8rem',
-        }}
-      >
-        KNN SYNDICATE
-      </span>
-      <h1
-        style={{
-          fontFamily: 'Georgia, serif',
-          fontStyle: 'italic',
-          fontSize: 'clamp(2rem, 6vw, 4rem)',
-          color: 'var(--cream)',
-        }}
-      >
-        Search Arbitrage Platform
-      </h1>
-      <p style={{ color: 'var(--muted)', maxWidth: 520 }}>
-        Dashboard, ad launcher, and admin console. The full experience lands in the dashboard
-        phase.
-      </p>
-      <a
-        href="/login"
-        style={{
-          marginTop: '0.5rem',
-          background: 'var(--rust)',
-          color: '#fff',
-          fontWeight: 600,
-          fontSize: '0.9rem',
-          padding: '0.62rem 1.4rem',
-          borderRadius: '9px',
-          boxShadow: '0 8px 22px -12px rgba(217, 81, 44, 0.9)',
-        }}
-      >
-        Sign in
-      </a>
-      <code style={{ color: 'var(--gold)', fontSize: '0.85rem' }}>v0.1.0 · scaffolding</code>
+    <main className={styles.page}>
+      <div className={styles.hero}>
+        <span className="eyebrow">KNN Syndicate</span>
+        <h1 className={styles.title}>The search-arbitrage platform for performance teams</h1>
+        <p className={styles.lede}>
+          Launch Facebook ad campaigns, route traffic to monetized article pages, and see AdSense
+          revenue attributed back to every ad — in one workspace, in real time.
+        </p>
+        <div className={styles.ctaRow}>
+          <Link href="/login">
+            <Button>Sign in</Button>
+          </Link>
+          <Link href="/signup">
+            <Button variant="secondary">Create an account</Button>
+          </Link>
+        </div>
+      </div>
+
+      <div className={styles.points}>
+        {POINTS.map((p) => (
+          <div key={p.title} className={styles.point}>
+            <div className={styles.pointTitle}>{p.title}</div>
+            <p className={styles.pointBody}>{p.body}</p>
+          </div>
+        ))}
+      </div>
+
+      <p className={styles.trust}>Multi-tenant · role-based access · self-hosted</p>
     </main>
   );
 }
