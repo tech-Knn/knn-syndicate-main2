@@ -14,7 +14,6 @@ import {
   CTA_OPTIONS,
   DEVICE_PLATFORMS,
   GENDERS,
-  LANGUAGES,
   MOBILE_OS,
   PERFORMANCE_GOAL_LABELS,
   PLACEMENT_OPTIONS,
@@ -1149,10 +1148,6 @@ function AdSetsStep({
                     {set.advantageAudience ? 'On' : 'Off'}
                   </button>
                 </div>
-              </div>
-              <div className={`${styles.field} ${styles.full}`}>
-                <span className={styles.label}>Languages</span>
-                <ChipGroup ariaLabel="Languages" options={LANGUAGES.map((l) => ({ value: l.code, label: l.name }))} selected={set.languages} onToggle={(c) => patchAdSet(set.key, { languages: toggle(set.languages, c) })} onClear={() => patchAdSet(set.key, { languages: [] })} allLabel="All" />
               </div>
             </div>
           </div>
