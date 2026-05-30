@@ -6,6 +6,8 @@ import { generateArticleForCampaign } from '../articles/articles.service.js';
 import { approveCampaign, listPendingApprovals, rejectCampaign } from './approval.service.js';
 import { rejectCampaignSchema } from './approval.schemas.js';
 import {
+  bulkCloneCampaign,
+  cloneCampaign,
   createCampaign,
   deleteCampaign,
   getCampaign,
@@ -16,6 +18,7 @@ import {
 } from './campaigns.service.js';
 import { launchCampaign, setCampaignActive, testLaunchCampaign } from './launch.service.js';
 import { listArticleVariants, listOfferDomains, listOffers, setOffers, updateLiveOffers } from './offers.service.js';
+import { applyPreset, deletePreset, listPresets, savePreset } from './presets.service.js';
 import { liveOfferSetSchema, offerSetSchema } from './offers.schemas.js';
 
 const adminOnly = [authenticate, requireRole(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)];
@@ -150,6 +153,83 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
       return handleRouteError(err, reply);
     }
   });
+
+  // Power feature: clone a campaign into a fresh editable DRAFT (new redirect ids, same
+  // config + offers). Owner-scoped in the service. Returns the new draft.
+  app.post<{ Params: { id: string } }>('/:id/clone', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.code(201).send({ campaign: await cloneCampaign(req.auth, req.params.id) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // Bulk generator: clone a campaign into N (1–20) fresh drafts. Returns the count + new ids.
+  app.post<{ Params: { id: string }; Body: { count?: number } }>(
+    '/:id/bulk-clone',
+    { preHandler: [authenticate] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const created = await bulkCloneCampaign(req.auth, req.params.id, Number(req.body?.count ?? 0));
+        return reply.code(201).send({ count: created.length, ids: created.map((c) => c.id) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Launcher presets: list / save-from-campaign / apply-to-new-draft / delete. Buyer-scoped.
+  // Static `presets` segment is matched before the parametric `/:id`.
+  app.get('/presets', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ presets: await listPresets(req.auth) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  app.post<{ Params: { id: string }; Body: { name?: string } }>(
+    '/:id/save-preset',
+    { preHandler: [authenticate] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.code(201).send({ preset: await savePreset(req.auth, req.params.id, String(req.body?.name ?? '')) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  app.post<{ Params: { presetId: string } }>(
+    '/presets/:presetId/apply',
+    { preHandler: [authenticate] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.code(201).send({ campaign: await applyPreset(req.auth, req.params.presetId) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  app.delete<{ Params: { presetId: string } }>(
+    '/presets/:presetId',
+    { preHandler: [authenticate] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        await deletePreset(req.auth, req.params.presetId);
+        return reply.code(204).send();
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
 
   app.delete<{ Params: { id: string } }>(
     '/:id',

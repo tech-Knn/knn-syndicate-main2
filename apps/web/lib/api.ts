@@ -295,6 +295,39 @@ export const campaigns = {
         await authedFetch(`/api/campaigns/${id}/reopen`, { method: 'POST' }),
       )
     ).campaign,
+  // Clone a campaign into a fresh editable draft (new redirect ids, same config + offers).
+  clone: async (id: string): Promise<Campaign> =>
+    (
+      await parse<{ campaign: Campaign }>(
+        await authedFetch(`/api/campaigns/${id}/clone`, { method: 'POST' }),
+      )
+    ).campaign,
+  // Launcher presets — save a campaign's config as a reusable template, apply → new draft.
+  presets: async (): Promise<{ id: string; name: string; createdAt: string }[]> =>
+    (await parse<{ presets: { id: string; name: string; createdAt: string }[] }>(await authedFetch('/api/campaigns/presets'))).presets,
+  savePreset: async (id: string, name: string): Promise<{ id: string; name: string }> =>
+    (
+      await parse<{ preset: { id: string; name: string } }>(
+        await authedFetch(`/api/campaigns/${id}/save-preset`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ name }) }),
+      )
+    ).preset,
+  applyPreset: async (presetId: string): Promise<Campaign> =>
+    (
+      await parse<{ campaign: Campaign }>(
+        await authedFetch(`/api/campaigns/presets/${presetId}/apply`, { method: 'POST' }),
+      )
+    ).campaign,
+  deletePreset: async (presetId: string): Promise<void> =>
+    parse(await authedFetch(`/api/campaigns/presets/${presetId}`, { method: 'DELETE' })),
+  // Bulk generator: clone a campaign into N (1–20) fresh drafts.
+  bulkClone: async (id: string, count: number): Promise<{ count: number; ids: string[] }> =>
+    parse(
+      await authedFetch(`/api/campaigns/${id}/bulk-clone`, {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({ count }),
+      }),
+    ),
   pause: async (id: string): Promise<{ id: string; status: string }> =>
     (await parse<{ campaign: { id: string; status: string } }>(await authedFetch(`/api/campaigns/${id}/pause`, { method: 'POST' }))).campaign,
   resume: async (id: string): Promise<{ id: string; status: string }> =>

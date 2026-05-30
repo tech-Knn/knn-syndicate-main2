@@ -14,12 +14,16 @@ const LAUNCHABLE = new Set(['PROCESSING', 'BATCHED']);
 // Excludes LAUNCHING/ACTIVE/PAUSED (already on Facebook — pause first) and the review
 // states (DRAFT/PENDING/REJECTED already have their own withdraw/revise paths).
 const REOPENABLE = new Set(['PROCESSING', 'BATCHED', 'QUEUED_NO_CHANNEL']);
+// Live on Facebook → the owning buyer (or an admin) can pause/resume delivery. The API
+// owner-scopes it and flips the FB campaign status + ours (ACTIVE ↔ PAUSED).
+const LIVE_TOGGLEABLE = new Set(['ACTIVE', 'PAUSED']);
 
 export default function EditCampaignPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [campaign, setCampaign] = useState<Campaign | null | 'error'>(null);
   const [launching, setLaunching] = useState(false);
   const [reopening, setReopening] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [note, setNote] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
 
   const load = useCallback(() => {
@@ -73,8 +77,59 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
     }
   };
 
+  const toggleActive = async (active: boolean): Promise<void> => {
+    setToggling(true);
+    setNote(null);
+    try {
+      const res = active ? await campaigns.resume(c.id) : await campaigns.pause(c.id);
+      setCampaign({ ...c, status: res.status as Campaign['status'] });
+      setNote({ tone: 'ok', text: active ? 'Campaign resumed — ads are live on Facebook again.' : 'Campaign paused — ad delivery (and spend) is stopped. Resume anytime.' });
+    } catch (err) {
+      setNote({ tone: 'err', text: err instanceof ApiError ? err.message : 'Could not change campaign status.' });
+    } finally {
+      setToggling(false);
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {LIVE_TOGGLEABLE.has(c.status) && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '1rem',
+            padding: '0.85rem 1.1rem',
+            border: '1px solid var(--border-strong)',
+            borderRadius: 'var(--radius)',
+            background: 'var(--surface)',
+          }}
+        >
+          <div style={{ fontSize: '0.9rem', color: 'var(--cream)' }}>
+            {c.status === 'ACTIVE' ? (
+              <>
+                <strong>Live on Facebook</strong> — ads are delivering. Pause to stop delivery + spend without losing the campaign; resume anytime.
+              </>
+            ) : (
+              <>
+                <strong>Paused</strong> — ads are not delivering on Facebook. Resume to put them back live.
+              </>
+            )}
+          </div>
+          <div style={{ flexShrink: 0 }}>
+            {c.status === 'ACTIVE' ? (
+              <Button variant="danger" onClick={() => void toggleActive(false)} loading={toggling}>
+                {toggling ? 'Pausing…' : 'Pause campaign'}
+              </Button>
+            ) : (
+              <Button onClick={() => void toggleActive(true)} loading={toggling}>
+                {toggling ? 'Resuming…' : 'Resume campaign'}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
       {REOPENABLE.has(c.status) && (
         <div
           style={{

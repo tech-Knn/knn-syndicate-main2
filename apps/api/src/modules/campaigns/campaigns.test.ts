@@ -81,6 +81,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await withSystem(async (tx) => {
+    await tx.launcherPreset.deleteMany({ where: { orgId } });
     await tx.organization.deleteMany({ where: { id: orgId } });
     await tx.domain.deleteMany({ where: { afsAccountId: afsId } });
     await tx.googleConnection.deleteMany({ where: { id: afsId } });
@@ -229,6 +230,113 @@ describe('campaigns + uploads', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json<{ campaign: { status: string } }>().campaign.status).toBe('PENDING_APPROVAL');
+  });
+
+  it('clones a campaign into a fresh draft — new redirect ids, copied offers', async () => {
+    // Source = the submitted campaign; capture its ad redirect ids to prove the clone's differ.
+    const src = (
+      await (await app.inject({ method: 'GET', url: `/api/campaigns/${draftId}`, headers: authHeaders(token) })).json<{
+        campaign: { adSets: { ads: { redirectId: string }[] }[] };
+      }>()
+    ).campaign;
+    const srcRedirects = new Set(src.adSets.flatMap((s) => s.ads.map((a) => a.redirectId)));
+
+    const res = await app.inject({ method: 'POST', url: `/api/campaigns/${draftId}/clone`, headers: authHeaders(token) });
+    expect(res.statusCode).toBe(201);
+    const clone = res.json<{ campaign: { id: string; name: string; status: string; adSets: { ads: { redirectId: string }[] }[] } }>().campaign;
+    expect(clone.status).toBe('DRAFT'); // a fresh editable draft, no FB/channel state
+    expect(clone.name).toBe('Summer Offer (copy)');
+    expect(clone.adSets).toHaveLength(1);
+    expect(clone.adSets[0]?.ads).toHaveLength(2);
+    // Each ad got a BRAND-NEW redirect id — none reused from the source (D9: ids are per-ad).
+    const cloneRedirects = clone.adSets[0]!.ads.map((a) => a.redirectId);
+    expect(new Set(cloneRedirects).size).toBe(2);
+    expect(cloneRedirects.every((id) => !srcRedirects.has(id))).toBe(true);
+    // Offers were copied (1 PAID offer on the same domain).
+    const cloneOffers = await withSystem((tx) => tx.offer.findMany({ where: { campaignId: clone.id } }));
+    expect(cloneOffers).toHaveLength(1);
+    expect(cloneOffers[0]?.kind).toBe('PAID');
+    expect(cloneOffers[0]?.domainId).toBe(domainId);
+  });
+
+  it("won't clone another buyer's campaign (404)", async () => {
+    const tokenB = await bearer(buyerBEmail);
+    const res = await app.inject({ method: 'POST', url: `/api/campaigns/${draftId}/clone`, headers: authHeaders(tokenB) });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('saves a campaign as a preset, applies it to a new draft, lists + deletes it', async () => {
+    const saveRes = await app.inject({
+      method: 'POST',
+      url: `/api/campaigns/${draftId}/save-preset`,
+      headers: authHeaders(token),
+      payload: { name: 'Health template' },
+    });
+    expect(saveRes.statusCode).toBe(201);
+    const presetId = saveRes.json<{ preset: { id: string; name: string } }>().preset.id;
+
+    const listRes = await app.inject({ method: 'GET', url: '/api/campaigns/presets', headers: authHeaders(token) });
+    expect(listRes.json<{ presets: { id: string }[] }>().presets.map((p) => p.id)).toContain(presetId);
+
+    // Apply → a fresh DRAFT with the same ad-set/ad structure + offers.
+    const applyRes = await app.inject({ method: 'POST', url: `/api/campaigns/presets/${presetId}/apply`, headers: authHeaders(token) });
+    expect(applyRes.statusCode).toBe(201);
+    const created = applyRes.json<{ campaign: { id: string; status: string; adSets: { ads: unknown[] }[] } }>().campaign;
+    expect(created.status).toBe('DRAFT');
+    expect(created.adSets).toHaveLength(1);
+    expect(created.adSets[0]?.ads).toHaveLength(2);
+    const createdOffers = await withSystem((tx) => tx.offer.findMany({ where: { campaignId: created.id } }));
+    expect(createdOffers).toHaveLength(1);
+
+    const delRes = await app.inject({ method: 'DELETE', url: `/api/campaigns/presets/${presetId}`, headers: authHeaders(token) });
+    expect(delRes.statusCode).toBe(204);
+    const after = await app.inject({ method: 'GET', url: '/api/campaigns/presets', headers: authHeaders(token) });
+    expect(after.json<{ presets: { id: string }[] }>().presets.map((p) => p.id)).not.toContain(presetId);
+  });
+
+  it("hides one buyer's preset from another buyer (404 on apply)", async () => {
+    const saveRes = await app.inject({
+      method: 'POST',
+      url: `/api/campaigns/${draftId}/save-preset`,
+      headers: authHeaders(token),
+      payload: { name: 'Private template' },
+    });
+    const presetId = saveRes.json<{ preset: { id: string } }>().preset.id;
+    const tokenB = await bearer(buyerBEmail);
+    const listB = await app.inject({ method: 'GET', url: '/api/campaigns/presets', headers: authHeaders(tokenB) });
+    expect(listB.json<{ presets: { id: string }[] }>().presets.map((p) => p.id)).not.toContain(presetId);
+    const applyB = await app.inject({ method: 'POST', url: `/api/campaigns/presets/${presetId}/apply`, headers: authHeaders(tokenB) });
+    expect(applyB.statusCode).toBe(404);
+  });
+
+  it('bulk-clones a campaign into N fresh drafts with distinct names', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/campaigns/${draftId}/bulk-clone`,
+      headers: authHeaders(token),
+      payload: { count: 3 },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json<{ count: number; ids: string[] }>();
+    expect(body.count).toBe(3);
+    expect(body.ids).toHaveLength(3);
+    const drafts = await withSystem((tx) =>
+      tx.campaign.findMany({ where: { id: { in: body.ids } }, select: { name: true, status: true } }),
+    );
+    expect(drafts).toHaveLength(3);
+    expect(drafts.every((d) => d.status === 'DRAFT')).toBe(true);
+    expect(new Set(drafts.map((d) => d.name)).size).toBe(3); // "… (copy 1/2/3)"
+  });
+
+  it('clamps the bulk-clone count to at least 1', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/campaigns/${draftId}/bulk-clone`,
+      headers: authHeaders(token),
+      payload: { count: 0 },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json<{ count: number }>().count).toBe(1);
   });
 
   it('refuses to edit a non-draft campaign', async () => {

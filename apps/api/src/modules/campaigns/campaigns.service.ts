@@ -22,6 +22,7 @@ import { AppError } from '../../lib/errors.js';
 import { generateRedirectId } from '../../lib/ids.js';
 import { notify } from '../../lib/notify.js';
 import { runScoped } from '../../lib/scope.js';
+import { type OfferInput, setOffers } from './offers.service.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 
 export const campaignInclude = {
@@ -181,6 +182,71 @@ async function loadOwnedCampaign(
 
 export async function getCampaign(auth: AuthContext, id: string): Promise<CampaignWithChildren> {
   return runScoped(auth, (tx) => loadOwnedCampaign(tx, auth, id));
+}
+
+/** Load a source campaign (owner-scoped) → its draft + offer inputs, for clone/bulk-clone. */
+async function buildCloneSource(
+  auth: AuthContext,
+  id: string,
+): Promise<{ draft: CampaignDraft; offerInputs: OfferInput[] }> {
+  return runScoped(auth, async (tx) => {
+    const source = await loadOwnedCampaign(tx, auth, id);
+    const offers = await tx.offer.findMany({
+      where: { campaignId: source.id },
+      orderBy: { createdAt: 'asc' },
+      select: { domainId: true, weightPct: true, kind: true, articleId: true },
+    });
+    return {
+      draft: toDraft(source),
+      offerInputs: offers.map(
+        (o): OfferInput => ({ domainId: o.domainId, weightPct: o.weightPct, kind: o.kind, articleId: o.articleId }),
+      ),
+    };
+  });
+}
+
+/** Create one DRAFT from a (already-built) draft + offers — fresh redirect ids, offers copied. */
+async function materializeClone(
+  auth: AuthContext,
+  draft: CampaignDraft,
+  offerInputs: OfferInput[],
+): Promise<CampaignWithChildren> {
+  const created = await createCampaign(auth, draft);
+  if (offerInputs.length === 0) return created;
+  // setOffers re-validates each offer (a source domain may have changed status since).
+  await setOffers(auth, created.id, offerInputs);
+  return getCampaign(auth, created.id);
+}
+
+/**
+ * Clone a campaign into a fresh editable DRAFT owned by the actor: same objective / budget /
+ * targeting / ad sets / ads (each ad gets a BRAND-NEW redirectId via createCampaign) and the
+ * same offers (websites / weights / article variants). The clone carries NO Facebook or
+ * channel state — it's a clean draft to tweak and submit. Owner-scoped like every campaign op.
+ */
+export async function cloneCampaign(auth: AuthContext, id: string): Promise<CampaignWithChildren> {
+  const { draft, offerInputs } = await buildCloneSource(auth, id);
+  return materializeClone(auth, { ...draft, name: `${draft.name} (copy)` }, offerInputs);
+}
+
+/**
+ * Bulk generator: clone a campaign into N fresh DRAFTs ("X (copy 1)" … "X (copy N)"), each with
+ * its own redirect ids + copied offers — the "duplicate to make variations" workflow. The
+ * source is read once; N is clamped to 1–20. Owner-scoped.
+ */
+export async function bulkCloneCampaign(
+  auth: AuthContext,
+  id: string,
+  count: number,
+): Promise<CampaignWithChildren[]> {
+  const n = Math.min(Math.max(Math.trunc(count) || 0, 1), 20);
+  const { draft, offerInputs } = await buildCloneSource(auth, id);
+  const created: CampaignWithChildren[] = [];
+  for (let i = 1; i <= n; i += 1) {
+    // Sequential (not Promise.all): each clone claims fresh redirect ids; keep DB load bounded.
+    created.push(await materializeClone(auth, { ...draft, name: `${draft.name} (copy ${i})` }, offerInputs));
+  }
+  return created;
 }
 
 export async function updateCampaign(
