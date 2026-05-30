@@ -159,11 +159,12 @@
 }
 
 /* ── Compact (first-fold) RSOC placement ─────────────────────────────────────
-   The RSOC unit must sit in the FIRST FOLD (visible without scrolling) right
-   under a short headline + a few lead lines, so users tap it without scrolling.
-   We cap the headline (2 lines) and lead (3 lines) heights so a long generated
-   title can never push the unit below the fold, and tighten the top spacing.
-   Real content stays above the unit (headline + lead) → still Google-compliant.
+   The RSOC unit should sit near the FIRST FOLD on phones, right under a concise
+   headline + a few lead lines, so users reach it with little scrolling. We keep
+   the unit in-fold by tightening type sizes and the top/inter-block spacing —
+   NOT by truncating real article content. The title is allowed up to 3 lines and
+   the lead up to ~4 lines so genuine generated copy is shown in full (a hard
+   2-line title / 3-line lead clamp was cutting off real content on phones).
 
    Triggers on narrow screens (phones/tablets-portrait, max-width 600) AND on any
    SHORT viewport (max-height 480) — so landscape phones / short windows, which
@@ -179,7 +180,7 @@
     line-height: 1.22;
     margin: 0 0 0.55rem;
     display: -webkit-box;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
@@ -188,7 +189,7 @@
     line-height: 1.5;
     margin: 0 0 0.7rem;
     display: -webkit-box;
-    -webkit-line-clamp: 3;
+    -webkit-line-clamp: 4;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }

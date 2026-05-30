@@ -10,7 +10,18 @@ import {
   currentBusinessDay,
   formatUsd,
 } from '@knn/shared';
-import { Badge, Banner, Button, type DateRange, DateRangePicker, EmptyState, Skeleton } from '@/components/ui';
+import {
+  Badge,
+  Banner,
+  Button,
+  type DateRange,
+  DateRangePicker,
+  EmptyState,
+  type SearchOption,
+  SearchSelect,
+  Segmented,
+  Skeleton,
+} from '@/components/ui';
 import { campaigns as campaignApi, stats } from '@/lib/api';
 import { useAuth } from '../../providers';
 import admin from '../admin.module.css';
@@ -72,6 +83,7 @@ export default function AnalyticsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusSel, setStatusSel] = useState<Set<string>>(new Set());
   const [buyerSel, setBuyerSel] = useState('');
   const [companySel, setCompanySel] = useState('');
@@ -100,8 +112,14 @@ export default function AnalyticsPage() {
     return () => clearInterval(id);
   }, [range, load]);
 
+  // Debounce the free-text search (~200ms) so filtering/paging doesn't churn on every keystroke.
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search), 200);
+    return () => clearTimeout(id);
+  }, [search]);
+
   // Reset to the first page whenever the filtered view changes.
-  useEffect(() => setPage(0), [search, statusSel, buyerSel, companySel, profitSel, range]);
+  useEffect(() => setPage(0), [debouncedSearch, statusSel, buyerSel, companySel, profitSel, range]);
 
   const statuses = useMemo(() => [...new Set((rows ?? []).map((r) => r.status))].sort(), [rows]);
   const buyers = useMemo(() => {
@@ -115,9 +133,19 @@ export default function AnalyticsPage() {
     return [...m].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   }, [rows]);
 
+  // SearchSelect options, with an "All …" sentinel mapped to the empty-string (= no filter) value.
+  const buyerOptions = useMemo<SearchOption[]>(
+    () => [{ value: '', label: 'All buyers' }, ...buyers.map((b) => ({ value: b.id, label: b.name }))],
+    [buyers],
+  );
+  const companyOptions = useMemo<SearchOption[]>(
+    () => [{ value: '', label: 'All companies' }, ...companies.map((c) => ({ value: c.id, label: c.name }))],
+    [companies],
+  );
+
   const filtered = useMemo(() => {
     let out = rows ?? [];
-    const q = search.trim().toLowerCase();
+    const q = debouncedSearch.trim().toLowerCase();
     if (q) out = out.filter((r) => r.name.toLowerCase().includes(q) || (r.channelLabel ?? '').toLowerCase().includes(q) || r.buyerName.toLowerCase().includes(q));
     if (statusSel.size > 0) out = out.filter((r) => statusSel.has(r.status));
     if (buyerSel) out = out.filter((r) => r.buyerId === buyerSel);
@@ -131,7 +159,7 @@ export default function AnalyticsPage() {
       if (typeof av === 'string' || typeof bv === 'string') return String(av).localeCompare(String(bv)) * dir;
       return (av - bv) * dir;
     });
-  }, [rows, search, statusSel, buyerSel, companySel, profitSel, sortKey, sortDir]);
+  }, [rows, debouncedSearch, statusSel, buyerSel, companySel, profitSel, sortKey, sortDir]);
 
   const totals = useMemo(() => {
     const t = filtered.reduce(
@@ -232,6 +260,7 @@ export default function AnalyticsPage() {
 
   const clearAllFilters = (): void => {
     setSearch('');
+    setDebouncedSearch('');
     setStatusSel(new Set());
     setBuyerSel('');
     setCompanySel('');
@@ -276,29 +305,44 @@ export default function AnalyticsPage() {
       {/* Toolbar: search + filters */}
       <div className={styles.toolbar}>
         <div className={styles.toolbarRow}>
-          <input className={styles.search} placeholder="Search campaign, channel, or buyer…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input
+            className={styles.search}
+            placeholder="Search campaign, channel, or buyer…"
+            aria-label="Search campaigns"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
           {isAdmin && (
-            <select className={styles.filterSelect} value={buyerSel} onChange={(e) => setBuyerSel(e.target.value)} aria-label="Filter by buyer">
-              <option value="">All buyers</option>
-              {buyers.map((b) => (
-                <option key={b.id} value={b.id}>{b.name}</option>
-              ))}
-            </select>
+            <div className={styles.filterSelect}>
+              <SearchSelect value={buyerSel} onChange={setBuyerSel} options={buyerOptions} placeholder="All buyers" />
+            </div>
           )}
           {isSuper && (
-            <select className={styles.filterSelect} value={companySel} onChange={(e) => setCompanySel(e.target.value)} aria-label="Filter by company">
-              <option value="">All companies</option>
-              {companies.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
+            <div className={styles.filterSelect}>
+              <SearchSelect value={companySel} onChange={setCompanySel} options={companyOptions} placeholder="All companies" />
+            </div>
           )}
-          <select className={styles.filterSelect} value={profitSel} onChange={(e) => setProfitSel(e.target.value as 'all' | 'profit' | 'loss')} aria-label="Filter by profitability">
-            <option value="all">All</option>
-            <option value="profit">Profitable</option>
-            <option value="loss">Losing money</option>
-          </select>
+          <Segmented
+            value={profitSel}
+            onChange={setProfitSel}
+            ariaLabel="Filter by profitability"
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'profit', label: 'Profitable' },
+              { value: 'loss', label: 'Losing' },
+            ]}
+          />
+          {hasFilters && (
+            <Button variant="ghost" onClick={clearAllFilters}>
+              Reset all
+            </Button>
+          )}
           <div className={styles.spacer} />
+          {rows && (
+            <span className={styles.resultCount} aria-live="polite">
+              {filtered.length.toLocaleString()} {filtered.length === 1 ? 'campaign' : 'campaigns'}
+            </span>
+          )}
           <button type="button" className={admin.actionBtn} onClick={exportCsv} disabled={filtered.length === 0}>
             Export CSV
           </button>

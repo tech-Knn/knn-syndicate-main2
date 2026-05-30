@@ -3,7 +3,7 @@
 import { type FormEvent, Fragment, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { type PlatformSettings, addBusinessDays, currentBusinessDay } from '@knn/shared';
-import { Badge, Banner, Button, Card, Skeleton, useConfirm, useToast } from '@/components/ui';
+import { Badge, Banner, Button, Card, EmptyState, Skeleton, useConfirm, useToast } from '@/components/ui';
 import { adsense, admin } from '@/lib/api';
 import { type AdsenseRevenuePreview, type AfsAccountRow } from '@/lib/types';
 import { useAuth } from '../../providers';
@@ -162,11 +162,17 @@ export default function PlatformPage() {
           </div>
         )}
         {!afsAccounts ? (
-          <Skeleton className={styles.rowSkel} />
+          <div role="status">
+            <span className="srOnly">Loading AdSense accounts…</span>
+            <Skeleton className={styles.rowSkel} />
+          </div>
         ) : afsAccounts.length === 0 ? (
-          <p className={styles.empty}>
-            No AdSense accounts connected. &ldquo;Connect AdSense account&rdquo; onboards every AFS account that Google login can see — connect again with a different login to add more.
-          </p>
+          <EmptyState
+            icon="🔌"
+            title="No AdSense accounts connected"
+            description="“Connect AdSense account” onboards every AFS account that Google login can see — connect again with a different login to add more."
+            action={<Button onClick={() => void connectAdsense()}>Connect AdSense account</Button>}
+          />
         ) : (
           <div className={styles.tableWrap}>
             <table className={styles.table}>
@@ -283,7 +289,10 @@ export default function PlatformPage() {
           {savedAt && <span className={styles.savedNote}>Saved ✓</span>}
         </div>
         {!settings ? (
-          <Skeleton className={styles.rowSkel} />
+          <div role="status">
+            <span className="srOnly">Loading platform settings…</span>
+            <Skeleton className={styles.rowSkel} />
+          </div>
         ) : (
           <form className={styles.settingsForm} onSubmit={(e) => void saveSettings(e)}>
             <div className={styles.field}>

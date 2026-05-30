@@ -53,6 +53,34 @@ function TokenExpiry({ iso }: { iso?: string }): React.ReactNode {
   return <span className={styles.metaValue}>Expires {rel}</span>;
 }
 
+/**
+ * Facebook `account_status` codes (the raw numeric code is stored as a string).
+ * Grouped into a tone + readable label for the accounts table.
+ */
+const ACCOUNT_STATUS: Record<string, { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' }> = {
+  '1': { label: 'Active', tone: 'success' },
+  '201': { label: 'Active', tone: 'success' },
+  '2': { label: 'Disabled', tone: 'danger' },
+  '101': { label: 'Closed', tone: 'danger' },
+  '202': { label: 'Closed', tone: 'danger' },
+  '3': { label: 'Unsettled', tone: 'warning' },
+  '7': { label: 'Pending review', tone: 'warning' },
+  '8': { label: 'Pending settlement', tone: 'warning' },
+  '9': { label: 'Grace period', tone: 'warning' },
+  '100': { label: 'Pending closure', tone: 'warning' },
+};
+
+/** Ad-account status rendered as a Badge derived from the FB `account_status` code. */
+function AccountStatus({ status }: { status: string }): React.ReactNode {
+  const meta = ACCOUNT_STATUS[status];
+  if (!meta) return <Badge tone="neutral">Unknown</Badge>;
+  return (
+    <Badge tone={meta.tone} dot={meta.tone !== 'success'}>
+      {meta.label}
+    </Badge>
+  );
+}
+
 /** One connected profile: name + status + assets, expandable to its accounts & pages. */
 function ProfileBlock({
   profile,
@@ -80,6 +108,9 @@ function ProfileBlock({
   const broken = profile.status === 'CONNECTION_BROKEN';
   const expiryDays = daysToExpiry(profile.tokenExpiresAt);
   const expired = expiryDays !== null && expiryDays < 0;
+  // Super-admin oversight rows carry an `owner`; only the owner can re-authorize,
+  // so the Reconnect control dead-ends here — surface guidance instead.
+  const isOversight = !!owner;
 
   const loadDrill = useCallback(async () => {
     setAccounts(null);
@@ -176,7 +207,11 @@ function ProfileBlock({
             {open ? 'Hide assets' : `Assets (${profile.adAccountCount}/${profile.pageCount})`}
           </Button>
           {broken || expired ? (
-            <Button onClick={onReconnect}>Reconnect</Button>
+            isOversight ? (
+              <span className={styles.ownerNote}>Owner must reconnect</span>
+            ) : (
+              <Button onClick={onReconnect}>Reconnect</Button>
+            )
           ) : (
             <Button variant="secondary" onClick={() => void resync()} loading={syncing}>
               {syncing ? 'Syncing…' : 'Re-sync'}
@@ -245,11 +280,21 @@ function ProfileBlock({
           <Banner
             tone="error"
             title={broken ? 'Connection lost' : 'Access token expired'}
-            action={<Button onClick={onReconnect}>Reconnect</Button>}
+            action={
+              isOversight ? (
+                <span className={styles.ownerNote}>Owner must reconnect</span>
+              ) : (
+                <Button onClick={onReconnect}>Reconnect</Button>
+              )
+            }
           >
-            {broken
-              ? (profile.lastError ?? 'Facebook revoked this connection. Reconnect to resume syncing.')
-              : 'Reconnect to re-authorize with Facebook and resume syncing this profile.'}
+            {isOversight
+              ? broken
+                ? `${profile.lastError ?? 'Facebook revoked this connection.'} Only ${owner?.email ?? 'the owner'} can re-authorize it.`
+                : `This token has expired. Only ${owner?.email ?? 'the owner'} can re-authorize this profile with Facebook.`
+              : broken
+                ? (profile.lastError ?? 'Facebook revoked this connection. Reconnect to resume syncing.')
+                : 'Reconnect to re-authorize with Facebook and resume syncing this profile.'}
           </Banner>
         </div>
       )}
@@ -281,10 +326,11 @@ function ProfileBlock({
           ) : (
             <>
               <div className={styles.list}>
-                <div className={`${styles.row} ${styles.rowHead}`}>
+                <div className={`${styles.row} ${styles.accountRow} ${styles.rowHead}`}>
                   <span>Name</span>
                   <span>Account ID</span>
                   <span>Currency</span>
+                  <span>Status</span>
                   <span />
                 </div>
                 {accounts.length > 0 ? (
@@ -292,11 +338,14 @@ function ProfileBlock({
                     const px = pixels[a.id];
                     const isOpen = expandedAcc.has(a.id);
                     return (
-                      <div key={a.id} className={styles.row}>
+                      <div key={a.id} className={`${styles.row} ${styles.accountRow}`}>
                         <span className={styles.cellName}>{a.name}</span>
                         <span className={styles.cellMono}>{a.fbAccountId}</span>
                         <span>
                           {a.currency} · {a.timezone}
+                        </span>
+                        <span>
+                          <AccountStatus status={a.status} />
                         </span>
                         <button
                           type="button"
@@ -348,14 +397,26 @@ function ProfileBlock({
                     <Spinner />
                   </div>
                 ) : pages.length > 0 ? (
-                  pages.map((p) => (
-                    <div key={p.id} className={styles.row}>
-                      <span className={styles.cellName}>{p.name}</span>
-                      <span className={styles.cellMono}>{p.fbPageId}</span>
-                      <span>{p.instagramId ? 'IG linked' : '—'}</span>
-                      <span />
+                  <>
+                    <div className={`${styles.row} ${styles.pageRow} ${styles.rowHead}`}>
+                      <span>Name</span>
+                      <span>Page ID</span>
+                      <span>Instagram</span>
                     </div>
-                  ))
+                    {pages.map((p) => (
+                      <div key={p.id} className={`${styles.row} ${styles.pageRow}`}>
+                        <span className={styles.cellName}>{p.name}</span>
+                        <span className={styles.cellMono}>{p.fbPageId}</span>
+                        <span>
+                          {p.instagramId ? (
+                            <Badge tone="brand">IG linked</Badge>
+                          ) : (
+                            <span className={styles.metaValue}>—</span>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </>
                 ) : (
                   <div className={styles.empty}>No pages found for this profile.</div>
                 )}
@@ -508,7 +569,8 @@ export default function FacebookPage() {
                 owner={{ email: p.ownerEmail, org: p.orgName }}
                 onChanged={refresh}
                 setBanner={setBanner}
-                onReconnect={() => setBanner({ tone: 'error', text: 'Only the profile owner can reconnect it (they re-authorize with Facebook).' })}
+                // Oversight rows surface "Owner must reconnect" inline and never invoke this.
+                onReconnect={() => {}}
               />
             ))
           )}

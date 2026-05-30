@@ -87,8 +87,18 @@ export function RelatedSearchUnit({
   // label/border of our own — Google's related-search unit renders its own "Related searches"
   // header (a duplicate label reads as placeholder/broken). The wrapper only adds spacing, and
   // only once the unit actually fills (`adsLoaded`), so an uncrawled/empty unit takes zero space.
+  //
+  // a11y: the `aria-label` is applied ONLY once the unit is actually filled — labelling an
+  // empty (uncrawled / nothing-served) container would announce a region that has no content.
+  // We deliberately do NOT set `aria-hidden` here: this wrapper is an ancestor of the CSA
+  // container, so `aria-hidden` would suppress the real served related-search links from
+  // assistive tech. Before fill the unit is zero-footprint via `.afsPending` (no injected
+  // children yet), so it needs no `aria-hidden` to stay out of the way.
   return (
-    <aside className={filled ? styles.afs : styles.afsPending} aria-label="Related searches" aria-hidden={!filled}>
+    <aside
+      className={filled ? styles.afs : styles.afsPending}
+      {...(filled ? { 'aria-label': 'Related searches' } : {})}
+    >
       <div id="relatedsearches1" />
     </aside>
   );

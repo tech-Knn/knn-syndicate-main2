@@ -2,7 +2,7 @@
 
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { type ChannelSummary, type ChannelUsage } from '@knn/shared';
-import { Badge, Banner, Button, Card, Skeleton, useConfirm } from '@/components/ui';
+import { Badge, Banner, Button, Card, EmptyState, Skeleton, useConfirm } from '@/components/ui';
 import { ApiError, admin, adsense, domains } from '@/lib/api';
 import { type AfsChannelRow, type DomainRow } from '@/lib/types';
 import styles from '../../admin.module.css';
@@ -64,7 +64,9 @@ export default function ChannelsPage() {
     }
   }, []);
 
-  // Load the catalog whenever the selected domain changes.
+  // Load the catalog whenever the selected domain changes. The selection (chSel) is
+  // cleared ONLY here (domain change) and on a successful import/remove — a Preview or
+  // range change must NOT wipe what the operator has already ticked.
   useEffect(() => {
     setChRows(null);
     setChSel(new Set());
@@ -261,9 +263,16 @@ export default function ChannelsPage() {
           )}
         </div>
         {!summary ? (
-          <Skeleton className={styles.rowSkel} />
+          <div role="status">
+            <span className="srOnly">Loading channel pool…</span>
+            <Skeleton className={styles.rowSkel} />
+          </div>
         ) : summary.total === 0 ? (
-          <p className={styles.empty}>No channels imported yet. Sync an AdSense account, then import channels per website below.</p>
+          <EmptyState
+            icon="📡"
+            title="No channels imported yet"
+            description="Sync an AdSense account, then import channels per website using the panel below."
+          />
         ) : (
           <>
             <div className={styles.tableWrap}>
@@ -304,7 +313,11 @@ export default function ChannelsPage() {
           </select>
         </div>
         {!chDomain ? (
-          <p className={styles.empty}>Pick a website to browse + import its AdSense channels.</p>
+          <EmptyState
+            icon="🌐"
+            title="Pick a website"
+            description="Choose a website above to browse and import its AdSense channels."
+          />
         ) : (
           <>
             <p className={styles.fieldHint}>
@@ -322,7 +335,7 @@ export default function ChannelsPage() {
               <button type="button" className={`${styles.actionBtn} ${styles.actionDanger}`} disabled={chSel.size === 0} onClick={() => void removeSelected()}>Remove selected</button>
             </form>
             {!chRows ? (
-              <div className={styles.rowsSkel}>{Array.from({ length: 4 }).map((_, i) => (<Skeleton key={i} className={styles.rowSkel} />))}</div>
+              <div className={styles.rowsSkel} role="status"><span className="srOnly">Loading channels…</span>{Array.from({ length: 4 }).map((_, i) => (<Skeleton key={i} className={styles.rowSkel} />))}</div>
             ) : chRows.length === 0 ? (
               <p className={styles.empty}>No channels found{chQuery ? ` for “${chQuery}”` : ''}.</p>
             ) : (

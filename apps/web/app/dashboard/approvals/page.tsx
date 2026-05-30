@@ -42,8 +42,7 @@ function countries(c: Campaign): string[] {
   return [...new Set(c.adSets.flatMap((s) => s.countries))];
 }
 
-function whenLabel(iso: string | null): string {
-  if (!iso) return '';
+function whenLabel(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     month: 'short',
     day: 'numeric',
@@ -67,6 +66,16 @@ export default function ApprovalsPage() {
   const [reason, setReason] = useState('');
   const [togglingAuto, setTogglingAuto] = useState(false);
   const [togglingLaunch, setTogglingLaunch] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = useCallback((key: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
 
   const load = useCallback(() => {
     setLoadError(false);
@@ -155,9 +164,25 @@ export default function ApprovalsPage() {
 
   async function toggleLaunch() {
     if (!org) return;
+    const next = !org.autoLaunch;
+    // Enabling auto-launch is a spend-incurring change; gate it behind a confirm.
+    // Disabling it is safe and stays single-click.
+    if (next) {
+      const ok = await confirm({
+        title: 'Turn on auto-launch?',
+        body: (
+          <>
+            Approved campaigns will <b>immediately launch live Facebook ads and start spending budget</b> with
+            no manual launch step. You can turn this off again at any time.
+          </>
+        ),
+        confirmLabel: 'Turn on auto-launch',
+      });
+      if (!ok) return;
+    }
     setTogglingLaunch(true);
     try {
-      const updated = await adminApi.setAutoLaunch(org.id, !org.autoLaunch);
+      const updated = await adminApi.setAutoLaunch(org.id, next);
       setOrg(updated);
       toast.success(
         updated.autoLaunch
@@ -193,6 +218,7 @@ export default function ApprovalsPage() {
                 role="switch"
                 aria-checked={org.autoApprove}
                 aria-label="Toggle auto-approve"
+                aria-busy={togglingAuto}
                 className={`${styles.toggle} ${org.autoApprove ? styles.toggleOn : ''}`}
                 disabled={togglingAuto}
                 onClick={() => void toggleAuto()}
@@ -215,6 +241,7 @@ export default function ApprovalsPage() {
                 role="switch"
                 aria-checked={org.autoLaunch}
                 aria-label="Toggle auto-launch"
+                aria-busy={togglingLaunch}
                 className={`${styles.toggle} ${org.autoLaunch ? styles.toggleOn : ''}`}
                 disabled={togglingLaunch}
                 onClick={() => void toggleLaunch()}
@@ -267,6 +294,11 @@ export default function ApprovalsPage() {
             icon={<span aria-hidden>📥</span>}
             title="Nothing to review"
             description="Campaigns submitted by your media buyers will appear here for approval."
+            action={
+              <Link href="/dashboard/campaigns" className={styles.emptyLink}>
+                View all campaigns
+              </Link>
+            }
           />
         </Card>
       ) : (
@@ -276,8 +308,9 @@ export default function ApprovalsPage() {
             const busy = busyId === c.id;
             const trimmed = reason.trim();
             const reasonValid = trimmed.length >= REASON_MIN;
+            const restricted = c.specialAdCategories.length > 0;
             return (
-              <Card key={c.id} className={styles.card}>
+              <Card key={c.id} className={`${styles.card} ${restricted ? styles.cardRestricted : ''}`}>
                 <div className={styles.cardTop}>
                   <div className={styles.cardHead}>
                     <span className={styles.cardName}>{c.name}</span>
@@ -285,7 +318,9 @@ export default function ApprovalsPage() {
                       View campaign
                     </Link>
                   </div>
-                  <span className={styles.cardWhen}>Submitted {whenLabel(c.submittedAt)}</span>
+                  {c.submittedAt && (
+                    <span className={styles.cardWhen}>Submitted {whenLabel(c.submittedAt)}</span>
+                  )}
                 </div>
 
                 <div className={styles.metaRow}>
@@ -304,32 +339,70 @@ export default function ApprovalsPage() {
                       RAC <b>{c.racValue}</b>
                     </span>
                   )}
-                  {cc.length > 0 && (
-                    <span>
-                      Geo <b>{cc.slice(0, 6).join(', ')}</b>
-                      {cc.length > 6 ? ` +${cc.length - 6}` : ''}
-                    </span>
-                  )}
+                  {cc.length > 0 &&
+                    (() => {
+                      const geoKey = `${c.id}:geo`;
+                      const geoOpen = expanded.has(geoKey);
+                      const hiddenGeos = cc.slice(6);
+                      return (
+                        <span>
+                          Geo <b>{(geoOpen ? cc : cc.slice(0, 6)).join(', ')}</b>
+                          {hiddenGeos.length > 0 && (
+                            <button
+                              type="button"
+                              className={styles.moreBtn}
+                              title={hiddenGeos.join(', ')}
+                              aria-expanded={geoOpen}
+                              onClick={() => toggleExpanded(geoKey)}
+                            >
+                              {geoOpen ? ' show less' : ` +${hiddenGeos.length}`}
+                            </button>
+                          )}
+                        </span>
+                      );
+                    })()}
                 </div>
 
-                {c.keywords.length > 0 && (
-                  <div className={styles.chips}>
-                    {c.keywords.slice(0, 8).map((k) => (
-                      <span key={k} className={styles.chip}>
-                        {k}
-                      </span>
-                    ))}
-                    {c.keywords.length > 8 && <span className={styles.chip}>+{c.keywords.length - 8}</span>}
-                  </div>
-                )}
+                {c.keywords.length > 0 &&
+                  (() => {
+                    const kwKey = `${c.id}:kw`;
+                    const kwOpen = expanded.has(kwKey);
+                    const hiddenKeywords = c.keywords.slice(8);
+                    const shown = kwOpen ? c.keywords : c.keywords.slice(0, 8);
+                    return (
+                      <div className={styles.chips}>
+                        {shown.map((k) => (
+                          <span key={k} className={styles.chip}>
+                            {k}
+                          </span>
+                        ))}
+                        {hiddenKeywords.length > 0 && (
+                          <button
+                            type="button"
+                            className={`${styles.chip} ${styles.chipMore}`}
+                            title={hiddenKeywords.join(', ')}
+                            aria-expanded={kwOpen}
+                            onClick={() => toggleExpanded(kwKey)}
+                          >
+                            {kwOpen ? 'Show less' : `+${hiddenKeywords.length} more`}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
 
-                {c.specialAdCategories.length > 0 && (
-                  <div className={styles.badges}>
-                    {c.specialAdCategories.map((s) => (
-                      <Badge key={s} tone="warning">
-                        {s.replace(/_/g, ' ')}
-                      </Badge>
-                    ))}
+                {restricted && (
+                  <div className={styles.restricted}>
+                    <span className={styles.restrictedLabel}>
+                      Special ad categories — restricted targeting applies
+                    </span>
+                    <div className={styles.badges}>
+                      {c.specialAdCategories.map((s) => (
+                        <Badge key={s} tone="warning" dot>
+                          {s.replace(/_/g, ' ')}
+                        </Badge>
+                      ))}
+                    </div>
                   </div>
                 )}
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { type CompanyRollup, addBusinessDays, currentBusinessDay, formatUsd } from '@knn/shared';
 import { Badge, Banner, Button, Card, type DateRange, DateRangePicker, Skeleton, useConfirm } from '@/components/ui';
@@ -82,6 +82,17 @@ export default function CompaniesPage() {
 
   // Activity log.
   const [audit, setAudit] = useState<AuditRow[] | null>(null);
+
+  // Client-side filter for the already-loaded companies list (debounced).
+  const [orgFilter, setOrgFilter] = useState('');
+  const [orgQuery, setOrgQuery] = useState('');
+  useEffect(() => {
+    const id = setTimeout(() => setOrgQuery(orgFilter.trim().toLowerCase()), 200);
+    return () => clearTimeout(id);
+  }, [orgFilter]);
+
+  // Sort for the Revenue-by-company table (revenue is the only sortable column for now).
+  const [revSortDir, setRevSortDir] = useState<'asc' | 'desc'>('desc');
 
   useEffect(() => {
     if (user && user.role !== 'SUPER_ADMIN') router.replace('/dashboard');
@@ -236,6 +247,20 @@ export default function CompaniesPage() {
     }
   };
 
+  // Filter the loaded companies by name / slug (case-insensitive); null = still loading.
+  const filteredOrgs = useMemo(() => {
+    if (!orgs) return orgs;
+    if (!orgQuery) return orgs;
+    return orgs.filter((o) => o.name.toLowerCase().includes(orgQuery) || o.slug.toLowerCase().includes(orgQuery));
+  }, [orgs, orgQuery]);
+
+  // Sort the revenue rows by USD revenue in the chosen direction; null = still loading.
+  const sortedRevenue = useMemo(() => {
+    if (!revenue) return revenue;
+    const dir = revSortDir === 'asc' ? 1 : -1;
+    return [...revenue].sort((a, b) => (a.revenueUsd - b.revenueUsd) * dir);
+  }, [revenue, revSortDir]);
+
   const canCreate = form.name.trim() && /^[a-z0-9-]+$/.test(form.slug.trim()) && form.adminName.trim() && form.adminEmail.trim() && form.adminPassword.length >= 8;
 
   return (
@@ -288,14 +313,34 @@ export default function CompaniesPage() {
         <div className={styles.sectionHead}>
           <span className={styles.sectionTitle}>Registered companies</span>
         </div>
+        {orgs && orgs.length > 0 && (
+          <div className={styles.filterRow}>
+            <input
+              className={styles.filterInput}
+              type="search"
+              aria-label="Filter companies by name or slug"
+              placeholder="Filter by name or slug…"
+              value={orgFilter}
+              onChange={(e) => setOrgFilter(e.target.value)}
+            />
+            {orgQuery && (
+              <span className={styles.filterCount} role="status" aria-live="polite">
+                {filteredOrgs!.length} of {orgs.length}
+              </span>
+            )}
+          </div>
+        )}
         {!orgs ? (
-          <div className={styles.rowsSkel}>
+          <div className={styles.rowsSkel} role="status">
+            <span className="srOnly">Loading companies…</span>
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className={styles.rowSkel} />
             ))}
           </div>
         ) : orgs.length === 0 ? (
           <p className={styles.empty}>No companies yet. Add one above.</p>
+        ) : filteredOrgs!.length === 0 ? (
+          <p className={styles.empty}>No companies match “{orgFilter.trim()}”.</p>
         ) : (
           <div className={styles.tableWrap}>
             <table className={styles.table}>
@@ -312,7 +357,7 @@ export default function CompaniesPage() {
                 </tr>
               </thead>
               <tbody>
-                {orgs.map((o) => (
+                {filteredOrgs!.map((o) => (
                   <FragmentRow key={o.id}>
                     <tr>
                       <td>
@@ -412,7 +457,8 @@ export default function CompaniesPage() {
           <DateRangePicker value={revRange} onChange={setRevRange} />
         </div>
         {!revenue ? (
-          <div className={styles.rowsSkel}>
+          <div className={styles.rowsSkel} role="status">
+            <span className="srOnly">Loading revenue…</span>
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className={styles.rowSkel} />
             ))}
@@ -428,13 +474,20 @@ export default function CompaniesPage() {
                   <th>Buyers</th>
                   <th>Campaigns</th>
                   <th>Spend</th>
-                  <th>Revenue</th>
+                  <th className={styles.sortable} aria-sort={revSortDir === 'asc' ? 'ascending' : 'descending'}>
+                    <button type="button" className={styles.sortBtn} onClick={() => setRevSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}>
+                      Revenue
+                      <span className={styles.arrow} aria-hidden>
+                        {revSortDir === 'asc' ? '▲' : '▼'}
+                      </span>
+                    </button>
+                  </th>
                   <th>Margin</th>
                   <th className={styles.thLeft}>Platform cut %</th>
                 </tr>
               </thead>
               <tbody>
-                {revenue.map((c) => (
+                {sortedRevenue!.map((c) => (
                   <tr key={c.orgId}>
                     <td className={styles.name}>{c.name}</td>
                     <td className={styles.num}>{c.buyerCount}</td>

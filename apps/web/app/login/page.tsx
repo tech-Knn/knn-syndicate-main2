@@ -3,7 +3,7 @@
 import { type FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Banner, Button, Card, TextField } from '@/components/ui';
+import { Banner, Button, Card, Spinner, TextField } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '../providers';
 import styles from './login.module.css';
@@ -45,7 +45,21 @@ export default function LoginPage() {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong. Try again.');
       setSubmitting(false);
+      // Return focus to the password field and select it so the user can retype immediately.
+      const pwd = document.getElementById('password') as HTMLInputElement | null;
+      pwd?.focus();
+      pwd?.select();
     }
+  }
+
+  if (state === 'loading' || state === 'authed') {
+    return (
+      <main className={styles.wrap}>
+        <div className={styles.loading} role="status" aria-label="Loading">
+          <Spinner />
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -113,6 +127,10 @@ export default function LoginPage() {
 
         <p className={styles.foot}>
           New media buyer? <Link href="/signup">Create an account</Link>.
+        </p>
+        <p className={styles.hintLine}>Forgot password? Contact your administrator.</p>
+        <p className={styles.fine}>
+          By signing in you agree to the Terms of Service and Privacy Policy.
         </p>
       </Card>
     </main>

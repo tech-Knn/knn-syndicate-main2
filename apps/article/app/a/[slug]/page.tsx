@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { articleBlocks, articleTeaser } from '@knn/shared';
 import { resolveSiteConfig, resolveSiteName } from '../../_afs/site-config';
@@ -51,10 +52,27 @@ export async function generateMetadata({
   const article = await fetchArticle(slug);
   if (!article) return { title: 'Article not found' };
   const description = articleTeaser(article.compliantContent, 30, 160);
+  // Canonical points at this article's own URL on the request host (one article ↔ one
+  // canonical), which keeps the editorial page from looking like duplicate/thin content
+  // to crawlers. Derived from the request Host (same origin serving the page); omitted if
+  // the host is unavailable so we never emit a wrong canonical.
+  let canonicalUrl: string | undefined;
+  try {
+    const host = (await headers()).get('host');
+    if (host) canonicalUrl = `https://${host}/a/${encodeURIComponent(slug)}`;
+  } catch {
+    /* host unavailable → omit canonical */
+  }
   return {
     title: article.title,
     description,
-    openGraph: { title: article.title, description, type: 'article' },
+    ...(canonicalUrl ? { alternates: { canonical: canonicalUrl } } : {}),
+    openGraph: {
+      title: article.title,
+      description,
+      type: 'article',
+      ...(canonicalUrl ? { url: canonicalUrl } : {}),
+    },
   };
 }
 
@@ -77,11 +95,14 @@ export default async function ArticlePage({
   const updated = PUBLISH_DATE_FMT.format(new Date());
   const year = new Date().getFullYear();
 
-  const teaser = articleTeaser(article.compliantContent);
   const blocks = articleBlocks(article.compliantContent);
-  // The opening paragraph is shown as the lead (above the AFS unit), so drop it from
-  // the body to avoid repeating it.
-  const bodyBlocks = blocks[0]?.type === 'p' ? blocks.slice(1) : blocks;
+  // Deterministic lead/body de-dup: the FULL first paragraph is the lead (above the AFS
+  // unit), rendered verbatim from the body's first block — so the exact same block is
+  // dropped from the body. The opening paragraph thus appears once, never duplicated nor
+  // truncated. (The short `articleTeaser` is the meta-description summary only.)
+  const leadBlock = blocks[0]?.type === 'p' ? blocks[0] : null;
+  const lead = leadBlock?.text ?? '';
+  const bodyBlocks = leadBlock ? blocks.slice(1) : blocks;
   // Required (since 2025-11-01) when traffic comes from a source you control (our
   // FB ads); the redirect passes the originating ad creative as `rc`.
   const referrerAdCreative = str(sp.rc) || undefined;
@@ -120,7 +141,7 @@ export default async function ArticlePage({
               Updated <time dateTime={new Date().toISOString().slice(0, 10)}>{updated}</time>
             </span>
           </div>
-          {teaser && <p className={styles.lead}>{teaser}</p>}
+          {lead && <p className={styles.lead}>{lead}</p>}
 
           {/* RSOC related-search unit (content-targeted). Clicks → /search results page. */}
           <RelatedSearchUnit referrerAdCreative={referrerAdCreative} terms={terms} txid={txid} channel={channel} site={site} />

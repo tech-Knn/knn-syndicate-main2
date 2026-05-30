@@ -66,3 +66,36 @@
   color: var(--muted-2);
   font-size: 0.8rem;
 }
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 8rem;
+  color: var(--muted);
+}
+
+.hintLine {
+  margin-top: var(--space-3);
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.fine {
+  margin-top: var(--space-2);
+  text-align: center;
+  color: var(--muted-2);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+@media (max-width: 420px) {
+  .wrap {
+    padding: var(--space-3);
+  }
+
+  .card {
+    padding: var(--space-5) var(--space-4);
+  }
+}

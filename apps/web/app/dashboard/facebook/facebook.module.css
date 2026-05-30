@@ -167,6 +167,14 @@
 .row:last-child {
   border-bottom: none;
 }
+/* Ad-accounts table: Name / Account ID / Currency / Status / expand button. */
+.accountRow {
+  grid-template-columns: 1.6fr 1fr 0.85fr 0.85fr auto;
+}
+/* Pages table: Name / Page ID / Instagram. */
+.pageRow {
+  grid-template-columns: 1.6fr 1fr 0.85fr;
+}
 .rowHead {
   font-size: 0.7rem;
   letter-spacing: 0.08em;
@@ -251,4 +259,16 @@
   display: flex;
   justify-content: center;
   color: var(--muted);
+}
+
+/* Non-interactive guidance shown in place of Reconnect when an admin is viewing
+   someone else's broken connection (only the owner can re-authorize). */
+.ownerNote {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h);
+  padding: 0 0.65rem;
+  font-size: 0.78rem;
+  color: var(--muted-2);
+  white-space: nowrap;
 }

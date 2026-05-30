@@ -67,6 +67,12 @@
 .webTitle:hover {
   text-decoration: underline;
 }
+.webTitle:focus-visible {
+  outline: 2px solid #1a0dab;
+  outline-offset: 2px;
+  border-radius: 2px;
+  text-decoration: underline;
+}
 .webCite {
   font-size: 0.82rem;
   color: #0a7d33;

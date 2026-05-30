@@ -35,6 +35,17 @@ export function articleParagraphs(content: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * The article's lead: the FULL first paragraph (un-truncated), used verbatim above the
+ * AFS unit on the monetized page. Returns `''` when the body has no paragraph. The page
+ * renders this as the lead AND drops the matching first body block (see `articleBlocks`)
+ * so the opening paragraph is shown exactly once — never duplicated nor lost. The short
+ * `articleTeaser()` stays the meta-description-only summary.
+ */
+export function articleLead(content: string): string {
+  return articleParagraphs(content)[0] ?? '';
+}
+
 /** A renderable block from the article markdown (headings, paragraphs, lists). */
 export type ArticleBlock =
   | { type: 'h2'; text: string }

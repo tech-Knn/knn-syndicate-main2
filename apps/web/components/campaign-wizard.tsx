@@ -533,7 +533,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
             {readOnly ? 'This campaign has been submitted and is read-only.' : 'Campaign → ad sets (audience, placements, budget, pixel) → ads.'}
           </p>
         </div>
-        <Link href="/dashboard/campaigns" className={styles.removeBtn} style={{ alignSelf: 'center' }}>
+        <Link href="/dashboard/campaigns" className={styles.chipBtn} style={{ alignSelf: 'center' }}>
           Back to campaigns
         </Link>
       </div>
@@ -604,16 +604,25 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
             Back
           </Button>
           <div className={styles.footerRight}>
-            <Button variant="ghost" onClick={() => void onSaveDraft()} loading={saving}>
-              Save draft
-            </Button>
             {step < STEPS.length - 1 ? (
-              <Button onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}>Next</Button>
+              <>
+                <Button variant="ghost" onClick={() => void onSaveDraft()} loading={saving}>
+                  Save draft
+                </Button>
+                <Button onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}>Next</Button>
+              </>
             ) : (
               <>
-                <Button variant="ghost" onClick={() => void onTestLaunch()} loading={launching} disabled={issues.length > 0}>
-                  Test-launch (PAUSED)
-                </Button>
+                {/* Secondary actions are grouped + divider-separated so the lone */}
+                {/* primary (Submit) can't be confused with Test-launch. */}
+                <div className={styles.secondaryActions}>
+                  <Button variant="ghost" onClick={() => void onSaveDraft()} loading={saving}>
+                    Save draft
+                  </Button>
+                  <Button variant="ghost" onClick={() => void onTestLaunch()} loading={launching} disabled={issues.length > 0}>
+                    Test-launch (PAUSED)
+                  </Button>
+                </div>
                 <Button onClick={() => void onSubmit()} loading={submitting} disabled={issues.length > 0}>
                   Submit for approval
                 </Button>
@@ -748,16 +757,35 @@ function OfferStep({
   readOnly: boolean;
 }) {
   const [keywordDraft, setKeywordDraft] = useState('');
+  const [keywordNote, setKeywordNote] = useState('');
   const uid = useId();
   const fid = (name: string): string => `${uid}-${name}`;
   const setOfferRow = (i: number, p: Partial<OfferDraft>): void => setOffers((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...p } : r)));
   const addOfferRow = (): void => setOffers((rows) => [...rows, { domainId: '', weightPct: 0, kind: 'PAID' }]);
   const removeOfferRow = (i: number): void => setOffers((rows) => (rows.length > 1 ? rows.filter((_, idx) => idx !== i) : rows));
   const paidWeight = offers.filter((o) => o.kind === 'PAID').reduce((s, o) => s + (o.weightPct || 0), 0);
+  // Accepts a pasted/typed list: splits on commas + newlines, trims, dedupes,
+  // and notes any entries that were already added.
   function addKeyword() {
-    const k = keywordDraft.trim();
-    if (k && !form.keywords.includes(k)) patch({ keywords: [...form.keywords, k] });
+    const parts = keywordDraft.split(/[\n,]+/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 0) {
+      setKeywordDraft('');
+      setKeywordNote('');
+      return;
+    }
+    const existing = new Set(form.keywords);
+    const added: string[] = [];
+    const dupes: string[] = [];
+    for (const p of parts) {
+      if (existing.has(p) || added.includes(p)) {
+        if (!dupes.includes(p)) dupes.push(p);
+      } else {
+        added.push(p);
+      }
+    }
+    if (added.length > 0) patch({ keywords: [...form.keywords, ...added] });
     setKeywordDraft('');
+    setKeywordNote(dupes.length > 0 ? `Already added: ${dupes.join(', ')}.` : '');
   }
 
   return (
@@ -801,7 +829,8 @@ function OfferStep({
         {form.budgetMode === 'CAMPAIGN' && (
           <div className={styles.field}>
             <label className={styles.label} htmlFor={fid('cbo-budget')}>Campaign daily budget (USD)<Req /></label>
-            <input id={fid('cbo-budget')} className={styles.input} type="number" min="1" step="1" value={form.dailyBudget} onChange={(e) => patch({ dailyBudget: e.target.value })} />
+            <input id={fid('cbo-budget')} className={styles.input} type="number" min="2" step="1" value={form.dailyBudget} onChange={(e) => patch({ dailyBudget: e.target.value })} aria-describedby={fid('cbo-budget-hint')} />
+            <span id={fid('cbo-budget-hint')} className={styles.hint}>$2.00 daily minimum (Facebook).</span>
           </div>
         )}
         <div className={`${styles.field} ${styles.full}`}>
@@ -898,19 +927,33 @@ function OfferStep({
         </div>
         <div className={`${styles.field} ${styles.full}`}>
           <label className={styles.label} htmlFor={fid('keywords')}>Keywords<Req /></label>
-          <input
-            id={fid('keywords')}
-            className={styles.input}
-            value={keywordDraft}
-            onChange={(e) => setKeywordDraft(e.target.value)}
-            onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                addKeyword();
-              }
-            }}
-            placeholder="Type a keyword and press Enter"
-          />
+          <div className={styles.keywordRow}>
+            <input
+              id={fid('keywords')}
+              className={styles.input}
+              value={keywordDraft}
+              onChange={(e) => setKeywordDraft(e.target.value)}
+              onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addKeyword();
+                }
+              }}
+              placeholder="Type a keyword, or paste a comma / line-separated list"
+              aria-describedby={fid('keywords-hint')}
+            />
+            <button type="button" className={styles.keywordAddBtn} onClick={addKeyword} disabled={keywordDraft.trim().length === 0}>
+              Add
+            </button>
+          </div>
+          <span id={fid('keywords-hint')} className={styles.hint}>
+            Press Enter or Add. Paste a comma- or newline-separated list to add many at once.
+          </span>
+          {keywordNote && (
+            <span className={styles.hint} role="status" style={{ color: 'var(--amber)' }}>
+              {keywordNote}
+            </span>
+          )}
           {form.keywords.length > 0 && (
             <div className={styles.chips}>
               {form.keywords.map((k) => (
@@ -941,6 +984,23 @@ function OfferStep({
   );
 }
 
+/** One-line collapsed summary for an ad set: name · countries · daily budget. */
+function adSetSummary(set: AdSetForm, cbo: boolean): string {
+  const parts = [set.name.trim() || 'Untitled ad set'];
+  parts.push(set.countries.length > 0 ? set.countries.join(', ') : 'no countries');
+  if (!cbo) {
+    const cents = centsOrUndef(set.dailyBudget);
+    parts.push(cents ? `${MONEY(cents)}/day` : 'no budget');
+  }
+  return parts.join(' · ');
+}
+
+/** One-line collapsed summary for an ad: name/headline · CTA · creative state. */
+function adSummary(ad: AdForm): string {
+  const title = ad.name.trim() || ad.headline.trim() || 'Untitled ad';
+  return `${title} · ${ad.cta.replace(/_/g, ' ')} · ${ad.uploadId ? 'creative attached' : 'no creative'}`;
+}
+
 function AdSetsStep({
   form,
   pixels,
@@ -966,18 +1026,64 @@ function AdSetsStep({
     return groups;
   }, []);
 
-  const addAdSet = () => setForm((f) => ({ ...f, adSets: [...f.adSets, emptyAdSet(f.adSets.length + 1)] }));
+  // Collapse state for ad-set and ad cards (keyed by their stable `key`).
+  // Default the 2nd+ ad set collapsed to reduce visual load on arrival.
+  const [collapsedSets, setCollapsedSets] = useState<Set<string>>(() => new Set(form.adSets.slice(1).map((s) => s.key)));
+  const [collapsedAds, setCollapsedAds] = useState<Set<string>>(() => new Set());
+  const toggleSet = (key: string) =>
+    setCollapsedSets((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  const toggleAd = (key: string) =>
+    setCollapsedAds((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const addAdSet = () =>
+    setForm((f) => {
+      const next = emptyAdSet(f.adSets.length + 1);
+      // New ad sets open expanded so the buyer can fill them in immediately.
+      setCollapsedSets((prev) => {
+        const s = new Set(prev);
+        s.delete(next.key);
+        return s;
+      });
+      return { ...f, adSets: [...f.adSets, next] };
+    });
   const removeAdSet = (key: string) => setForm((f) => ({ ...f, adSets: f.adSets.filter((s) => s.key !== key) }));
-  const addAd = (setKey: string) => setForm((f) => ({ ...f, adSets: f.adSets.map((s) => (s.key === setKey ? { ...s, ads: [...s.ads, emptyAd()] } : s)) }));
+  const addAd = (setKey: string) =>
+    setForm((f) => ({
+      ...f,
+      adSets: f.adSets.map((s) => (s.key === setKey ? { ...s, ads: [...s.ads, emptyAd()] } : s)),
+    }));
   const removeAd = (setKey: string, adKey: string) =>
     setForm((f) => ({ ...f, adSets: f.adSets.map((s) => (s.key === setKey ? { ...s, ads: s.ads.filter((a) => a.key !== adKey) } : s)) }));
 
   return (
     <div>
-      {form.adSets.map((set, i) => (
+      {form.adSets.map((set, i) => {
+        const setOpen = !collapsedSets.has(set.key);
+        const setPanelId = `${set.key}-panel`;
+        return (
         <div key={set.key} className={styles.adset}>
           <div className={styles.adsetHead}>
-            <span className={styles.adsetTitle}>Ad set {i + 1}</span>
+            <button
+              type="button"
+              className={styles.collapseHead}
+              aria-expanded={setOpen}
+              aria-controls={setPanelId}
+              onClick={() => toggleSet(set.key)}
+            >
+              <span className={`${styles.chevron} ${setOpen ? styles.chevronOpen : ''}`} aria-hidden="true">▶</span>
+              <span className={styles.adsetTitle}>Ad set {i + 1}</span>
+              {!setOpen && <span className={styles.collapseSummary}>{adSetSummary(set, cbo)}</span>}
+            </button>
             {form.adSets.length > 1 && (
               <button type="button" className={styles.removeBtn} aria-label={`Remove ad set ${i + 1}`} onClick={() => removeAdSet(set.key)}>
                 Remove ad set
@@ -985,6 +1091,8 @@ function AdSetsStep({
             )}
           </div>
 
+          {setOpen && (
+          <div id={setPanelId}>
           <div className={styles.grid}>
             <div className={styles.field}>
               <label className={styles.label} htmlFor={`${set.key}-name`}>Name<Req /></label>
@@ -993,7 +1101,8 @@ function AdSetsStep({
             {!cbo && (
               <div className={styles.field}>
                 <label className={styles.label} htmlFor={`${set.key}-budget`}>Daily budget (USD)<Req /></label>
-                <input id={`${set.key}-budget`} className={styles.input} type="number" min="1" step="1" value={set.dailyBudget} onChange={(e) => patchAdSet(set.key, { dailyBudget: e.target.value })} />
+                <input id={`${set.key}-budget`} className={styles.input} type="number" min="2" step="1" value={set.dailyBudget} onChange={(e) => patchAdSet(set.key, { dailyBudget: e.target.value })} aria-describedby={`${set.key}-budget-hint`} />
+                <span id={`${set.key}-budget-hint`} className={styles.hint}>$2.00 daily minimum (Facebook).</span>
               </div>
             )}
           </div>
@@ -1192,19 +1301,33 @@ function AdSetsStep({
               <h3 className={styles.sectionTitle}>Ads</h3>
               <span className={styles.count} aria-label={`${set.ads.length} ad${set.ads.length === 1 ? '' : 's'}`}>{set.ads.length}</span>
             </div>
-            {set.ads.map((ad, j) => (
+            {set.ads.map((ad, j) => {
+              const adOpen = !collapsedAds.has(ad.key);
+              const adPanelId = `${ad.key}-panel`;
+              return (
               <div key={ad.key} className={styles.ad}>
                 <div className={styles.adHead}>
-                  <span className={styles.adLabel}>
-                    AD {i + 1}.{j + 1}
-                  </span>
+                  <button
+                    type="button"
+                    className={styles.collapseHead}
+                    aria-expanded={adOpen}
+                    aria-controls={adPanelId}
+                    onClick={() => toggleAd(ad.key)}
+                  >
+                    <span className={`${styles.chevron} ${adOpen ? styles.chevronOpen : ''}`} aria-hidden="true">▶</span>
+                    <span className={styles.adLabel}>
+                      AD {i + 1}.{j + 1}
+                    </span>
+                    {!adOpen && <span className={styles.collapseSummary}>{adSummary(ad)}</span>}
+                  </button>
                   {set.ads.length > 1 && (
                     <button type="button" className={styles.removeBtn} aria-label={`Remove ad ${i + 1}.${j + 1}`} onClick={() => removeAd(set.key, ad.key)}>
                       Remove
                     </button>
                   )}
                 </div>
-                <div className={styles.grid}>
+                {adOpen && (
+                <div id={adPanelId} className={styles.grid}>
                   <div className={styles.field}>
                     <label className={styles.label} htmlFor={`${ad.key}-name`}>Ad name</label>
                     <input id={`${ad.key}-name`} className={styles.input} value={ad.name} onChange={(e) => patchAd(set.key, ad.key, { name: e.target.value })} />
@@ -1231,7 +1354,7 @@ function AdSetsStep({
                     <span className={styles.label}>Creative<Req /></span>
                     <div className={styles.creative}>
                       {ad.previewUrl && <img className={styles.thumb} src={ad.previewUrl} alt="creative preview" />}
-                      <label className={styles.removeBtn} style={{ cursor: 'pointer' }}>
+                      <label className={styles.chipBtn} style={{ cursor: 'pointer' }}>
                         {uploadingKey === ad.key ? 'Uploading…' : ad.uploadId ? 'Replace' : 'Upload image / video'}
                         <input
                           type="file"
@@ -1248,16 +1371,21 @@ function AdSetsStep({
                     </div>
                   </div>
                 </div>
+                )}
               </div>
-            ))}
+              );
+            })}
             <div style={{ marginTop: '0.75rem' }}>
               <button type="button" className={styles.addBtn} onClick={() => addAd(set.key)}>
                 + Add ad
               </button>
             </div>
           </div>
+          </div>
+          )}
         </div>
-      ))}
+        );
+      })}
 
       <button type="button" className={styles.addBtn} onClick={addAdSet}>
         + Add ad set

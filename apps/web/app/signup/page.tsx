@@ -1,6 +1,6 @@
 'use client';
 
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Banner, Button, Card, TextField } from '@/components/ui';
 import { ApiError, auth } from '@/lib/api';
@@ -17,6 +17,12 @@ export default function SignupPage() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const doneHeadingRef = useRef<HTMLHeadingElement>(null);
+
+  // When the request-sent branch renders, move focus to its heading so screen readers announce it.
+  useEffect(() => {
+    if (done) doneHeadingRef.current?.focus();
+  }, [done]);
 
   function update(key: keyof typeof form, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -65,7 +71,9 @@ export default function SignupPage() {
         <Card className={styles.card}>
           <div className={styles.head}>
             <span className="eyebrow">KNN Syndicate</span>
-            <h1 className={`serif ${styles.title}`}>Request sent</h1>
+            <h1 ref={doneHeadingRef} tabIndex={-1} className={`serif ${styles.title}`}>
+              Request sent
+            </h1>
             <p className={styles.subtitle}>
               Your media-buyer account is pending approval by your company admin. You can sign in once they approve you.
             </p>

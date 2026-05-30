@@ -27,14 +27,18 @@
   outline: none;
   border-color: var(--rust);
 }
+/* Sizing wrapper around a SearchSelect filter (the control styles itself). */
 .filterSelect {
-  padding: 0.5rem 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--cream);
-  font-size: 0.82rem;
-  max-width: 14rem;
+  min-width: 12rem;
+  max-width: 16rem;
+}
+
+/* Live result count, sits to the right of the filters. */
+.resultCount {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
 }
 .chips {
   display: flex;

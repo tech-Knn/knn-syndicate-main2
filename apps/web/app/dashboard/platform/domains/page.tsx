@@ -1,6 +1,6 @@
 'use client';
 
-import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Badge, Banner, Button, Card, Skeleton, useConfirm } from '@/components/ui';
 import { admin, adsense, domains } from '@/lib/api';
@@ -27,6 +27,19 @@ export default function DomainsPage() {
   const [note, setNote] = useState<string | null>(null);
   const [form, setForm] = useState({ host: '', afsAccountId: '', channelRanges: '', styleId: '' });
   const [adding, setAdding] = useState(false);
+
+  // Client-side filter for the already-loaded domains list (debounced).
+  const [filter, setFilter] = useState('');
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    const id = setTimeout(() => setQuery(filter.trim().toLowerCase()), 200);
+    return () => clearTimeout(id);
+  }, [filter]);
+  const filteredRows = useMemo(() => {
+    if (!rows) return rows;
+    if (!query) return rows;
+    return rows.filter((d) => d.host.toLowerCase().includes(query) || (d.afsLabel ?? '').toLowerCase().includes(query) || (d.afsPubId ?? '').toLowerCase().includes(query));
+  }, [rows, query]);
 
   useEffect(() => {
     if (user && user.role !== 'SUPER_ADMIN') router.replace('/dashboard');
@@ -177,14 +190,34 @@ export default function DomainsPage() {
         <div className={styles.sectionHead}>
           <span className={styles.sectionTitle}>Registered domains</span>
         </div>
+        {rows && rows.length > 0 && (
+          <div className={styles.filterRow}>
+            <input
+              className={styles.filterInput}
+              type="search"
+              aria-label="Filter domains by host or AFS account"
+              placeholder="Filter by host or AFS account…"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+            {query && (
+              <span className={styles.filterCount} role="status" aria-live="polite">
+                {filteredRows!.length} of {rows.length}
+              </span>
+            )}
+          </div>
+        )}
         {!rows ? (
-          <div className={styles.rowsSkel}>
+          <div className={styles.rowsSkel} role="status">
+            <span className="srOnly">Loading domains…</span>
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className={styles.rowSkel} />
             ))}
           </div>
         ) : rows.length === 0 ? (
           <p className={styles.empty}>No domains yet. Add one above.</p>
+        ) : filteredRows!.length === 0 ? (
+          <p className={styles.empty}>No domains match “{filter.trim()}”.</p>
         ) : (
           <div className={styles.tableWrap}>
             <table className={styles.table}>
@@ -200,7 +233,7 @@ export default function DomainsPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((d) => (
+                {filteredRows!.map((d) => (
                   <tr key={d.id}>
                     <td>
                       <div className={styles.name}>{d.host}</div>

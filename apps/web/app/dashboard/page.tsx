@@ -32,6 +32,16 @@ function rangeFor(days: number): DateRange {
   return { from: addBusinessDays(to, -(days - 1)), to };
 }
 
+function relTime(from: number, now: number): string {
+  const secs = Math.max(0, Math.round((now - from) / 1000));
+  if (secs < 5) return 'just now';
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  return `${hrs}h ago`;
+}
+
 function roiTone(roi: number): 'pos' | 'neg' | 'neutral' {
   if (roi > 1) return 'pos';
   if (roi > 0 && roi < 1) return 'neg';
@@ -88,6 +98,9 @@ export default function DashboardHome() {
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [breakdowns, setBreakdowns] = useState<Record<string, CampaignBreakdown>>({});
+  const [breakdownErrors, setBreakdownErrors] = useState<Record<string, boolean>>({});
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   const isAdmin = user?.role === 'SUPER_ADMIN' || user?.role === 'COMPANY_ADMIN';
   const scopeWord = user?.role === 'SUPER_ADMIN' ? 'platform' : user?.role === 'COMPANY_ADMIN' ? 'organization' : 'campaigns';
@@ -103,6 +116,7 @@ export default function DashboardHome() {
       const [s, c] = await Promise.all([stats.summary(r), stats.campaigns(r)]);
       setSummary(s);
       setCampaigns(c);
+      setLastUpdated(Date.now());
     } catch {
       setError('Could not load your metrics. Check your connection and try again.');
     } finally {
@@ -114,9 +128,37 @@ export default function DashboardHome() {
     void load(range);
     setExpanded(null);
     setBreakdowns({});
+    setBreakdownErrors({});
     const id = setInterval(() => void load(range, true), 60_000);
     return () => clearInterval(id);
   }, [range, load]);
+
+  // Tick the "Updated Xs ago" label so it stays accurate between refreshes.
+  useEffect(() => {
+    if (lastUpdated === null) return;
+    const id = setInterval(() => setNow(Date.now()), 10_000);
+    return () => clearInterval(id);
+  }, [lastUpdated]);
+
+  const loadBreakdown = useCallback(
+    async (id: string): Promise<void> => {
+      setBreakdownErrors((prev) => {
+        if (!prev[id]) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      try {
+        const b = await stats.campaignBreakdown(id, range);
+        setBreakdowns((prev) => ({ ...prev, [id]: b }));
+      } catch {
+        // Surface an inline error + retry in the detail cell rather than
+        // leaving a forever-shimmering skeleton.
+        setBreakdownErrors((prev) => ({ ...prev, [id]: true }));
+      }
+    },
+    [range],
+  );
 
   const toggle = async (id: string): Promise<void> => {
     if (expanded === id) {
@@ -124,13 +166,8 @@ export default function DashboardHome() {
       return;
     }
     setExpanded(id);
-    if (!breakdowns[id]) {
-      try {
-        const b = await stats.campaignBreakdown(id, range);
-        setBreakdowns((prev) => ({ ...prev, [id]: b }));
-      } catch {
-        /* leave row expanded with a tiny error; non-critical */
-      }
+    if (!breakdowns[id] && !breakdownErrors[id]) {
+      await loadBreakdown(id);
     }
   };
 
@@ -153,7 +190,17 @@ export default function DashboardHome() {
           <h1 className={`serif ${styles.title}`}>Hello, {firstName}.</h1>
           <p className={styles.sub}>Real-time ROI across your {scopeWord}.</p>
         </div>
-        <DateRangePicker value={range} onChange={setRange} />
+        <div className={styles.headControls}>
+          <DateRangePicker value={range} onChange={setRange} />
+          <div className={styles.freshness} aria-live="polite">
+            {lastUpdated !== null && (
+              <>
+                <span className={styles.freshDot} aria-hidden />
+                <span>Updated {relTime(lastUpdated, now)}</span>
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
       {error && (
@@ -289,7 +336,15 @@ export default function DashboardHome() {
                       const open = expanded === c.id;
                       const bd = breakdowns[c.id];
                       return (
-                        <CampaignRows key={c.id} c={c} open={open} bd={bd} onToggle={() => void toggle(c.id)} />
+                        <CampaignRows
+                          key={c.id}
+                          c={c}
+                          open={open}
+                          bd={bd}
+                          failed={!!breakdownErrors[c.id]}
+                          onToggle={() => void toggle(c.id)}
+                          onRetry={() => void loadBreakdown(c.id)}
+                        />
                       );
                     })}
                   </tbody>
@@ -311,12 +366,16 @@ function CampaignRows({
   c,
   open,
   bd,
+  failed,
   onToggle,
+  onRetry,
 }: {
   c: CampaignPerf;
   open: boolean;
   bd: CampaignBreakdown | undefined;
+  failed: boolean;
   onToggle: () => void;
+  onRetry: () => void;
 }) {
   const detailId = `${useId()}-detail`;
   return (
@@ -352,7 +411,14 @@ function CampaignRows({
       {open && (
         <tr className={styles.detailRow} id={detailId}>
           <td colSpan={7}>
-            {!bd ? (
+            {failed ? (
+              <div className={styles.detailError} role="alert">
+                <span className={styles.detailErrorText}>Couldn’t load this breakdown.</span>
+                <Button variant="ghost" onClick={onRetry}>
+                  Retry
+                </Button>
+              </div>
+            ) : !bd ? (
               <Skeleton className={styles.detailSkel} />
             ) : bd.adSets.length === 0 ? (
               <p className={styles.detailEmpty}>No ad sets.</p>

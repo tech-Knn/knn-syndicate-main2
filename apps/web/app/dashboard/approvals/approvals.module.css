@@ -141,6 +141,24 @@
   color: var(--cream);
   font-weight: 600;
 }
+.moreBtn {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin-left: 0.1rem;
+  font: inherit;
+  color: var(--rust);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.moreBtn:hover {
+  text-decoration: underline;
+}
+.moreBtn:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: 2px;
+}
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -155,10 +173,42 @@
   border-radius: 999px;
   padding: 0.2rem 0.6rem;
 }
+.chipMore {
+  font-family: inherit;
+  color: var(--rust);
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+.chipMore:hover {
+  border-color: var(--rust);
+}
+.chipMore:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: 2px;
+}
+
+/* special ad categories — compliance constraint reviewers must notice */
+.cardRestricted {
+  border-left: 3px solid var(--amber);
+}
+.restricted {
+  margin-top: 0.7rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid rgba(var(--amber-rgb), 0.35);
+  background: rgba(var(--amber-rgb), 0.08);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.restrictedLabel {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--amber);
+}
 .badges {
   display: flex;
   gap: 0.4rem;
-  margin-top: 0.6rem;
   flex-wrap: wrap;
 }
 
@@ -263,5 +313,20 @@
   display: block;
   width: 6rem;
   height: 2.1rem;
+  border-radius: var(--radius-sm);
+}
+
+.emptyLink {
+  font-size: 0.85rem;
+  color: var(--rust);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.emptyLink:hover {
+  border-bottom-color: var(--rust);
+}
+.emptyLink:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
