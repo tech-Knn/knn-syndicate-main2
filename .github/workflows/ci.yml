@@ -74,3 +74,23 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  e2e:
+    # Playwright auth-flow smoke (web-only — the dashboard's auth gate treats a missing API
+    # session as anon and redirects to /login, so no DB/API/Redis services are needed here).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Prepare environment
+        run: cp .env.example .env
+      - name: Install Playwright browser
+        run: pnpm --filter @knn/web exec playwright install --with-deps chromium
+      - name: E2E (auth-flow smoke)
+        run: pnpm --filter @knn/web e2e
