@@ -47,7 +47,10 @@ function round2(n: number): number {
 }
 
 function roiOf(revenueUsd: number, spendUsd: number): number {
-  return spendUsd > 0 ? Math.round((revenueUsd / spendUsd) * 10000) / 10000 : 0;
+  // True ROI = profit ÷ spend = (revenue − spend) / spend, returned as a fraction:
+  // 0.20 = +20% (spend 100 → revenue 120), negative when a campaign loses money,
+  // 0 at break-even (or when there's no spend). The UI renders it as a percentage.
+  return spendUsd > 0 ? Math.round(((revenueUsd - spendUsd) / spendUsd) * 10000) / 10000 : 0;
 }
 
 /** Buyers see only their own campaigns; admins/super see everything in their RLS scope. */

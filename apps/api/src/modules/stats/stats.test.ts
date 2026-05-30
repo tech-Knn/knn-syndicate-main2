@@ -142,7 +142,8 @@ describe('stats read API', () => {
     expect(body.totals.spendUsd).toBe(45);
     expect(body.totals.revenueUsd).toBe(105);
     expect(body.totals.profitUsd).toBe(60);
-    expect(body.totals.roi).toBeCloseTo(2.3333, 3);
+    // ROI = profit ÷ spend = 60/45 = 1.3333 (+133%).
+    expect(body.totals.roi).toBeCloseTo(1.3333, 3);
     expect(body.totals.impressions).toBe(2300);
     expect(body.totals.clicks).toBe(100);
     expect(body.totals.conversions).toBe(4);

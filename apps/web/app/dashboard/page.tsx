@@ -8,6 +8,7 @@ import {
   type StatsSummary,
   addBusinessDays,
   currentBusinessDay,
+  formatRoi,
   formatUsd,
   formatUsdCompact,
 } from '@knn/shared';
@@ -43,8 +44,9 @@ function relTime(from: number, now: number): string {
 }
 
 function roiTone(roi: number): 'pos' | 'neg' | 'neutral' {
-  if (roi > 1) return 'pos';
-  if (roi > 0 && roi < 1) return 'neg';
+  // Break-even is 0% (profit-based ROI). Above = profitable, below = losing.
+  if (roi > 0) return 'pos';
+  if (roi < 0) return 'neg';
   return 'neutral';
 }
 
@@ -67,7 +69,7 @@ function statusLabel(s: string): string {
 }
 
 function exportCsv(rows: CampaignPerf[]): void {
-  const header = ['Campaign', 'Status', 'Channel', 'Spend', 'Revenue', 'Profit', 'ROI', 'Impressions', 'Clicks', 'Conversions'];
+  const header = ['Campaign', 'Status', 'Channel', 'Spend', 'Revenue', 'Profit', 'ROI %', 'Impressions', 'Clicks', 'Conversions'];
   const esc = (v: string | number): string => {
     const s = String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -75,7 +77,7 @@ function exportCsv(rows: CampaignPerf[]): void {
   const lines = [
     header.join(','),
     ...rows.map((r) =>
-      [r.name, r.status, r.channelLabel ?? '', r.spendUsd, r.revenueUsd, r.profitUsd, r.roi, r.impressions, r.clicks, r.conversions]
+      [r.name, r.status, r.channelLabel ?? '', r.spendUsd, r.revenueUsd, r.profitUsd, (r.roi * 100).toFixed(1), r.impressions, r.clicks, r.conversions]
         .map(esc)
         .join(','),
     ),
@@ -271,10 +273,10 @@ export default function DashboardHome() {
                 />
                 <StatTile
                   label="ROI"
-                  value={`${t.roi.toFixed(2)}×`}
-                  valueTitle={`${t.roi.toFixed(2)}× return on ad spend`}
+                  value={formatRoi(t.roi)}
+                  valueTitle={`${formatRoi(t.roi)} net return (profit ÷ spend)`}
                   tone={roiTone(t.roi)}
-                  sub={t.roi < 1 ? 'Below break-even' : `${t.conversions.toLocaleString()} conversions`}
+                  sub={t.roi < 0 ? 'Below break-even' : `${t.conversions.toLocaleString()} conversions`}
                 />
                 {isAdmin && (
                   <StatTile
@@ -405,7 +407,7 @@ function CampaignRows({
         <td className={styles.num}>{money(c.spendUsd)}</td>
         <td className={styles.num}>{money(c.revenueUsd)}</td>
         <td className={`${styles.num} ${c.profitUsd > 0 ? styles.pos : c.profitUsd < 0 ? styles.neg : ''}`}>{money(c.profitUsd)}</td>
-        <td className={`${styles.num} ${c.roi > 1 ? styles.pos : c.roi > 0 && c.roi < 1 ? styles.neg : ''}`}>{c.roi.toFixed(2)}×</td>
+        <td className={`${styles.num} ${c.roi > 0 ? styles.pos : c.roi < 0 ? styles.neg : ''}`}>{formatRoi(c.roi)}</td>
         <td className={styles.num}>{c.conversions.toLocaleString()}</td>
       </tr>
       {open && (

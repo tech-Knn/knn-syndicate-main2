@@ -20,6 +20,18 @@ export function formatUsd(dollars: number): string {
 }
 
 /**
+ * Render a true-ROI fraction (profit ÷ spend, e.g. 0.2) as a signed percentage: 0.2 → "20%",
+ * -0.2 → "-20%", 0 → "0%", 1.3333 → "133.3%". Break-even is 0%. Used everywhere ROI is shown.
+ */
+export function formatRoi(roi: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'percent',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  }).format(roi);
+}
+
+/**
  * Compact USD for dashboard KPI tiles where space is tight ($1.2M, $48.3K).
  * Below $10k it falls back to the full formatting (no information lost on small
  * numbers); keep the full value in a `title`/tooltip for the exact figure.

@@ -8,6 +8,7 @@ import {
   type OfferStat,
   addBusinessDays,
   currentBusinessDay,
+  formatRoi,
   formatUsd,
 } from '@knn/shared';
 import {
@@ -176,7 +177,7 @@ export default function AnalyticsPage() {
     );
     return {
       ...t,
-      roi: t.spend ? t.revenue / t.spend : 0,
+      roi: t.spend ? (t.revenue - t.spend) / t.spend : 0,
       cpa: t.conv ? t.spend / t.conv : 0,
       cpc: t.clicks ? t.spend / t.clicks : 0,
       ctr: t.impr ? (t.clicks / t.impr) * 100 : 0,
@@ -232,7 +233,7 @@ export default function AnalyticsPage() {
   };
 
   const exportCsv = (): void => {
-    const head = ['Campaign', 'Status', 'Buyer', 'Company', 'Spend', 'Revenue', 'Profit', 'ROI', 'Conversions', 'CPA', 'Clicks', 'CPC', 'CTR%', 'Impressions', 'RPC', 'Channel'];
+    const head = ['Campaign', 'Status', 'Buyer', 'Company', 'Spend', 'Revenue', 'Profit', 'ROI %', 'Conversions', 'CPA', 'Clicks', 'CPC', 'CTR%', 'Impressions', 'RPC', 'Channel'];
     const esc = (v: string | number): string => {
       const s = String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -240,7 +241,7 @@ export default function AnalyticsPage() {
     const lines = [
       head.join(','),
       ...filtered.map((r) =>
-        [r.name, r.status, r.buyerName, r.companyName, r.spendUsd, r.revenueUsd, r.profitUsd, r.roi.toFixed(2), r.conversions, cpa(r).toFixed(2), r.clicks, cpc(r).toFixed(2), ctr(r).toFixed(2), r.impressions, rpc(r).toFixed(2), r.channelLabel ?? '']
+        [r.name, r.status, r.buyerName, r.companyName, r.spendUsd, r.revenueUsd, r.profitUsd, (r.roi * 100).toFixed(1), r.conversions, cpa(r).toFixed(2), r.clicks, cpc(r).toFixed(2), ctr(r).toFixed(2), r.impressions, rpc(r).toFixed(2), r.channelLabel ?? '']
           .map(esc)
           .join(','),
       ),
@@ -444,7 +445,7 @@ export default function AnalyticsPage() {
                         <td className={admin.num}>{num(r.spendUsd)}</td>
                         <td className={admin.num}>{num(r.revenueUsd)}</td>
                         <td className={`${admin.num} ${r.profitUsd > 0 ? styles.pos : r.profitUsd < 0 ? styles.neg : ''}`}>{num(r.profitUsd)}</td>
-                        <td className={`${admin.num} ${r.roi > 1 ? styles.pos : r.roi > 0 && r.roi < 1 ? styles.neg : ''}`}>{r.roi.toFixed(2)}×</td>
+                        <td className={`${admin.num} ${r.roi > 0 ? styles.pos : r.roi < 0 ? styles.neg : ''}`}>{formatRoi(r.roi)}</td>
                         <td className={admin.num}>{r.conversions.toLocaleString()}</td>
                         <td className={admin.num}>{r.conversions ? num(cpa(r)) : '—'}</td>
                         <td className={admin.num}>{r.clicks.toLocaleString()}</td>
@@ -485,7 +486,7 @@ export default function AnalyticsPage() {
                   <td className={admin.num}>{num(totals.spend)}</td>
                   <td className={admin.num}>{num(totals.revenue)}</td>
                   <td className={`${admin.num} ${totals.profit >= 0 ? styles.pos : styles.neg}`}>{num(totals.profit)}</td>
-                  <td className={admin.num}>{totals.roi.toFixed(2)}×</td>
+                  <td className={admin.num}>{formatRoi(totals.roi)}</td>
                   <td className={admin.num}>{totals.conv.toLocaleString()}</td>
                   <td className={admin.num}>{totals.conv ? num(totals.cpa) : '—'}</td>
                   <td className={admin.num}>{totals.clicks.toLocaleString()}</td>
@@ -591,7 +592,7 @@ function CampaignDetail({ campaignId, bd, range }: { campaignId: string; bd: Cam
                   <td>{money(d.spendUsd)}</td>
                   <td>{money(d.revenueUsd)}</td>
                   <td className={d.profitUsd >= 0 ? styles.pos : styles.neg}>{money(d.profitUsd)}</td>
-                  <td>{d.roi.toFixed(2)}×</td>
+                  <td>{formatRoi(d.roi)}</td>
                   <td>{d.conversions.toLocaleString()}</td>
                   <td>{dCpa(d)}</td>
                   <td>{dCpc(d)}</td>
@@ -634,7 +635,7 @@ function CampaignDetail({ campaignId, bd, range }: { campaignId: string; bd: Cam
                     <td>{money(set.spendUsd)}</td>
                     <td>{money(set.revenueUsd)}</td>
                     <td className={set.profitUsd >= 0 ? styles.pos : styles.neg}>{money(set.profitUsd)}</td>
-                    <td>{set.roi.toFixed(2)}×</td>
+                    <td>{formatRoi(set.roi)}</td>
                     <td>{set.conversions.toLocaleString()}</td>
                     <td>{dCpa(set)}</td>
                     <td>{dCpc(set)}</td>
@@ -646,7 +647,7 @@ function CampaignDetail({ campaignId, bd, range }: { campaignId: string; bd: Cam
                       <td>{money(ad.spendUsd)}</td>
                       <td>{money(ad.revenueUsd)}</td>
                       <td className={ad.profitUsd >= 0 ? styles.pos : styles.neg}>{money(ad.profitUsd)}</td>
-                      <td>{ad.roi.toFixed(2)}×</td>
+                      <td>{formatRoi(ad.roi)}</td>
                       <td>{ad.conversions.toLocaleString()}</td>
                       <td>{dCpa(ad)}</td>
                       <td>{dCpc(ad)}</td>

@@ -3,8 +3,9 @@
  * tables (`ad_stats_daily` cost + `ad_revenue_daily` derived revenue) over an
  * IST-business-day range and returns display-ready figures. All money is in
  * whole USD (dollars, 2-dp numbers) — the API does the minor-unit → dollar
- * conversion so the client never re-derives money. ROI = revenue ÷ spend (ROAS;
- * 0 when spend is 0). `marginUsd` is the platform's take (revenue cut) and is
+ * conversion so the client never re-derives money. ROI = profit ÷ spend =
+ * (revenue − spend) / spend, a fraction (0.20 = +20%; negative = loss; 0 at
+ * break-even or no spend). `marginUsd` is the platform's take (revenue cut) and is
  * only meaningful in the admin/super rollups — it's 0 in a buyer's own view.
  */
 
@@ -17,7 +18,7 @@ export interface MetricTotals {
   spendUsd: number;
   revenueUsd: number; // buyer-visible revenue (post revenue-cut)
   profitUsd: number; // revenueUsd − spendUsd
-  roi: number; // revenueUsd / spendUsd (0 when spend is 0)
+  roi: number; // true ROI = (revenueUsd − spendUsd) / spendUsd, a fraction (0 when spend is 0)
   impressions: number;
   clicks: number;
   conversions: number;
