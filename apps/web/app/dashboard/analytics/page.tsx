@@ -176,7 +176,7 @@ export default function AnalyticsPage() {
     );
     return {
       ...t,
-      roas: t.spend ? t.revenue / t.spend : 0,
+      roi: t.spend ? t.revenue / t.spend : 0,
       cpa: t.conv ? t.spend / t.conv : 0,
       cpc: t.clicks ? t.spend / t.clicks : 0,
       ctr: t.impr ? (t.clicks / t.impr) * 100 : 0,
@@ -232,7 +232,7 @@ export default function AnalyticsPage() {
   };
 
   const exportCsv = (): void => {
-    const head = ['Campaign', 'Status', 'Buyer', 'Company', 'Spend', 'Revenue', 'Profit', 'ROAS', 'Conversions', 'CPA', 'Clicks', 'CPC', 'CTR%', 'Impressions', 'RPC', 'Channel'];
+    const head = ['Campaign', 'Status', 'Buyer', 'Company', 'Spend', 'Revenue', 'Profit', 'ROI', 'Conversions', 'CPA', 'Clicks', 'CPC', 'CTR%', 'Impressions', 'RPC', 'Channel'];
     const esc = (v: string | number): string => {
       const s = String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -398,7 +398,7 @@ export default function AnalyticsPage() {
                   <Th k="spendUsd" label="Spend" />
                   <Th k="revenueUsd" label="Revenue" />
                   <Th k="profitUsd" label="Profit" />
-                  <Th k="roi" label="ROAS" />
+                  <Th k="roi" label="ROI" />
                   <Th k="conversions" label="Conv" />
                   <Th k="cpa" label="CPA" />
                   <Th k="clicks" label="Clicks" />
@@ -485,7 +485,7 @@ export default function AnalyticsPage() {
                   <td className={admin.num}>{num(totals.spend)}</td>
                   <td className={admin.num}>{num(totals.revenue)}</td>
                   <td className={`${admin.num} ${totals.profit >= 0 ? styles.pos : styles.neg}`}>{num(totals.profit)}</td>
-                  <td className={admin.num}>{totals.roas.toFixed(2)}×</td>
+                  <td className={admin.num}>{totals.roi.toFixed(2)}×</td>
                   <td className={admin.num}>{totals.conv.toLocaleString()}</td>
                   <td className={admin.num}>{totals.conv ? num(totals.cpa) : '—'}</td>
                   <td className={admin.num}>{totals.clicks.toLocaleString()}</td>
@@ -577,7 +577,7 @@ function CampaignDetail({ campaignId, bd, range }: { campaignId: string; bd: Cam
                 <th className={admin.thLeft}>Spend</th>
                 <th className={admin.thLeft}>Revenue*</th>
                 <th className={admin.thLeft}>Profit</th>
-                <th className={admin.thLeft}>ROAS</th>
+                <th className={admin.thLeft}>ROI</th>
                 <th className={admin.thLeft}>Conv</th>
                 <th className={admin.thLeft}>CPA</th>
                 <th className={admin.thLeft}>CPC</th>
@@ -619,7 +619,7 @@ function CampaignDetail({ campaignId, bd, range }: { campaignId: string; bd: Cam
                 <th className={admin.thLeft}>Spend</th>
                 <th className={admin.thLeft}>Revenue</th>
                 <th className={admin.thLeft}>Profit</th>
-                <th className={admin.thLeft}>ROAS</th>
+                <th className={admin.thLeft}>ROI</th>
                 <th className={admin.thLeft}>Conv</th>
                 <th className={admin.thLeft}>CPA</th>
                 <th className={admin.thLeft}>CPC</th>
