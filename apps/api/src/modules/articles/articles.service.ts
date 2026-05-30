@@ -144,6 +144,45 @@ export async function listArticlesForHost(rawHost: string, limit = 6): Promise<P
   });
 }
 
+export interface ArticleSitemapEntry {
+  slug: string;
+  /** Last-modified date (YYYY-MM-DD) for the sitemap <lastmod>. */
+  lastmod: string;
+}
+
+/**
+ * All READY article slugs routed to a host (via its offers), for the per-host sitemap.
+ * Same host-scoping as listArticlesForHost (tenant-safe) but UNCAPPED + lightweight (slug +
+ * updatedAt only). A sitemap is how we proactively surface new article URLs to Google so it
+ * crawls them sooner — the content-page related-search unit refines from crawled content
+ * (publisher `terms` already fill it immediately, so this avoids a thin unit on fresh URLs).
+ */
+export async function listArticleSlugsForHost(rawHost: string): Promise<ArticleSitemapEntry[]> {
+  const host = normalizeHost(rawHost);
+  if (!host) return [];
+  return withSystem(async (tx) => {
+    const domain = await tx.domain.findUnique({ where: { host }, select: { id: true } });
+    if (!domain) return [];
+    const offers = await tx.offer.findMany({
+      where: { domainId: domain.id },
+      select: { articleId: true, campaign: { select: { articleId: true } } },
+    });
+    const ids = [
+      ...new Set(
+        offers.flatMap((o) => [o.articleId, o.campaign?.articleId]).filter((x): x is string => Boolean(x)),
+      ),
+    ];
+    if (ids.length === 0) return [];
+    const articles = await tx.article.findMany({
+      where: { id: { in: ids }, status: 'READY' },
+      select: { slug: true, updatedAt: true },
+      orderBy: { updatedAt: 'desc' },
+      take: 5000,
+    });
+    return articles.map((a) => ({ slug: a.slug, lastmod: a.updatedAt.toISOString().slice(0, 10) }));
+  });
+}
+
 /** URL-safe slug from the title + a short random suffix to guarantee uniqueness. */
 function slugify(title: string): string {
   const base =

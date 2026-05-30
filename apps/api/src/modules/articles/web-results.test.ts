@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { prisma, withSystem } from '@knn/db';
 import { ROLES, USER_STATUS } from '@knn/shared';
-import { listArticlesForHost } from './articles.service.js';
+import { listArticleSlugsForHost, listArticlesForHost } from './articles.service.js';
 
 /**
  * `listArticlesForHost` backs the organic "Web results" on the RSOC results page — the
@@ -102,5 +102,21 @@ describe('listArticlesForHost (organic /search web results)', () => {
 
   it('returns [] for an unknown host', async () => {
     expect(await listArticlesForHost(`no-such-${suffix}.example.com`, 6)).toEqual([]);
+  });
+});
+
+describe('listArticleSlugsForHost (per-host sitemap)', () => {
+  it("returns the host's READY slugs with a lastmod, host-scoped, excluding non-READY", async () => {
+    const entries = await listArticleSlugsForHost(host);
+    const slugs = entries.map((e) => e.slug);
+    expect(slugs).toContain(`wr-a-${suffix}`); // campaign default
+    expect(slugs).toContain(`wr-b-${suffix}`); // per-offer variant
+    expect(slugs).not.toContain(`wr-c-${suffix}`); // other host
+    expect(slugs).not.toContain(`wr-d-${suffix}`); // GENERATING
+    expect(entries[0]?.lastmod).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('returns [] for an unknown host', async () => {
+    expect(await listArticleSlugsForHost(`no-such-${suffix}.example.com`)).toEqual([]);
   });
 });

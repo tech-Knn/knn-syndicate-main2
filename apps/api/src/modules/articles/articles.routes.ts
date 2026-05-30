@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { handleRouteError } from '../../lib/http.js';
-import { getPublicArticleBySlug, listArticlesForHost } from './articles.service.js';
+import { getPublicArticleBySlug, listArticleSlugsForHost, listArticlesForHost } from './articles.service.js';
 
 /**
  * Public (unauthenticated) article reads for the article frontend. Mounted at
@@ -19,6 +19,20 @@ export async function publicArticleRoutes(app: FastifyInstance): Promise<void> {
       const articles = await listArticlesForHost(host, Number(req.query.limit) || 6);
       reply.header('cache-control', 'public, max-age=300, stale-while-revalidate=600');
       return reply.send({ articles });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // Per-host sitemap data: all READY article slugs (+ lastmod) routed to the host. Static
+  // route, so it's matched before `/:slug`. Backs the article app's /sitemap.xml.
+  app.get<{ Querystring: { host?: string } }>('/sitemap', async (req, reply) => {
+    const host = req.query.host;
+    if (!host) return reply.code(400).send({ error: 'Missing host' });
+    try {
+      const urls = await listArticleSlugsForHost(host);
+      reply.header('cache-control', 'public, max-age=600, stale-while-revalidate=600');
+      return reply.send({ urls });
     } catch (err) {
       return handleRouteError(err, reply);
     }
