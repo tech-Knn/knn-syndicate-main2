@@ -51,6 +51,23 @@ export class FbApiError extends Error {
   }
 }
 
+/**
+ * A stored FB/Google token could not be decrypted: the `TOKEN_ENCRYPTION_KEY` changed
+ * (rotation) or the stored ciphertext is corrupt. Intentionally NOT an `FbApiError` — no
+ * Graph call ever happened, so it must not be funneled into FB-error handling (rate-limit
+ * retries, breaker, `instanceof FbApiError` worker logic). Callers map it to a clean
+ * "reconnect the account" response instead of leaking a raw Node crypto error (e.g.
+ * `ERR_CRYPTO_INVALID_AUTH_TAG`). Carries no token material.
+ */
+export class TokenDecryptError extends Error {
+  constructor(
+    message = 'Stored access token could not be decrypted — the encryption key changed or the stored value is corrupt. Reconnect the account.',
+  ) {
+    super(message);
+    this.name = 'TokenDecryptError';
+  }
+}
+
 /** Token expired / revoked / password change / app removed (err 190 + subcodes). */
 export class FbConnectionBrokenError extends FbApiError {
   constructor(message: string, opts: FbErrorOpts = {}) {

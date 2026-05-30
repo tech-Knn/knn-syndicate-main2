@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { env } from '@knn/config';
+import { TokenDecryptError } from './errors.js';
 
 /**
  * AES-256-GCM at-rest encryption for Facebook tokens (DECISION D13). The key is
@@ -23,11 +24,18 @@ export function encryptToken(plaintext: string): string {
 }
 
 export function decryptToken(payload: string): string {
-  const raw = Buffer.from(payload, 'base64');
-  const iv = raw.subarray(0, IV_LENGTH);
-  const tag = raw.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH);
-  const ciphertext = raw.subarray(IV_LENGTH + TAG_LENGTH);
-  const decipher = createDecipheriv('aes-256-gcm', KEY, iv);
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+  // Any failure here (rotated key, corrupt/garbage ciphertext, bad auth tag) means the stored
+  // token is unusable. Re-throw as a typed, token-free error so callers can map it to a clean
+  // "reconnect the account" response instead of leaking a raw Node crypto error to the client.
+  try {
+    const raw = Buffer.from(payload, 'base64');
+    const iv = raw.subarray(0, IV_LENGTH);
+    const tag = raw.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH);
+    const ciphertext = raw.subarray(IV_LENGTH + TAG_LENGTH);
+    const decipher = createDecipheriv('aes-256-gcm', KEY, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+  } catch {
+    throw new TokenDecryptError();
+  }
 }

@@ -356,4 +356,32 @@ describe('campaigns + uploads', () => {
     const list = await app.inject({ method: 'GET', url: '/api/campaigns', headers: authHeaders(tokenB) });
     expect(list.json<{ campaigns: { id: string }[] }>().campaigns).toHaveLength(0);
   });
+
+  it('pausing a campaign whose stored FB token is undecryptable fails cleanly (409, not a raw 500)', async () => {
+    // Regression: a rotated TOKEN_ENCRYPTION_KEY / corrupt ciphertext must surface as an
+    // actionable "reconnect" 409 — never a raw ERR_CRYPTO_INVALID_AUTH_TAG 500 that leaks
+    // internals. The fixture's FbConnection stores a non-decryptable accessTokenEnc ('enc'),
+    // so an ACTIVE campaign pointing at it exercises exactly that path.
+    const active = await withSystem(async (tx) => {
+      const buyer = await tx.user.findUniqueOrThrow({ where: { email: buyerEmail } });
+      return tx.campaign.create({
+        data: {
+          orgId,
+          buyerId: buyer.id,
+          name: 'Live (bad token)',
+          status: 'ACTIVE',
+          keywords: ['x'],
+          adAccountId,
+          pageId,
+          fbCampaignId: 'fb_test_active',
+        },
+        select: { id: true },
+      });
+    });
+    const res = await app.inject({ method: 'POST', url: `/api/campaigns/${active.id}/pause`, headers: authHeaders(token) });
+    expect(res.statusCode).toBe(409);
+    const { error } = res.json<{ error: string }>();
+    expect(error).toMatch(/reconnect/i);
+    expect(error).not.toMatch(/ERR_CRYPTO|auth(entication)? tag/i);
+  });
 });

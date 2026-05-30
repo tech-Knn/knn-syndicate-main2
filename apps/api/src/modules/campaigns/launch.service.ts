@@ -7,6 +7,7 @@ import {
   FbApiError,
   FbConnectionBrokenError,
   FbRateLimitError,
+  TokenDecryptError,
   createFbAd,
   createFbAdCreative,
   createFbAdSet,
@@ -25,6 +26,26 @@ import type { AuthContext } from '../../middleware/authenticate.js';
 import { markConnectionBroken } from '../facebook/facebook.service.js';
 import { generateArticleForCampaign } from '../articles/articles.service.js';
 import { type CampaignWithChildren, campaignInclude, toDraft } from './campaigns.service.js';
+
+/**
+ * Decrypt a stored FB connection token, mapping an undecryptable value (rotated
+ * TOKEN_ENCRYPTION_KEY / corrupt ciphertext) to a clean, actionable 409 instead of a raw Node
+ * crypto 500 (ERR_CRYPTO_INVALID_AUTH_TAG). The token is dead either way — the only recovery
+ * is for the owner to reconnect the Facebook profile.
+ */
+function decryptConnectionToken(accessTokenEnc: string): string {
+  try {
+    return decryptToken(accessTokenEnc);
+  } catch (err) {
+    if (err instanceof TokenDecryptError) {
+      throw new AppError(
+        409,
+        'This Facebook connection can no longer be used (its stored access token is unreadable) — reconnect the profile in Settings → Facebook, then try again.',
+      );
+    }
+    throw err;
+  }
+}
 
 /** Our pxe → a Facebook standard conversion event. */
 const PXE_TO_EVENT: Record<string, string> = {
@@ -114,7 +135,7 @@ async function resolveLaunchPlan(auth: AuthContext, campaignId: string): Promise
 
     return {
       campaign,
-      token: decryptToken(adAccount.connection.accessTokenEnc),
+      token: decryptConnectionToken(adAccount.connection.accessTokenEnc),
       fbAccountId: adAccount.fbAccountId,
       fbPageId: page.fbPageId,
       connectionId: adAccount.connection.id,
@@ -158,7 +179,7 @@ export async function setCampaignActive(
       if (acc.connection.status === FbConnectionStatus.CONNECTION_BROKEN) {
         throw new AppError(409, 'Facebook connection is broken — reconnect first');
       }
-      fb = { fbCampaignId: campaign.fbCampaignId, fbAccountId: acc.fbAccountId, token: decryptToken(acc.connection.accessTokenEnc), connectionId: acc.connection.id };
+      fb = { fbCampaignId: campaign.fbCampaignId, fbAccountId: acc.fbAccountId, token: decryptConnectionToken(acc.connection.accessTokenEnc), connectionId: acc.connection.id };
     }
     return { done: false as const, orgId: campaign.orgId, fb };
   });
@@ -649,7 +670,7 @@ export async function relaunchCampaign(auth: AuthContext, campaignId: string): P
         select: { fbAccountId: true, connection: { select: { accessTokenEnc: true } } },
       });
       if (acc) {
-        pause = { fbCampaignId: c.fbCampaignId, fbAccountId: acc.fbAccountId, token: decryptToken(acc.connection.accessTokenEnc) };
+        pause = { fbCampaignId: c.fbCampaignId, fbAccountId: acc.fbAccountId, token: decryptConnectionToken(acc.connection.accessTokenEnc) };
       }
     }
     return { pause };
