@@ -57,7 +57,7 @@ export const WEBSITE_DESTINATION_GOALS: ReadonlySet<string> = new Set([
 /** Human labels for the performance-goal dropdown. */
 export const PERFORMANCE_GOAL_LABELS: Record<string, string> = {
   OFFSITE_CONVERSIONS: 'Conversions',
-  VALUE: 'Value (ROAS)',
+  VALUE: 'Value',
   LANDING_PAGE_VIEWS: 'Landing-page views',
   LINK_CLICKS: 'Link clicks',
   POST_ENGAGEMENT: 'Post engagement',

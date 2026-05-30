@@ -1270,8 +1270,9 @@ function AdSetsStep({
                 <input id={`${set.key}-costcap`} className={styles.input} type="number" min="0" step="0.01" value={set.costCap} onChange={(e) => patchAdSet(set.key, { costCap: e.target.value })} />
               </div>
               <div className={styles.field}>
-                <label className={styles.label} htmlFor={`${set.key}-roas`}>ROAS factor (optional)</label>
-                <input id={`${set.key}-roas`} className={styles.input} type="number" min="0" step="0.1" value={set.roasFactor} onChange={(e) => patchAdSet(set.key, { roasFactor: e.target.value })} />
+                <label className={styles.label} htmlFor={`${set.key}-roas`}>Min. return target (optional)</label>
+                <input id={`${set.key}-roas`} className={styles.input} type="number" min="0" step="0.1" value={set.roasFactor} onChange={(e) => patchAdSet(set.key, { roasFactor: e.target.value })} aria-describedby={`${set.key}-roas-hint`} />
+                <span id={`${set.key}-roas-hint`} className={styles.hint}>Facebook value-bid target, as a multiple of spend (e.g. 2 = aim for $2 back per $1). A bidding goal — not the ROI metric.</span>
               </div>
               <div className={styles.field}>
                 <label className={styles.label} htmlFor={`${set.key}-attr`}>Attribution window</label>
