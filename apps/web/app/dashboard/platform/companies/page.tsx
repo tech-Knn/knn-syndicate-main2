@@ -3,7 +3,7 @@
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { type CompanyRollup, addBusinessDays, currentBusinessDay, formatUsd } from '@knn/shared';
-import { Badge, Button, Card, type DateRange, DateRangePicker, Skeleton } from '@/components/ui';
+import { Badge, Banner, Button, Card, type DateRange, DateRangePicker, Skeleton, useConfirm } from '@/components/ui';
 import { admin, stats } from '@/lib/api';
 import { type AuditRow, type OrgRow, type PublicUser } from '@/lib/types';
 import { useAuth } from '../../../providers';
@@ -63,6 +63,7 @@ function timeAgo(iso: string): string {
 export default function CompaniesPage() {
   const { user } = useAuth();
   const router = useRouter();
+  const confirm = useConfirm();
   const [orgs, setOrgs] = useState<OrgRow[] | null>(null);
   const [form, setForm] = useState(blank);
   const [creating, setCreating] = useState(false);
@@ -170,13 +171,21 @@ export default function CompaniesPage() {
   };
 
   const removeMember = async (orgId: string, m: PublicUser): Promise<void> => {
-    if (!window.confirm(`Permanently delete ${m.name} (${m.email})? This frees their email to re-use.`)) return;
+    const ok = await confirm({
+      title: `Delete ${m.name}?`,
+      body: `Permanently delete ${m.name} (${m.email})? This frees their email to re-use.`,
+      confirmLabel: 'Delete user',
+      tone: 'danger',
+    });
+    if (!ok) return;
     setBusy(m.id);
     try {
       await admin.deleteUser(m.id);
       loadMembers(orgId);
       load();
       loadAudit();
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'Could not delete the user.');
     } finally {
       setBusy(null);
     }
@@ -190,8 +199,9 @@ export default function CompaniesPage() {
       await admin.setRevenueCut(orgId, pct / 100);
       setCutState((s) => ({ ...s, [orgId]: 'saved' }));
       setTimeout(() => setCutState((s) => ({ ...s, [orgId]: undefined })), 2000);
-    } catch {
+    } catch (err) {
       setCutState((s) => ({ ...s, [orgId]: undefined }));
+      setNote(err instanceof Error ? err.message : 'Could not save the revenue cut.');
     }
   };
 
@@ -238,7 +248,11 @@ export default function CompaniesPage() {
         </div>
       </div>
 
-      {note && <Card className={styles.section}>{note}</Card>}
+      {note && (
+        <Banner tone="info" onDismiss={() => setNote(null)}>
+          {note}
+        </Banner>
+      )}
 
       {/* Create company */}
       <Card className={styles.section}>
@@ -247,15 +261,26 @@ export default function CompaniesPage() {
           <span className={styles.subtle}>Creates the org + its first admin (active). Share the admin login with them.</span>
         </div>
         <form className={styles.domainForm} onSubmit={(e) => void create(e)}>
-          <input className={styles.rangeInput} placeholder="Company name" value={form.name} onChange={(e) => onName(e.target.value)} />
-          <input className={styles.rangeInput} placeholder="slug (lowercase-hyphens)" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} />
-          <input className={styles.rangeInput} placeholder="admin name" value={form.adminName} onChange={(e) => setForm({ ...form, adminName: e.target.value })} />
-          <input className={styles.rangeInput} type="email" placeholder="admin email" value={form.adminEmail} onChange={(e) => setForm({ ...form, adminEmail: e.target.value })} />
-          <input className={styles.rangeInput} type="password" placeholder="admin password (8+)" value={form.adminPassword} onChange={(e) => setForm({ ...form, adminPassword: e.target.value })} />
+          <input className={styles.rangeInput} aria-label="Company name" placeholder="Company name" value={form.name} onChange={(e) => onName(e.target.value)} />
+          <input className={styles.rangeInput} aria-label="Signup slug (lowercase, hyphens)" placeholder="slug (lowercase-hyphens)" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} />
+          <input className={styles.rangeInput} aria-label="Admin name" placeholder="admin name" value={form.adminName} onChange={(e) => setForm({ ...form, adminName: e.target.value })} />
+          <input className={styles.rangeInput} type="email" aria-label="Admin email" placeholder="admin email" value={form.adminEmail} onChange={(e) => setForm({ ...form, adminEmail: e.target.value })} />
+          <input
+            className={styles.rangeInput}
+            type="password"
+            aria-label="Admin password"
+            aria-describedby="create-pw-hint"
+            placeholder="admin password"
+            value={form.adminPassword}
+            onChange={(e) => setForm({ ...form, adminPassword: e.target.value })}
+          />
           <Button type="submit" loading={creating} disabled={!canCreate}>
             Create company
           </Button>
         </form>
+        <p id="create-pw-hint" className={styles.fieldHint}>
+          Admin password must be at least 8 characters.
+        </p>
       </Card>
 
       {/* Companies list */}
@@ -497,17 +522,28 @@ export default function CompaniesPage() {
             </button>
           </div>
           <form className={styles.domainForm} onSubmit={(e) => void addUser(e)}>
-            <select className={styles.select} value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value as 'COMPANY_ADMIN' | 'MEDIA_BUYER' })}>
+            <select className={styles.select} aria-label="Role" value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value as 'COMPANY_ADMIN' | 'MEDIA_BUYER' })}>
               <option value="COMPANY_ADMIN">Company admin</option>
               <option value="MEDIA_BUYER">Media buyer</option>
             </select>
-            <input className={styles.rangeInput} placeholder="name" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} />
-            <input className={styles.rangeInput} type="email" placeholder="email" value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} />
-            <input className={styles.rangeInput} type="password" placeholder="password (8+)" value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} />
+            <input className={styles.rangeInput} aria-label="Name" placeholder="name" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} />
+            <input className={styles.rangeInput} type="email" aria-label="Email" placeholder="email" value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} />
+            <input
+              className={styles.rangeInput}
+              type="password"
+              aria-label="Password"
+              aria-describedby="add-user-pw-hint"
+              placeholder="password"
+              value={userForm.password}
+              onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+            />
             <Button type="submit" loading={addingUser} disabled={!userForm.name.trim() || !userForm.email.trim() || userForm.password.length < 8}>
               Add user
             </Button>
           </form>
+          <p id="add-user-pw-hint" className={styles.fieldHint}>
+            Password must be at least 8 characters.
+          </p>
         </Card>
       )}
     </div>

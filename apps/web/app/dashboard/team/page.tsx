@@ -8,7 +8,7 @@ import {
   currentBusinessDay,
   formatUsd,
 } from '@knn/shared';
-import { Badge, Card, type DateRange, DateRangePicker, Skeleton } from '@/components/ui';
+import { Badge, Card, type DateRange, DateRangePicker, Skeleton, useConfirm, useToast } from '@/components/ui';
 import { admin, stats } from '@/lib/api';
 import { type PublicUser, type UserAction } from '@/lib/types';
 import { useAuth } from '../../providers';
@@ -52,6 +52,8 @@ function actionsFor(status: string): { label: string; action: UserAction; danger
 export default function TeamPage() {
   const { user } = useAuth();
   const router = useRouter();
+  const confirm = useConfirm();
+  const toast = useToast();
   const [range, setRange] = useState<DateRange>(() => rangeFor(30));
   const [buyers, setBuyers] = useState<BuyerRollup[] | null>(null);
   const [members, setMembers] = useState<PublicUser[] | null>(null);
@@ -90,6 +92,8 @@ export default function TeamPage() {
     try {
       await admin.setUserStatus(id, action);
       await loadMembers();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not update the member.');
     } finally {
       setBusy(null);
     }
@@ -97,11 +101,19 @@ export default function TeamPage() {
 
   // Super-admin only: permanently delete a user (frees their email for re-use).
   const remove = async (m: PublicUser): Promise<void> => {
-    if (!window.confirm(`Permanently delete ${m.name} (${m.email})? This cannot be undone and frees their email to re-use.`)) return;
+    const ok = await confirm({
+      title: `Delete ${m.name}?`,
+      body: `Permanently delete ${m.name} (${m.email})? This cannot be undone and frees their email to re-use.`,
+      confirmLabel: 'Delete user',
+      tone: 'danger',
+    });
+    if (!ok) return;
     setBusy(m.id);
     try {
       await admin.deleteUser(m.id);
       await loadMembers();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not delete the user.');
     } finally {
       setBusy(null);
     }

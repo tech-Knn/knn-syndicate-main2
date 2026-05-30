@@ -36,6 +36,7 @@ export function SearchAds({
   referrerAdCreative,
   channel,
   site,
+  maxAds,
 }: {
   query: string;
   referrerAdCreative?: string;
@@ -43,9 +44,20 @@ export function SearchAds({
   channel?: string;
   /** Per-host AFS config resolved server-side (pubId/style/adsafe). */
   site: SiteConfig;
+  /**
+   * Hard cap on the number of ads, derived from the actual count of organic Web results
+   * on this page. Google's Search-ads policy requires ads ≤ search results, so the page
+   * must never show ads with no results. `0` (no organic results / fetch error) → render
+   * NOTHING, so the ad unit can't appear above an empty results list.
+   */
+  maxAds: number;
 }) {
-  // No AFS account for this host, or no query → render nothing (never an empty unit).
-  if (!afsConfigured(site) || !query) return null;
+  // No AFS account for this host, no query, or no organic results to supplement →
+  // render nothing (never ads without results, never an empty unit).
+  if (!afsConfigured(site) || !query || maxAds < 1) return null;
+
+  // Ads are capped at the organic-result count (≤5 by design), so ads ≤ results always.
+  const number = Math.min(maxAds, 5);
 
   // Page-level options Google needs to serve ads for this query. Mirrors basePageOptions
   // but built server-side; resultsPageBaseUrl is origin-dependent so it's set in the inline
@@ -77,9 +89,9 @@ export function SearchAds({
     `(function(g,o){g[o]=g[o]||function(){(g[o].q=g[o].q||[]).push(arguments)};g[o].t=1*new Date})(window,'_googCsa');` +
     `var po=${safeJson(pageOptions)};po.resultsPageBaseUrl=window.location.origin+'/search';` +
     // Ads only (no relatedSearchBlock — the organic <WebResults> below ARE the results the ads
-    // supplement). `number:5` caps ads at 5 to match the ≤5 organic Web results, so ads ≤ results
-    // (Google policy: number of ads ≤ number of search results). Google may serve fewer.
-    `_googCsa('ads',po,{container:'afscontainer1',number:5});` +
+    // supplement). `number` is capped to the ACTUAL organic Web-result count (≤5), so ads ≤
+    // results (Google policy: number of ads ≤ number of search results). Google may serve fewer.
+    `_googCsa('ads',po,{container:'afscontainer1',number:${number}});` +
     `var s=document.createElement('script');s.async=!0;s.src='https://www.google.com/adsense/search/ads.js';document.head.appendChild(s);`;
 
   return (

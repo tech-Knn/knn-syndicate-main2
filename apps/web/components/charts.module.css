@@ -10,11 +10,108 @@
   overflow: visible;
 }
 
+.sparkWrap {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .spark {
   width: 100%;
   height: 100%;
   display: block;
   opacity: 0.85;
+}
+
+/* Visually hidden, but available to screen readers (data table). */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Empty / zero state for the revenue chart. */
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+/* Y-axis $ tick labels (HTML overlay; SVG text would be squashed by preserveAspectRatio="none"). */
+.yAxis {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.yTick {
+  position: absolute;
+  left: 0;
+  width: 44px;
+  transform: translateY(-50%);
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--muted-2);
+}
+
+/* X-axis day labels (first / middle / last). */
+.xAxis {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--space-4);
+  pointer-events: none;
+}
+.xTick {
+  position: absolute;
+  bottom: 0;
+  display: inline-flex;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--muted-2);
+  white-space: nowrap;
+}
+
+/* Legend: solid (revenue) vs dashed (spend) swatch — non-color cue. */
+.legend {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  display: flex;
+  gap: var(--space-3);
+  pointer-events: none;
+}
+.legItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+.swatch {
+  width: 18px;
+  height: 0;
+  border-top-width: 2px;
+  border-top-style: solid;
+  display: inline-block;
+}
+.swatchRev {
+  border-top-color: var(--gold);
+}
+.swatchSpend {
+  border-top-style: dashed;
+  border-top-color: var(--rust);
 }
 
 .tip {

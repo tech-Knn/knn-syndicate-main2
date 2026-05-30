@@ -21,10 +21,12 @@
   font-size: 0.92rem;
 }
 
-.errorCard {
-  padding: 0.8rem 1rem;
-  color: var(--amber);
-  font-size: 0.88rem;
+/* Full-width state card (new-buyer activation / hard error placeholder) */
+.stateCard {
+  padding: var(--space-3);
+}
+.ctaLink {
+  text-decoration: none;
 }
 
 /* KPI grid */
@@ -35,6 +37,12 @@
 }
 .kpiSkel {
   height: 108px;
+}
+
+/* Dim the all-zero tiles/chart for a brand-new account: the activation CTA
+   above is the focus, but the (empty) metrics stay visible for orientation. */
+.deEmphasized {
+  opacity: 0.55;
 }
 
 /* Chart */
@@ -161,6 +169,26 @@
   gap: 0.55rem;
   min-width: 240px;
 }
+/* The disclosure is a real button so it's keyboard-operable; it carries the
+   caret + campaign name and toggles the detail row it `aria-controls`. */
+.disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  background: transparent;
+  border: 0;
+  padding: 0.15rem 0.3rem;
+  margin: -0.15rem -0.3rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.disclosure:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: 2px;
+}
 .caret {
   color: var(--muted-2);
   font-size: 0.7rem;
@@ -251,7 +279,6 @@
   height: 48px;
   margin: 0.4rem 0;
 }
-.detailEmpty,
 .detailEmpty {
   color: var(--muted-2);
   font-size: 0.8rem;
@@ -273,4 +300,43 @@
 }
 .rowSkel {
   height: 40px;
+}
+
+/* ------------------------------------------------------------- Responsive */
+
+@media (max-width: 900px) {
+  /* KPI grid wraps cleanly with no orphan tile on small screens. */
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* Right-edge scroll-shadow cue: a soft gradient pinned to the right edge of
+     the scroll container hints there's more table to scroll to. */
+  .tableWrap {
+    position: relative;
+    background:
+      linear-gradient(to left, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0)) right center / 28px 100% no-repeat;
+  }
+
+  /* Sticky first column so the campaign name stays visible while scrolling
+     the numeric columns horizontally. */
+  .table thead th.thLeft,
+  .table .tdName {
+    position: sticky;
+    left: 0;
+    z-index: var(--z-sticky);
+    background: var(--surface);
+  }
+  /* Keep the open-row tint on the pinned name cell so it matches the row. */
+  .rowOpen .tdName {
+    background:
+      linear-gradient(rgba(var(--gold-rgb), 0.04), rgba(var(--gold-rgb), 0.04)), var(--surface);
+  }
+}
+
+@media (max-width: 480px) {
+  /* Single column on the narrowest viewports — still no orphan. */
+  .kpis {
+    grid-template-columns: 1fr;
+  }
 }

@@ -3,7 +3,7 @@
 import { type FormEvent, Fragment, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { type PlatformSettings, addBusinessDays, currentBusinessDay } from '@knn/shared';
-import { Badge, Button, Card, Skeleton } from '@/components/ui';
+import { Badge, Banner, Button, Card, Skeleton, useConfirm, useToast } from '@/components/ui';
 import { adsense, admin } from '@/lib/api';
 import { type AdsenseRevenuePreview, type AfsAccountRow } from '@/lib/types';
 import { useAuth } from '../../providers';
@@ -13,6 +13,8 @@ import styles from '../admin.module.css';
 export default function PlatformPage() {
   const { user } = useAuth();
   const router = useRouter();
+  const confirm = useConfirm();
+  const toast = useToast();
   const [settings, setSettings] = useState<PlatformSettings | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
   const [savedAt, setSavedAt] = useState(false);
@@ -93,7 +95,19 @@ export default function PlatformPage() {
   };
 
   const disconnectAfs = async (id: string): Promise<void> => {
-    await adsense.disconnectAccount(id).catch(() => undefined);
+    const ok = await confirm({
+      title: 'Disconnect this AdSense account?',
+      body: 'It stops syncing and pulling revenue. Imported channels stay in the pool; reconnect any time to resume.',
+      confirmLabel: 'Disconnect',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    try {
+      await adsense.disconnectAccount(id);
+      toast.success('AdSense account disconnected.');
+    } catch {
+      toast.error('Could not disconnect the account — try again.');
+    }
     loadAfsAccounts();
   };
 
@@ -112,6 +126,8 @@ export default function PlatformPage() {
       setSettings(updated);
       setSavedAt(true);
       setTimeout(() => setSavedAt(false), 2500);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not save settings.');
     } finally {
       setSavingSettings(false);
     }
@@ -140,7 +156,11 @@ export default function PlatformPage() {
             <Button onClick={() => void connectAdsense()}>Connect AdSense account</Button>
           </div>
         </div>
-        {adsNote && <p className={styles.adsNote}>{adsNote}</p>}
+        {adsNote && (
+          <div style={{ marginBottom: 'var(--space-3)' }}>
+            <Banner tone="info" onDismiss={() => setAdsNote(null)}>{adsNote}</Banner>
+          </div>
+        )}
         {!afsAccounts ? (
           <Skeleton className={styles.rowSkel} />
         ) : afsAccounts.length === 0 ? (
@@ -178,7 +198,7 @@ export default function PlatformPage() {
                         </td>
                         <td>
                           <div className={styles.actions}>
-                            <button type="button" className={styles.actionBtn} onClick={() => previewRevenue(a.id)}>
+                            <button type="button" className={styles.actionBtn} aria-expanded={revOpen === a.id} onClick={() => previewRevenue(a.id)}>
                               {revOpen === a.id ? 'Hide revenue' : 'Revenue (7d)'}
                             </button>
                             <button type="button" className={styles.actionBtn} disabled={catSyncing === a.id} onClick={() => void syncCatalog(a.id)}>

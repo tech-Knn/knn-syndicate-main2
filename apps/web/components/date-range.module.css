@@ -40,7 +40,7 @@
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  box-shadow: var(--elevation-3);
   overflow: hidden;
 }
 
@@ -129,6 +129,7 @@
   height: 2rem;
 }
 .day {
+  position: relative;
   height: 2rem;
   width: 2rem;
   border: none;
@@ -141,6 +142,11 @@
 }
 .day:hover:not(:disabled) {
   background: var(--surface-2);
+}
+.day:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: -2px;
+  z-index: 1;
 }
 .day:disabled {
   color: var(--muted);

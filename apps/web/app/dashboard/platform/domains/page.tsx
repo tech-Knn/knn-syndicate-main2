@@ -2,7 +2,7 @@
 
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Badge, Button, Card, Skeleton } from '@/components/ui';
+import { Badge, Banner, Button, Card, Skeleton, useConfirm } from '@/components/ui';
 import { admin, adsense, domains } from '@/lib/api';
 import { type AfsAccountRow, type DomainRow, type OrgRow } from '@/lib/types';
 import { useAuth } from '../../../providers';
@@ -18,6 +18,7 @@ const STATUS_TONE: Record<string, 'neutral' | 'brand' | 'success' | 'warning' | 
 export default function DomainsPage() {
   const { user } = useAuth();
   const router = useRouter();
+  const confirm = useConfirm();
   const [rows, setRows] = useState<DomainRow[] | null>(null);
   const [dns, setDns] = useState<{ cnameTarget: string } | null>(null);
   const [accounts, setAccounts] = useState<AfsAccountRow[]>([]);
@@ -92,6 +93,17 @@ export default function DomainsPage() {
     }
   };
 
+  const removeDomain = async (d: DomainRow): Promise<void> => {
+    const ok = await confirm({
+      title: `Remove ${d.host}?`,
+      body: 'The website is unregistered and its channels stop being usable. This cannot be undone.',
+      confirmLabel: 'Remove domain',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    await act(d.id, () => domains.remove(d.id), 'Remove');
+  };
+
   return (
     <div className={styles.page}>
       <div className={styles.head}>
@@ -102,7 +114,11 @@ export default function DomainsPage() {
         </div>
       </div>
 
-      {note && <Card className={styles.errorCard}>{note}</Card>}
+      {note && (
+        <Banner tone="error" onDismiss={() => setNote(null)}>
+          {note}
+        </Banner>
+      )}
 
       {/* Add domain */}
       <Card className={styles.section}>
@@ -117,12 +133,14 @@ export default function DomainsPage() {
         <form className={styles.domainForm} onSubmit={(e) => void add(e)}>
           <input
             className={styles.rangeInput}
+            aria-label="Domain host"
             placeholder="articles.yourdomain.com"
             value={form.host}
             onChange={(e) => setForm({ ...form, host: e.target.value })}
           />
           <select
             className={styles.select}
+            aria-label="AFS account"
             value={form.afsAccountId}
             onChange={(e) => setForm({ ...form, afsAccountId: e.target.value })}
           >
@@ -135,12 +153,14 @@ export default function DomainsPage() {
           </select>
           <input
             className={styles.rangeInput}
+            aria-label="Channel ranges"
             placeholder="channel ranges (09000-09500)"
             value={form.channelRanges}
             onChange={(e) => setForm({ ...form, channelRanges: e.target.value })}
           />
           <input
             className={styles.rangeInput}
+            aria-label="Style id (optional)"
             placeholder="style id (optional)"
             value={form.styleId}
             onChange={(e) => setForm({ ...form, styleId: e.target.value })}
@@ -222,7 +242,7 @@ export default function DomainsPage() {
                         <button type="button" className={styles.actionBtn} onClick={() => router.push(`/dashboard/platform/channels?domain=${d.id}`)} title="Browse & import this website's channels">
                           Channels
                         </button>
-                        <button type="button" className={`${styles.actionBtn} ${styles.actionDanger}`} disabled={busy === d.id + 'Remove'} onClick={() => void act(d.id, () => domains.remove(d.id), 'Remove')}>
+                        <button type="button" className={`${styles.actionBtn} ${styles.actionDanger}`} disabled={busy === d.id + 'Remove'} onClick={() => void removeDomain(d)}>
                           Remove
                         </button>
                       </div>

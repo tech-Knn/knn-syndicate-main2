@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
+import Link from 'next/link';
 import {
   type CampaignBreakdown,
   type CampaignPerf,
@@ -8,8 +9,19 @@ import {
   addBusinessDays,
   currentBusinessDay,
   formatUsd,
+  formatUsdCompact,
 } from '@knn/shared';
-import { Badge, Card, type DateRange, DateRangePicker, Skeleton, StatTile } from '@/components/ui';
+import {
+  Badge,
+  Banner,
+  Button,
+  Card,
+  type DateRange,
+  DateRangePicker,
+  EmptyState,
+  Skeleton,
+  StatTile,
+} from '@/components/ui';
 import { RevenueChart, Sparkline } from '@/components/charts';
 import { stats } from '@/lib/api';
 import { useAuth } from '../providers';
@@ -72,6 +84,7 @@ export default function DashboardHome() {
   const [range, setRange] = useState<DateRange>(() => rangeFor(7));
   const [summary, setSummary] = useState<StatsSummary | null>(null);
   const [campaigns, setCampaigns] = useState<CampaignPerf[] | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [breakdowns, setBreakdowns] = useState<Record<string, CampaignBreakdown>>({});
@@ -81,6 +94,7 @@ export default function DashboardHome() {
 
   const load = useCallback(async (r: DateRange, silent = false) => {
     if (!silent) {
+      setLoading(true);
       setSummary(null);
       setCampaigns(null);
     }
@@ -90,7 +104,9 @@ export default function DashboardHome() {
       setSummary(s);
       setCampaigns(c);
     } catch {
-      setError('Could not load metrics. Retrying shortly…');
+      setError('Could not load your metrics. Check your connection and try again.');
+    } finally {
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -122,6 +138,13 @@ export default function DashboardHome() {
   const t = summary?.totals;
   const series = summary?.series ?? [];
 
+  // A brand-new buyer with zero campaigns: this is the #1 conversion moment, so
+  // we lead with an activation CTA and de-emphasize the (all-zero) KPIs + chart.
+  const isNewBuyer = !error && !loading && campaigns !== null && campaigns.length === 0;
+  // Hard failure (not a transient background refresh): show explicit error
+  // placeholders + Retry rather than a forever-shimmering skeleton.
+  const isError = !!error && (summary === null || campaigns === null);
+
   return (
     <div className={styles.page}>
       <div className={styles.head}>
@@ -133,94 +156,152 @@ export default function DashboardHome() {
         <DateRangePicker value={range} onChange={setRange} />
       </div>
 
-      {error && <Card className={styles.errorCard}>{error}</Card>}
+      {error && (
+        <Banner
+          tone="error"
+          title="Couldn’t load your metrics"
+          action={
+            <Button variant="secondary" loading={loading} onClick={() => void load(range)}>
+              Retry
+            </Button>
+          }
+        >
+          {error}
+        </Banner>
+      )}
 
-      {/* KPI tiles */}
-      <div className={styles.kpis}>
-        {t ? (
-          <>
-            <StatTile
-              label="Revenue"
-              value={formatUsd(t.revenueUsd)}
-              spark={<Sparkline values={series.map((p) => p.revenueUsd)} tone="gold" />}
-            />
-            <StatTile
-              label="Ad Spend"
-              value={formatUsd(t.spendUsd)}
-              spark={<Sparkline values={series.map((p) => p.spendUsd)} tone="rust" />}
-            />
-            <StatTile
-              label="Profit"
-              value={formatUsd(t.profitUsd)}
-              tone={t.profitUsd > 0 ? 'pos' : t.profitUsd < 0 ? 'neg' : 'neutral'}
-              sub={t.profitUsd >= 0 ? 'In the green' : 'In the red'}
-              spark={<Sparkline values={series.map((p) => p.profitUsd)} tone="green" />}
-            />
-            <StatTile label="ROI" value={`${t.roi.toFixed(2)}×`} tone={roiTone(t.roi)} sub={`${t.conversions.toLocaleString()} conversions`} />
-            {isAdmin && <StatTile label="Platform Margin" value={formatUsd(t.marginUsd)} sub="Your cut" />}
-          </>
-        ) : (
-          Array.from({ length: isAdmin ? 5 : 4 }).map((_, i) => <Skeleton key={i} className={styles.kpiSkel} />)
-        )}
-      </div>
-
-      {/* Revenue vs spend chart */}
-      <Card className={styles.chartCard}>
-        <div className={styles.chartHead}>
-          <span className={styles.cardTitle}>Revenue vs. Spend</span>
-          <div className={styles.legend}>
-            <span className={styles.legRev}>Revenue</span>
-            <span className={styles.legSpend}>Spend</span>
-          </div>
-        </div>
-        {summary ? <RevenueChart series={series} /> : <Skeleton className={styles.chartSkel} />}
-      </Card>
-
-      {/* Campaign performance */}
-      <Card className={styles.tableCard}>
-        <div className={styles.tableHead}>
-          <span className={styles.cardTitle}>Campaign performance</span>
-          {campaigns && campaigns.length > 0 && (
-            <button type="button" className={styles.csvBtn} onClick={() => exportCsv(campaigns)}>
-              Export CSV
-            </button>
+      {isError ? (
+        <Card className={styles.stateCard}>
+          <EmptyState
+            title="We hit a snag loading this dashboard"
+            description="Your metrics couldn’t be fetched. This is usually temporary — try again."
+            action={
+              <Button loading={loading} onClick={() => void load(range)}>
+                Retry
+              </Button>
+            }
+          />
+        </Card>
+      ) : (
+        <>
+          {isNewBuyer && (
+            <Card className={styles.stateCard}>
+              <EmptyState
+                title="Launch your first campaign"
+                description="Pick your keywords, attach an article, and go live. As soon as traffic flows you’ll see real-time spend, revenue, and ROI right here."
+                action={
+                  <Link href="/dashboard/campaigns/new" className={styles.ctaLink}>
+                    <Button>New campaign</Button>
+                  </Link>
+                }
+              />
+            </Card>
           )}
-        </div>
-        {!campaigns ? (
-          <div className={styles.rowsSkel}>
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className={styles.rowSkel} />
-            ))}
+
+          {/* KPI tiles — dimmed while a brand-new account has no real data yet */}
+          <div className={`${styles.kpis} ${isNewBuyer ? styles.deEmphasized : ''}`}>
+            {t ? (
+              <>
+                <StatTile
+                  label="Revenue"
+                  value={formatUsdCompact(t.revenueUsd)}
+                  valueTitle={formatUsd(t.revenueUsd)}
+                  spark={<Sparkline values={series.map((p) => p.revenueUsd)} tone="gold" />}
+                />
+                <StatTile
+                  label="Ad Spend"
+                  value={formatUsdCompact(t.spendUsd)}
+                  valueTitle={formatUsd(t.spendUsd)}
+                  spark={<Sparkline values={series.map((p) => p.spendUsd)} tone="rust" />}
+                />
+                <StatTile
+                  label="Profit"
+                  value={formatUsdCompact(t.profitUsd)}
+                  valueTitle={formatUsd(t.profitUsd)}
+                  tone={t.profitUsd > 0 ? 'pos' : t.profitUsd < 0 ? 'neg' : 'neutral'}
+                  sub={t.profitUsd >= 0 ? 'In the green' : 'In the red'}
+                  spark={<Sparkline values={series.map((p) => p.profitUsd)} tone="green" />}
+                />
+                <StatTile
+                  label="ROI"
+                  value={`${t.roi.toFixed(2)}×`}
+                  valueTitle={`${t.roi.toFixed(2)}× return on ad spend`}
+                  tone={roiTone(t.roi)}
+                  sub={t.roi < 1 ? 'Below break-even' : `${t.conversions.toLocaleString()} conversions`}
+                />
+                {isAdmin && (
+                  <StatTile
+                    label="Platform Margin"
+                    value={formatUsdCompact(t.marginUsd)}
+                    valueTitle={formatUsd(t.marginUsd)}
+                    sub="Your cut"
+                  />
+                )}
+              </>
+            ) : (
+              Array.from({ length: isAdmin ? 5 : 4 }).map((_, i) => <Skeleton key={i} className={styles.kpiSkel} />)
+            )}
           </div>
-        ) : campaigns.length === 0 ? (
-          <p className={styles.empty}>No campaigns yet. Launch one to start seeing performance here.</p>
-        ) : (
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th className={styles.thLeft}>Campaign</th>
-                  <th>Status</th>
-                  <th className={styles.thNum}>Spend</th>
-                  <th className={styles.thNum}>Revenue</th>
-                  <th className={styles.thNum}>Profit</th>
-                  <th className={styles.thNum}>ROI</th>
-                  <th className={styles.thNum}>Conv.</th>
-                </tr>
-              </thead>
-              <tbody>
-                {campaigns.map((c) => {
-                  const open = expanded === c.id;
-                  const bd = breakdowns[c.id];
-                  return (
-                    <CampaignRows key={c.id} c={c} open={open} bd={bd} onToggle={() => void toggle(c.id)} />
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+
+          {/* Revenue vs spend chart */}
+          <Card className={`${styles.chartCard} ${isNewBuyer ? styles.deEmphasized : ''}`}>
+            <div className={styles.chartHead}>
+              <span className={styles.cardTitle}>Revenue vs. Spend</span>
+              <div className={styles.legend}>
+                <span className={styles.legRev}>Revenue</span>
+                <span className={styles.legSpend}>Spend</span>
+              </div>
+            </div>
+            {summary ? <RevenueChart series={series} /> : <Skeleton className={styles.chartSkel} />}
+          </Card>
+
+          {/* Campaign performance */}
+          <Card className={styles.tableCard}>
+            <div className={styles.tableHead}>
+              <span className={styles.cardTitle}>Campaign performance</span>
+              {campaigns && campaigns.length > 0 && (
+                <button type="button" className={styles.csvBtn} onClick={() => exportCsv(campaigns)}>
+                  Export CSV
+                </button>
+              )}
+            </div>
+            {!campaigns ? (
+              <div className={styles.rowsSkel}>
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className={styles.rowSkel} />
+                ))}
+              </div>
+            ) : campaigns.length === 0 ? (
+              <p className={styles.empty}>No campaigns yet. Launch one to start seeing performance here.</p>
+            ) : (
+              <div className={styles.tableWrap}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th className={styles.thLeft}>Campaign</th>
+                      <th>Status</th>
+                      <th className={styles.thNum}>Spend</th>
+                      <th className={styles.thNum}>Revenue</th>
+                      <th className={styles.thNum}>Profit</th>
+                      <th className={styles.thNum}>ROI</th>
+                      <th className={styles.thNum}>Conv.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {campaigns.map((c) => {
+                      const open = expanded === c.id;
+                      const bd = breakdowns[c.id];
+                      return (
+                        <CampaignRows key={c.id} c={c} open={open} bd={bd} onToggle={() => void toggle(c.id)} />
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </>
+      )}
     </div>
   );
 }
@@ -240,12 +321,23 @@ function CampaignRows({
   bd: CampaignBreakdown | undefined;
   onToggle: () => void;
 }) {
+  const detailId = `${useId()}-detail`;
   return (
     <>
-      <tr className={`${styles.row} ${open ? styles.rowOpen : ''}`} onClick={onToggle}>
+      <tr className={`${styles.row} ${open ? styles.rowOpen : ''}`}>
         <td className={styles.tdName}>
-          <span className={`${styles.caret} ${open ? styles.caretOpen : ''}`}>▸</span>
-          <span className={styles.cName}>{c.name}</span>
+          <button
+            type="button"
+            className={styles.disclosure}
+            aria-expanded={open}
+            aria-controls={detailId}
+            onClick={onToggle}
+          >
+            <span className={`${styles.caret} ${open ? styles.caretOpen : ''}`} aria-hidden>
+              ▸
+            </span>
+            <span className={styles.cName}>{c.name}</span>
+          </button>
           {c.channelLabel && <span className={styles.chTag}>{c.channelLabel}</span>}
           <span className={styles.adCount}>
             {c.adSetCount} set{c.adSetCount === 1 ? '' : 's'} · {c.adCount} ad{c.adCount === 1 ? '' : 's'}
@@ -261,7 +353,7 @@ function CampaignRows({
         <td className={styles.num}>{c.conversions.toLocaleString()}</td>
       </tr>
       {open && (
-        <tr className={styles.detailRow}>
+        <tr className={styles.detailRow} id={detailId}>
           <td colSpan={7}>
             {!bd ? (
               <Skeleton className={styles.detailSkel} />

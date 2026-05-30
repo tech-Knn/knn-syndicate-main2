@@ -1,6 +1,6 @@
 'use client';
 
-import { type ChangeEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ChangeEvent, type KeyboardEvent, useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -40,7 +40,7 @@ import {
 } from '@knn/shared';
 import { ApiError, campaigns as campaignsApi, facebook, uploads as uploadsApi } from '@/lib/api';
 import { type Campaign, type FbAccount, type FbPage, type FbPixel, type OfferDomainOption } from '@/lib/types';
-import { Button, Card, SearchSelect, Spinner } from './ui';
+import { Banner, Button, Card, SearchSelect, Spinner } from './ui';
 import styles from './campaign-wizard.module.css';
 
 interface AdForm {
@@ -539,18 +539,38 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
       </div>
 
       {!readOnly && (
-        <div className={styles.steps}>
+        <nav className={styles.steps} aria-label="Campaign steps">
           {STEPS.map((label, i) => (
-            <div key={label} className={`${styles.step} ${i === step ? styles.stepActive : i < step ? styles.stepDone : ''}`} onClick={() => setStep(i)} role="button">
+            <button
+              key={label}
+              type="button"
+              className={`${styles.step} ${i === step ? styles.stepActive : i < step ? styles.stepDone : ''}`}
+              aria-current={i === step ? 'step' : undefined}
+              onClick={() => setStep(i)}
+              onKeyDown={(e: KeyboardEvent<HTMLButtonElement>) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setStep(i);
+                }
+              }}
+            >
               <span className={styles.stepNum}>{i + 1}</span>
               {label}
-            </div>
+            </button>
           ))}
-        </div>
+        </nav>
       )}
 
-      {bannerError && <div className={styles.error}>{bannerError}</div>}
-      {success && <div className={styles.banner}>{success}</div>}
+      {bannerError && (
+        <Banner tone="error" role="alert" onDismiss={() => setBannerError(null)}>
+          {bannerError}
+        </Banner>
+      )}
+      {success && (
+        <Banner tone="success" role="status" onDismiss={() => setSuccess(null)}>
+          {success}
+        </Banner>
+      )}
 
       <Card className={styles.card}>
         {readOnly ? (
@@ -608,24 +628,25 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
 
 // ---- Reusable pickers ------------------------------------------------------
 
-function CountryPicker({ selected, onChange, placeholder }: { selected: string[]; onChange: (codes: string[]) => void; placeholder?: string }) {
+function CountryPicker({ selected, onChange, placeholder, ariaLabel }: { selected: string[]; onChange: (codes: string[]) => void; placeholder?: string; ariaLabel?: string }) {
   const [search, setSearch] = useState('');
+  const label = ariaLabel ?? placeholder ?? 'Search countries';
   const filtered = COUNTRIES.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()) || c.code.toLowerCase() === search.toLowerCase());
   return (
-    <div>
+    <div role="group" aria-label={label}>
       {selected.length > 0 && (
         <div className={styles.chips} style={{ marginBottom: '0.5rem' }}>
           {selected.map((code) => (
             <span key={code} className={styles.chip}>
               {countryName(code)}
-              <button className={styles.chipX} onClick={() => onChange(toggle(selected, code))}>
+              <button type="button" className={styles.chipX} aria-label={`Remove ${countryName(code)}`} onClick={() => onChange(toggle(selected, code))}>
                 ×
               </button>
             </span>
           ))}
         </div>
       )}
-      <input className={styles.input} placeholder={placeholder ?? 'Search countries…'} value={search} onChange={(e) => setSearch(e.target.value)} />
+      <input className={styles.input} aria-label={label} placeholder={placeholder ?? 'Search countries…'} value={search} onChange={(e) => setSearch(e.target.value)} />
       <div className={styles.countryList}>
         {filtered.map((c) => (
           <label key={c.code} className={styles.countryItem}>
@@ -639,20 +660,67 @@ function CountryPicker({ selected, onChange, placeholder }: { selected: string[]
   );
 }
 
-function ChipGroup<T extends string>({ options, selected, onToggle, allLabel }: { options: readonly { value: T; label: string }[]; selected: T[]; onToggle: (v: T) => void; allLabel?: string }) {
+function ChipGroup<T extends string>({
+  options,
+  selected,
+  onToggle,
+  allLabel,
+  onClear,
+  ariaLabel,
+}: {
+  options: readonly { value: T; label: string }[];
+  selected: T[];
+  onToggle: (v: T) => void;
+  allLabel?: string;
+  onClear?: () => void;
+  ariaLabel?: string;
+}) {
   return (
-    <div className={styles.toggle}>
+    <div className={styles.toggle} role="group" aria-label={ariaLabel}>
       {allLabel && (
-        <span className={`${styles.toggleBtn} ${selected.length === 0 ? styles.toggleOn : ''}`} style={{ opacity: 0.85 }}>
+        <button
+          type="button"
+          className={`${styles.toggleBtn} ${styles.toggleAllBtn} ${selected.length === 0 ? styles.toggleOn : ''}`}
+          aria-pressed={selected.length === 0}
+          onClick={() => onClear?.()}
+        >
+          {selected.length === 0 && (
+            <span className={styles.toggleCheck} aria-hidden="true">
+              ✓{' '}
+            </span>
+          )}
           {allLabel}
-        </span>
-      )}
-      {options.map((o) => (
-        <button key={o.value} className={`${styles.toggleBtn} ${selected.includes(o.value) ? styles.toggleOn : ''}`} onClick={() => onToggle(o.value)}>
-          {o.label}
         </button>
-      ))}
+      )}
+      {options.map((o) => {
+        const on = selected.includes(o.value);
+        return (
+          <button
+            key={o.value}
+            type="button"
+            className={`${styles.toggleBtn} ${on ? styles.toggleOn : ''}`}
+            aria-pressed={on}
+            onClick={() => onToggle(o.value)}
+          >
+            {on && (
+              <span className={styles.toggleCheck} aria-hidden="true">
+                ✓{' '}
+              </span>
+            )}
+            {o.label}
+          </button>
+        );
+      })}
     </div>
+  );
+}
+
+/** Required-field marker (visual only; the asterisk is hidden from screen readers). */
+function Req() {
+  return (
+    <span aria-hidden="true" style={{ color: 'var(--red-text)', marginLeft: '0.15rem' }}>
+      *
+    </span>
   );
 }
 
@@ -680,6 +748,8 @@ function OfferStep({
   readOnly: boolean;
 }) {
   const [keywordDraft, setKeywordDraft] = useState('');
+  const uid = useId();
+  const fid = (name: string): string => `${uid}-${name}`;
   const setOfferRow = (i: number, p: Partial<OfferDraft>): void => setOffers((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...p } : r)));
   const addOfferRow = (): void => setOffers((rows) => [...rows, { domainId: '', weightPct: 0, kind: 'PAID' }]);
   const removeOfferRow = (i: number): void => setOffers((rows) => (rows.length > 1 ? rows.filter((_, idx) => idx !== i) : rows));
@@ -693,7 +763,7 @@ function OfferStep({
   return (
     <div>
       {accounts.length === 0 && (
-        <div className={styles.issues}>
+        <div className={styles.issues} role="status">
           <div className={styles.issuesTitle}>No Facebook ad accounts found</div>
           <div style={{ fontSize: '0.83rem' }}>
             <Link href="/dashboard/facebook">Connect Facebook</Link> first to pick an ad account, page, and pixel.
@@ -702,12 +772,12 @@ function OfferStep({
       )}
       <div className={styles.grid}>
         <div className={`${styles.field} ${styles.full}`}>
-          <label className={styles.label}>Campaign name</label>
-          <input className={styles.input} value={form.name} onChange={(e) => patch({ name: e.target.value })} placeholder="e.g. Medicare Advantage — Q2" />
+          <label className={styles.label} htmlFor={fid('name')}>Campaign name<Req /></label>
+          <input id={fid('name')} className={styles.input} value={form.name} onChange={(e) => patch({ name: e.target.value })} placeholder="e.g. Medicare Advantage — Q2" />
         </div>
         <div className={styles.field}>
-          <label className={styles.label}>Objective</label>
-          <select className={styles.select} value={form.objective} onChange={(e) => onObjectiveChange(e.target.value as CampaignForm['objective'])}>
+          <label className={styles.label} htmlFor={fid('objective')}>Objective</label>
+          <select id={fid('objective')} className={styles.select} value={form.objective} onChange={(e) => onObjectiveChange(e.target.value as CampaignForm['objective'])}>
             {CAMPAIGN_OBJECTIVES.map((o) => (
               <option key={o} value={o}>
                 {o.replace('OUTCOME_', '')}
@@ -716,34 +786,38 @@ function OfferStep({
           </select>
         </div>
         <div className={styles.field}>
-          <label className={styles.label}>Budget optimization</label>
-          <div className={styles.toggle}>
-            <button className={`${styles.toggleBtn} ${form.budgetMode === 'AD_SET' ? styles.toggleOn : ''}`} onClick={() => patch({ budgetMode: 'AD_SET' })}>
+          <span className={styles.label}>Budget optimization</span>
+          <div className={styles.toggle} role="group" aria-label="Budget optimization">
+            <button type="button" className={`${styles.toggleBtn} ${form.budgetMode === 'AD_SET' ? styles.toggleOn : ''}`} aria-pressed={form.budgetMode === 'AD_SET'} onClick={() => patch({ budgetMode: 'AD_SET' })}>
+              {form.budgetMode === 'AD_SET' && <span className={styles.toggleCheck} aria-hidden="true">✓ </span>}
               Per ad set (ABO)
             </button>
-            <button className={`${styles.toggleBtn} ${form.budgetMode === 'CAMPAIGN' ? styles.toggleOn : ''}`} onClick={() => patch({ budgetMode: 'CAMPAIGN' })}>
+            <button type="button" className={`${styles.toggleBtn} ${form.budgetMode === 'CAMPAIGN' ? styles.toggleOn : ''}`} aria-pressed={form.budgetMode === 'CAMPAIGN'} onClick={() => patch({ budgetMode: 'CAMPAIGN' })}>
+              {form.budgetMode === 'CAMPAIGN' && <span className={styles.toggleCheck} aria-hidden="true">✓ </span>}
               Campaign (CBO)
             </button>
           </div>
         </div>
         {form.budgetMode === 'CAMPAIGN' && (
           <div className={styles.field}>
-            <label className={styles.label}>Campaign daily budget (USD)</label>
-            <input className={styles.input} type="number" min="1" step="1" value={form.dailyBudget} onChange={(e) => patch({ dailyBudget: e.target.value })} />
+            <label className={styles.label} htmlFor={fid('cbo-budget')}>Campaign daily budget (USD)<Req /></label>
+            <input id={fid('cbo-budget')} className={styles.input} type="number" min="1" step="1" value={form.dailyBudget} onChange={(e) => patch({ dailyBudget: e.target.value })} />
           </div>
         )}
         <div className={`${styles.field} ${styles.full}`}>
-          <label className={styles.label}>Special ad categories</label>
+          <span className={styles.label}>Special ad categories</span>
           <ChipGroup
+            ariaLabel="Special ad categories"
             options={SPECIAL_AD_CATEGORIES.map((c) => ({ value: c, label: c.replace(/_/g, ' ').toLowerCase() }))}
             selected={form.specialAdCategories}
             onToggle={(v) => patch({ specialAdCategories: toggle(form.specialAdCategories, v) })}
+            onClear={() => patch({ specialAdCategories: [] })}
             allLabel="None"
           />
           <span className={styles.hint}>Required by Facebook for credit / employment / housing / social-issue offers.</span>
         </div>
-        <div className={styles.field}>
-          <label className={styles.label}>Ad account</label>
+        <div className={styles.field} role="group" aria-label="Ad account">
+          <span className={styles.label}>Ad account<Req /></span>
           <SearchSelect
             value={form.adAccountId}
             onChange={(v) => patch({ adAccountId: v, pageId: '' })}
@@ -751,8 +825,8 @@ function OfferStep({
             options={accounts.map((a) => ({ value: a.id, label: a.name, sublabel: `${a.fbAccountId} · ${a.currency}` }))}
           />
         </div>
-        <div className={styles.field}>
-          <label className={styles.label}>Page</label>
+        <div className={styles.field} role="group" aria-label="Page">
+          <span className={styles.label}>Page<Req /></span>
           <SearchSelect
             value={form.pageId}
             onChange={(v) => patch({ pageId: v })}
@@ -762,18 +836,18 @@ function OfferStep({
             emptyText="No Pages found for this profile. Make sure your Facebook profile/Business manages a Page, then click Re-sync on the Facebook tab."
           />
         </div>
-        <div className={`${styles.field} ${styles.full}`}>
-          <label className={styles.label}>Destination website(s)</label>
+        <div className={`${styles.field} ${styles.full}`} role="group" aria-label="Destination websites">
+          <span className={styles.label}>Destination website(s)<Req /></span>
           <span className={styles.hint}>Where the ads send traffic — the monetized article site(s). AFS revenue is attributed per site. Add one, or split traffic across several by weight.</span>
           {offerDomains.length === 0 ? (
-            <div className={styles.issues} style={{ marginTop: '0.5rem' }}>
+            <div className={styles.issues} role="status" style={{ marginTop: '0.5rem' }}>
               <div style={{ fontSize: '0.83rem' }}>No websites are available to your company yet. Ask your admin to register (and share) a website under <strong>Domains</strong>; it&apos;ll then appear here.</div>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.4rem' }}>
+            <div className={styles.offerRows}>
               {offers.map((o, i) => (
-                <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <div style={{ flex: 2, minWidth: '14rem' }}>
+                <div key={i} className={styles.offerRow}>
+                  <div className={styles.offerDomain} role="group" aria-label={`Destination website ${i + 1}`}>
                     <SearchSelect
                       value={o.domainId}
                       onChange={(v) => setOfferRow(i, { domainId: v })}
@@ -782,24 +856,23 @@ function OfferStep({
                       options={offerDomains.map((d) => ({ value: d.id, label: d.host, sublabel: d.afsLabel ?? undefined }))}
                     />
                   </div>
-                  <select className={styles.select} style={{ flex: 1, minWidth: '9rem' }} value={o.kind} disabled={readOnly} onChange={(e) => setOfferRow(i, { kind: e.target.value as OfferDraft['kind'] })}>
+                  <select className={`${styles.select} ${styles.offerKind}`} value={o.kind} disabled={readOnly} aria-label={`Destination website ${i + 1} type`} onChange={(e) => setOfferRow(i, { kind: e.target.value as OfferDraft['kind'] })}>
                     <option value="PAID">Paid (ad traffic)</option>
                     <option value="ORGANIC">Organic (fallback)</option>
                   </select>
                   <input
-                    className={styles.input}
-                    style={{ width: '6rem' }}
+                    className={`${styles.input} ${styles.offerWeight}`}
                     type="number"
                     min={0}
                     max={100}
                     value={o.weightPct}
                     disabled={o.kind === 'ORGANIC' || readOnly}
                     onChange={(e) => setOfferRow(i, { weightPct: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
-                    aria-label="Traffic weight %"
+                    aria-label={`Destination website ${i + 1} traffic weight %`}
                   />
-                  <span className={styles.hint}>%</span>
+                  <span className={styles.hint} aria-hidden="true">%</span>
                   {offers.length > 1 && !readOnly && (
-                    <button type="button" className={styles.removeBtn} onClick={() => removeOfferRow(i)}>
+                    <button type="button" className={styles.removeBtn} aria-label={`Remove destination website ${i + 1}`} onClick={() => removeOfferRow(i)}>
                       Remove
                     </button>
                   )}
@@ -815,17 +888,18 @@ function OfferStep({
           )}
         </div>
         <div className={styles.field}>
-          <label className={styles.label}>RAC (Related Ad Category)</label>
-          <input className={styles.input} value={form.racValue} onChange={(e) => patch({ racValue: e.target.value })} placeholder="e.g. health insurance" />
+          <label className={styles.label} htmlFor={fid('rac')}>RAC (Related Ad Category)<Req /></label>
+          <input id={fid('rac')} className={styles.input} value={form.racValue} onChange={(e) => patch({ racValue: e.target.value })} placeholder="e.g. health insurance" />
         </div>
         <div className={`${styles.field} ${styles.full}`}>
-          <label className={styles.label}>Landing-page query / angle</label>
-          <input className={styles.input} value={form.query} onChange={(e) => patch({ query: e.target.value })} placeholder='e.g. "Affordable health insurance plans for seniors"' />
+          <label className={styles.label} htmlFor={fid('query')}>Landing-page query / angle</label>
+          <input id={fid('query')} className={styles.input} value={form.query} onChange={(e) => patch({ query: e.target.value })} placeholder='e.g. "Affordable health insurance plans for seniors"' />
           <span className={styles.hint}>Drives the AI article + AFS terms. Keep it short and specific.</span>
         </div>
         <div className={`${styles.field} ${styles.full}`}>
-          <label className={styles.label}>Keywords</label>
+          <label className={styles.label} htmlFor={fid('keywords')}>Keywords<Req /></label>
           <input
+            id={fid('keywords')}
             className={styles.input}
             value={keywordDraft}
             onChange={(e) => setKeywordDraft(e.target.value)}
@@ -842,7 +916,7 @@ function OfferStep({
               {form.keywords.map((k) => (
                 <span key={k} className={styles.chip}>
                   {k}
-                  <button className={styles.chipX} onClick={() => patch({ keywords: form.keywords.filter((x) => x !== k) })}>
+                  <button type="button" className={styles.chipX} aria-label={`Remove ${k}`} onClick={() => patch({ keywords: form.keywords.filter((x) => x !== k) })}>
                     ×
                   </button>
                 </span>
@@ -851,16 +925,16 @@ function OfferStep({
           )}
         </div>
         <div className={styles.field}>
-          <label className={styles.label}>Campaign name template</label>
-          <input className={styles.input} value={form.nameTemplate} onChange={(e) => patch({ nameTemplate: e.target.value })} placeholder="{country} - {query} - {id}" />
+          <label className={styles.label} htmlFor={fid('name-tpl')}>Campaign name template</label>
+          <input id={fid('name-tpl')} className={styles.input} value={form.nameTemplate} onChange={(e) => patch({ nameTemplate: e.target.value })} placeholder="{country} - {query} - {id}" />
         </div>
         <div className={styles.field}>
-          <label className={styles.label}>Ad set name template</label>
-          <input className={styles.input} value={form.adsetNameTemplate} onChange={(e) => patch({ adsetNameTemplate: e.target.value })} placeholder="{country} - {age} - {id}" />
+          <label className={styles.label} htmlFor={fid('adset-tpl')}>Ad set name template</label>
+          <input id={fid('adset-tpl')} className={styles.input} value={form.adsetNameTemplate} onChange={(e) => patch({ adsetNameTemplate: e.target.value })} placeholder="{country} - {age} - {id}" />
         </div>
         <div className={`${styles.field} ${styles.full}`}>
-          <label className={styles.label}>Fallback URL (non-ad traffic)</label>
-          <input className={styles.input} value={form.fallbackUrl} onChange={(e) => patch({ fallbackUrl: e.target.value })} placeholder="https://…" />
+          <label className={styles.label} htmlFor={fid('fallback')}>Fallback URL (non-ad traffic)</label>
+          <input id={fid('fallback')} className={styles.input} value={form.fallbackUrl} onChange={(e) => patch({ fallbackUrl: e.target.value })} placeholder="https://…" />
         </div>
       </div>
     </div>
@@ -905,7 +979,7 @@ function AdSetsStep({
           <div className={styles.adsetHead}>
             <span className={styles.adsetTitle}>Ad set {i + 1}</span>
             {form.adSets.length > 1 && (
-              <button className={styles.removeBtn} onClick={() => removeAdSet(set.key)}>
+              <button type="button" className={styles.removeBtn} aria-label={`Remove ad set ${i + 1}`} onClick={() => removeAdSet(set.key)}>
                 Remove ad set
               </button>
             )}
@@ -913,13 +987,13 @@ function AdSetsStep({
 
           <div className={styles.grid}>
             <div className={styles.field}>
-              <label className={styles.label}>Name</label>
-              <input className={styles.input} value={set.name} onChange={(e) => patchAdSet(set.key, { name: e.target.value })} />
+              <label className={styles.label} htmlFor={`${set.key}-name`}>Name<Req /></label>
+              <input id={`${set.key}-name`} className={styles.input} value={set.name} onChange={(e) => patchAdSet(set.key, { name: e.target.value })} />
             </div>
             {!cbo && (
               <div className={styles.field}>
-                <label className={styles.label}>Daily budget (USD)</label>
-                <input className={styles.input} type="number" min="1" step="1" value={set.dailyBudget} onChange={(e) => patchAdSet(set.key, { dailyBudget: e.target.value })} />
+                <label className={styles.label} htmlFor={`${set.key}-budget`}>Daily budget (USD)<Req /></label>
+                <input id={`${set.key}-budget`} className={styles.input} type="number" min="1" step="1" value={set.dailyBudget} onChange={(e) => patchAdSet(set.key, { dailyBudget: e.target.value })} />
               </div>
             )}
           </div>
@@ -930,45 +1004,46 @@ function AdSetsStep({
               <h3 className={styles.sectionTitle}>Audience</h3>
             </div>
             <div className={styles.field}>
-              <label className={styles.label}>Countries</label>
-              <CountryPicker selected={set.countries} onChange={(codes) => patchAdSet(set.key, { countries: codes })} />
+              <span className={styles.label}>Countries<Req /></span>
+              <CountryPicker ariaLabel="Target countries" selected={set.countries} onChange={(codes) => patchAdSet(set.key, { countries: codes })} />
             </div>
             <div className={styles.field} style={{ marginTop: '1rem' }}>
-              <label className={styles.label}>Exclude countries</label>
-              <CountryPicker selected={set.excludeCountries} onChange={(codes) => patchAdSet(set.key, { excludeCountries: codes })} placeholder="Search countries to exclude…" />
+              <span className={styles.label}>Exclude countries</span>
+              <CountryPicker ariaLabel="Exclude countries" selected={set.excludeCountries} onChange={(codes) => patchAdSet(set.key, { excludeCountries: codes })} placeholder="Search countries to exclude…" />
             </div>
             <div className={styles.grid} style={{ marginTop: '1rem' }}>
               <div className={styles.field}>
-                <label className={styles.label}>Age min</label>
-                <input className={styles.input} type="number" min={AGE_BOUND_MIN} max={AGE_BOUND_MAX} value={set.ageMin} onChange={(e) => patchAdSet(set.key, { ageMin: Number(e.target.value) })} />
+                <label className={styles.label} htmlFor={`${set.key}-agemin`}>Age min</label>
+                <input id={`${set.key}-agemin`} className={styles.input} type="number" min={AGE_BOUND_MIN} max={AGE_BOUND_MAX} value={set.ageMin} onChange={(e) => patchAdSet(set.key, { ageMin: Number(e.target.value) })} />
               </div>
               <div className={styles.field}>
-                <label className={styles.label}>Age max</label>
-                <input className={styles.input} type="number" min={AGE_BOUND_MIN} max={AGE_BOUND_MAX} value={set.ageMax} onChange={(e) => patchAdSet(set.key, { ageMax: Number(e.target.value) })} />
+                <label className={styles.label} htmlFor={`${set.key}-agemax`}>Age max</label>
+                <input id={`${set.key}-agemax`} className={styles.input} type="number" min={AGE_BOUND_MIN} max={AGE_BOUND_MAX} value={set.ageMax} onChange={(e) => patchAdSet(set.key, { ageMax: Number(e.target.value) })} />
               </div>
               <div className={styles.field}>
-                <label className={styles.label}>Gender</label>
-                <ChipGroup options={GENDERS.map((g) => ({ value: g, label: g[0]!.toUpperCase() + g.slice(1) }))} selected={set.genders} onToggle={(g) => patchAdSet(set.key, { genders: toggle(set.genders, g) })} allLabel="All" />
+                <span className={styles.label}>Gender</span>
+                <ChipGroup ariaLabel="Gender" options={GENDERS.map((g) => ({ value: g, label: g[0]!.toUpperCase() + g.slice(1) }))} selected={set.genders} onToggle={(g) => patchAdSet(set.key, { genders: toggle(set.genders, g) })} onClear={() => patchAdSet(set.key, { genders: [] })} allLabel="All" />
               </div>
               <div className={styles.field}>
-                <label className={styles.label}>Devices</label>
-                <ChipGroup options={DEVICE_PLATFORMS.map((d) => ({ value: d, label: d[0]!.toUpperCase() + d.slice(1) }))} selected={set.devicePlatforms} onToggle={(d) => patchAdSet(set.key, { devicePlatforms: toggle(set.devicePlatforms, d) })} allLabel="All" />
+                <span className={styles.label}>Devices</span>
+                <ChipGroup ariaLabel="Devices" options={DEVICE_PLATFORMS.map((d) => ({ value: d, label: d[0]!.toUpperCase() + d.slice(1) }))} selected={set.devicePlatforms} onToggle={(d) => patchAdSet(set.key, { devicePlatforms: toggle(set.devicePlatforms, d) })} onClear={() => patchAdSet(set.key, { devicePlatforms: [] })} allLabel="All" />
               </div>
               <div className={styles.field}>
-                <label className={styles.label}>Mobile OS</label>
-                <ChipGroup options={MOBILE_OS.map((o) => ({ value: o, label: o === 'ios' ? 'iOS' : 'Android' }))} selected={set.mobileOs} onToggle={(o) => patchAdSet(set.key, { mobileOs: toggle(set.mobileOs, o) })} allLabel="All" />
+                <span className={styles.label}>Mobile OS</span>
+                <ChipGroup ariaLabel="Mobile OS" options={MOBILE_OS.map((o) => ({ value: o, label: o === 'ios' ? 'iOS' : 'Android' }))} selected={set.mobileOs} onToggle={(o) => patchAdSet(set.key, { mobileOs: toggle(set.mobileOs, o) })} onClear={() => patchAdSet(set.key, { mobileOs: [] })} allLabel="All" />
               </div>
               <div className={styles.field}>
-                <label className={styles.label}>Advantage+ audience</label>
+                <span className={styles.label}>Advantage+ audience</span>
                 <div className={styles.toggle}>
-                  <button className={`${styles.toggleBtn} ${set.advantageAudience ? styles.toggleOn : ''}`} onClick={() => patchAdSet(set.key, { advantageAudience: !set.advantageAudience })}>
+                  <button type="button" className={`${styles.toggleBtn} ${set.advantageAudience ? styles.toggleOn : ''}`} aria-pressed={set.advantageAudience} aria-label="Advantage+ audience" onClick={() => patchAdSet(set.key, { advantageAudience: !set.advantageAudience })}>
+                    {set.advantageAudience && <span className={styles.toggleCheck} aria-hidden="true">✓ </span>}
                     {set.advantageAudience ? 'On' : 'Off'}
                   </button>
                 </div>
               </div>
               <div className={`${styles.field} ${styles.full}`}>
-                <label className={styles.label}>Languages</label>
-                <ChipGroup options={LANGUAGES.map((l) => ({ value: l.code, label: l.name }))} selected={set.languages} onToggle={(c) => patchAdSet(set.key, { languages: toggle(set.languages, c) })} allLabel="All" />
+                <span className={styles.label}>Languages</span>
+                <ChipGroup ariaLabel="Languages" options={LANGUAGES.map((l) => ({ value: l.code, label: l.name }))} selected={set.languages} onToggle={(c) => patchAdSet(set.key, { languages: toggle(set.languages, c) })} onClear={() => patchAdSet(set.key, { languages: [] })} allLabel="All" />
               </div>
             </div>
           </div>
@@ -978,11 +1053,13 @@ function AdSetsStep({
             <div className={styles.sectionHead}>
               <h3 className={styles.sectionTitle}>Placements</h3>
             </div>
-            <div className={styles.toggle}>
-              <button className={`${styles.toggleBtn} ${set.placementMode === 'automatic' ? styles.toggleOn : ''}`} onClick={() => patchAdSet(set.key, { placementMode: 'automatic' })}>
+            <div className={styles.toggle} role="group" aria-label="Placement mode">
+              <button type="button" className={`${styles.toggleBtn} ${set.placementMode === 'automatic' ? styles.toggleOn : ''}`} aria-pressed={set.placementMode === 'automatic'} onClick={() => patchAdSet(set.key, { placementMode: 'automatic' })}>
+                {set.placementMode === 'automatic' && <span className={styles.toggleCheck} aria-hidden="true">✓ </span>}
                 Automatic
               </button>
-              <button className={`${styles.toggleBtn} ${set.placementMode === 'manual' ? styles.toggleOn : ''}`} onClick={() => patchAdSet(set.key, { placementMode: 'manual' })}>
+              <button type="button" className={`${styles.toggleBtn} ${set.placementMode === 'manual' ? styles.toggleOn : ''}`} aria-pressed={set.placementMode === 'manual'} onClick={() => patchAdSet(set.key, { placementMode: 'manual' })}>
+                {set.placementMode === 'manual' && <span className={styles.toggleCheck} aria-hidden="true">✓ </span>}
                 Manual
               </button>
             </div>
@@ -990,12 +1067,16 @@ function AdSetsStep({
               Object.entries(placementsByPlatform).map(([platform, opts]) => (
                 <div key={platform} style={{ marginTop: '0.7rem' }}>
                   <span className={styles.metaLabel}>{platform}</span>
-                  <div className={styles.toggle} style={{ marginTop: '0.3rem' }}>
-                    {opts.map((o) => (
-                      <button key={o.key} className={`${styles.toggleBtn} ${set.placements.includes(o.key) ? styles.toggleOn : ''}`} onClick={() => patchAdSet(set.key, { placements: toggle(set.placements, o.key) })}>
-                        {o.label}
-                      </button>
-                    ))}
+                  <div className={styles.toggle} role="group" aria-label={`${platform} placements`} style={{ marginTop: '0.3rem' }}>
+                    {opts.map((o) => {
+                      const on = set.placements.includes(o.key);
+                      return (
+                        <button key={o.key} type="button" className={`${styles.toggleBtn} ${on ? styles.toggleOn : ''}`} aria-pressed={on} onClick={() => patchAdSet(set.key, { placements: toggle(set.placements, o.key) })}>
+                          {on && <span className={styles.toggleCheck} aria-hidden="true">✓ </span>}
+                          {o.label}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
@@ -1008,8 +1089,8 @@ function AdSetsStep({
             </div>
             <div className={styles.grid}>
               <div className={styles.field}>
-                <label className={styles.label}>Performance goal</label>
-                <select className={styles.select} value={set.optimizationGoal} onChange={(e) => patchAdSet(set.key, { optimizationGoal: e.target.value })}>
+                <label className={styles.label} htmlFor={`${set.key}-goal`}>Performance goal</label>
+                <select id={`${set.key}-goal`} className={styles.select} value={set.optimizationGoal} onChange={(e) => patchAdSet(set.key, { optimizationGoal: e.target.value })}>
                   {performanceGoalsFor(form.objective).map((g) => (
                     <option key={g} value={g}>
                       {PERFORMANCE_GOAL_LABELS[g] ?? g}
@@ -1021,8 +1102,8 @@ function AdSetsStep({
                 </span>
               </div>
               <div className={styles.field}>
-                <label className={styles.label}>Pixel{goalRequiresPixel(set.optimizationGoal) ? '' : ' (optional)'}</label>
-                <select className={styles.select} value={set.pixelId ?? ''} onChange={(e) => patchAdSet(set.key, { pixelId: e.target.value || undefined })} disabled={!hasAccount}>
+                <label className={styles.label} htmlFor={`${set.key}-pixel`}>Pixel{goalRequiresPixel(set.optimizationGoal) ? <Req /> : ' (optional)'}</label>
+                <select id={`${set.key}-pixel`} className={styles.select} value={set.pixelId ?? ''} onChange={(e) => patchAdSet(set.key, { pixelId: e.target.value || undefined })} disabled={!hasAccount}>
                   <option value="">{hasAccount ? 'Select a pixel…' : 'Pick an ad account first'}</option>
                   {pixels.map((px) => (
                     <option key={px.id} value={px.id}>
@@ -1032,8 +1113,8 @@ function AdSetsStep({
                 </select>
               </div>
               <div className={styles.field}>
-                <label className={styles.label}>Conversion event (pxe)</label>
-                <select className={styles.select} value={set.pxeEvent} onChange={(e) => patchAdSet(set.key, { pxeEvent: e.target.value as PxeEvent })}>
+                <label className={styles.label} htmlFor={`${set.key}-pxe`}>Conversion event (pxe)</label>
+                <select id={`${set.key}-pxe`} className={styles.select} value={set.pxeEvent} onChange={(e) => patchAdSet(set.key, { pxeEvent: e.target.value as PxeEvent })}>
                   {PXE_EVENTS.map((p) => (
                     <option key={p} value={p}>
                       {p}
@@ -1042,13 +1123,17 @@ function AdSetsStep({
                 </select>
               </div>
               <div className={styles.field}>
-                <label className={styles.label}>Conversion reporting</label>
-                <div className={styles.toggle}>
-                  {CONVERSION_TYPES.map((c) => (
-                    <button key={c} className={`${styles.toggleBtn} ${set.conversionType === c ? styles.toggleOn : ''}`} onClick={() => patchAdSet(set.key, { conversionType: c })}>
-                      {c[0]!.toUpperCase() + c.slice(1)}
-                    </button>
-                  ))}
+                <span className={styles.label}>Conversion reporting</span>
+                <div className={styles.toggle} role="group" aria-label="Conversion reporting">
+                  {CONVERSION_TYPES.map((c) => {
+                    const on = set.conversionType === c;
+                    return (
+                      <button key={c} type="button" className={`${styles.toggleBtn} ${on ? styles.toggleOn : ''}`} aria-pressed={on} onClick={() => patchAdSet(set.key, { conversionType: c })}>
+                        {on && <span className={styles.toggleCheck} aria-hidden="true">✓ </span>}
+                        {c[0]!.toUpperCase() + c.slice(1)}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -1061,8 +1146,8 @@ function AdSetsStep({
             </div>
             <div className={styles.grid}>
               <div className={styles.field}>
-                <label className={styles.label}>Bid strategy</label>
-                <select className={styles.select} value={set.bidStrategy} onChange={(e) => patchAdSet(set.key, { bidStrategy: e.target.value as BidStrategy | '' })}>
+                <label className={styles.label} htmlFor={`${set.key}-bid`}>Bid strategy</label>
+                <select id={`${set.key}-bid`} className={styles.select} value={set.bidStrategy} onChange={(e) => patchAdSet(set.key, { bidStrategy: e.target.value as BidStrategy | '' })}>
                   <option value="">Highest volume (default)</option>
                   {BID_STRATEGIES.map((b) => (
                     <option key={b} value={b}>
@@ -1072,16 +1157,16 @@ function AdSetsStep({
                 </select>
               </div>
               <div className={styles.field}>
-                <label className={styles.label}>Cost cap (USD, optional)</label>
-                <input className={styles.input} type="number" min="0" step="0.01" value={set.costCap} onChange={(e) => patchAdSet(set.key, { costCap: e.target.value })} />
+                <label className={styles.label} htmlFor={`${set.key}-costcap`}>Cost cap (USD, optional)</label>
+                <input id={`${set.key}-costcap`} className={styles.input} type="number" min="0" step="0.01" value={set.costCap} onChange={(e) => patchAdSet(set.key, { costCap: e.target.value })} />
               </div>
               <div className={styles.field}>
-                <label className={styles.label}>ROAS factor (optional)</label>
-                <input className={styles.input} type="number" min="0" step="0.1" value={set.roasFactor} onChange={(e) => patchAdSet(set.key, { roasFactor: e.target.value })} />
+                <label className={styles.label} htmlFor={`${set.key}-roas`}>ROAS factor (optional)</label>
+                <input id={`${set.key}-roas`} className={styles.input} type="number" min="0" step="0.1" value={set.roasFactor} onChange={(e) => patchAdSet(set.key, { roasFactor: e.target.value })} />
               </div>
               <div className={styles.field}>
-                <label className={styles.label}>Attribution window</label>
-                <select className={styles.select} value={set.attributionWindow} onChange={(e) => patchAdSet(set.key, { attributionWindow: e.target.value as AttributionWindow | '' })}>
+                <label className={styles.label} htmlFor={`${set.key}-attr`}>Attribution window</label>
+                <select id={`${set.key}-attr`} className={styles.select} value={set.attributionWindow} onChange={(e) => patchAdSet(set.key, { attributionWindow: e.target.value as AttributionWindow | '' })}>
                   <option value="">Default</option>
                   {ATTRIBUTION_WINDOWS.map((w) => (
                     <option key={w} value={w}>
@@ -1091,12 +1176,12 @@ function AdSetsStep({
                 </select>
               </div>
               <div className={styles.field}>
-                <label className={styles.label}>Start (optional)</label>
-                <input className={styles.input} type="datetime-local" value={set.startTime} onChange={(e) => patchAdSet(set.key, { startTime: e.target.value })} />
+                <label className={styles.label} htmlFor={`${set.key}-start`}>Start (optional)</label>
+                <input id={`${set.key}-start`} className={styles.input} type="datetime-local" value={set.startTime} onChange={(e) => patchAdSet(set.key, { startTime: e.target.value })} />
               </div>
               <div className={styles.field}>
-                <label className={styles.label}>End (optional)</label>
-                <input className={styles.input} type="datetime-local" value={set.endTime} onChange={(e) => patchAdSet(set.key, { endTime: e.target.value })} />
+                <label className={styles.label} htmlFor={`${set.key}-end`}>End (optional)</label>
+                <input id={`${set.key}-end`} className={styles.input} type="datetime-local" value={set.endTime} onChange={(e) => patchAdSet(set.key, { endTime: e.target.value })} />
               </div>
             </div>
           </div>
@@ -1105,7 +1190,7 @@ function AdSetsStep({
           <div className={styles.section}>
             <div className={styles.sectionHead}>
               <h3 className={styles.sectionTitle}>Ads</h3>
-              <span className={styles.count}>{set.ads.length}</span>
+              <span className={styles.count} aria-label={`${set.ads.length} ad${set.ads.length === 1 ? '' : 's'}`}>{set.ads.length}</span>
             </div>
             {set.ads.map((ad, j) => (
               <div key={ad.key} className={styles.ad}>
@@ -1114,27 +1199,27 @@ function AdSetsStep({
                     AD {i + 1}.{j + 1}
                   </span>
                   {set.ads.length > 1 && (
-                    <button className={styles.removeBtn} onClick={() => removeAd(set.key, ad.key)}>
+                    <button type="button" className={styles.removeBtn} aria-label={`Remove ad ${i + 1}.${j + 1}`} onClick={() => removeAd(set.key, ad.key)}>
                       Remove
                     </button>
                   )}
                 </div>
                 <div className={styles.grid}>
                   <div className={styles.field}>
-                    <label className={styles.label}>Ad name</label>
-                    <input className={styles.input} value={ad.name} onChange={(e) => patchAd(set.key, ad.key, { name: e.target.value })} />
+                    <label className={styles.label} htmlFor={`${ad.key}-name`}>Ad name</label>
+                    <input id={`${ad.key}-name`} className={styles.input} value={ad.name} onChange={(e) => patchAd(set.key, ad.key, { name: e.target.value })} />
                   </div>
                   <div className={styles.field}>
-                    <label className={styles.label}>Headline</label>
-                    <input className={styles.input} value={ad.headline} onChange={(e) => patchAd(set.key, ad.key, { headline: e.target.value })} />
+                    <label className={styles.label} htmlFor={`${ad.key}-headline`}>Headline<Req /></label>
+                    <input id={`${ad.key}-headline`} className={styles.input} value={ad.headline} onChange={(e) => patchAd(set.key, ad.key, { headline: e.target.value })} />
                   </div>
                   <div className={`${styles.field} ${styles.full}`}>
-                    <label className={styles.label}>Primary text</label>
-                    <textarea className={styles.textarea} value={ad.primaryText} onChange={(e) => patchAd(set.key, ad.key, { primaryText: e.target.value })} />
+                    <label className={styles.label} htmlFor={`${ad.key}-primary`}>Primary text<Req /></label>
+                    <textarea id={`${ad.key}-primary`} className={styles.textarea} value={ad.primaryText} onChange={(e) => patchAd(set.key, ad.key, { primaryText: e.target.value })} />
                   </div>
                   <div className={styles.field}>
-                    <label className={styles.label}>Call to action</label>
-                    <select className={styles.select} value={ad.cta} onChange={(e) => patchAd(set.key, ad.key, { cta: e.target.value as CtaOption })}>
+                    <label className={styles.label} htmlFor={`${ad.key}-cta`}>Call to action</label>
+                    <select id={`${ad.key}-cta`} className={styles.select} value={ad.cta} onChange={(e) => patchAd(set.key, ad.key, { cta: e.target.value as CtaOption })}>
                       {CTA_OPTIONS.map((c) => (
                         <option key={c} value={c}>
                           {c.replace(/_/g, ' ')}
@@ -1143,7 +1228,7 @@ function AdSetsStep({
                     </select>
                   </div>
                   <div className={`${styles.field} ${styles.full}`}>
-                    <label className={styles.label}>Creative</label>
+                    <span className={styles.label}>Creative<Req /></span>
                     <div className={styles.creative}>
                       {ad.previewUrl && <img className={styles.thumb} src={ad.previewUrl} alt="creative preview" />}
                       <label className={styles.removeBtn} style={{ cursor: 'pointer' }}>
@@ -1151,6 +1236,7 @@ function AdSetsStep({
                         <input
                           type="file"
                           accept="image/*,video/mp4,video/quicktime"
+                          aria-label={`Upload creative for ad ${i + 1}.${j + 1}`}
                           hidden
                           onChange={(e: ChangeEvent<HTMLInputElement>) => {
                             const file = e.target.files?.[0];
@@ -1165,7 +1251,7 @@ function AdSetsStep({
               </div>
             ))}
             <div style={{ marginTop: '0.75rem' }}>
-              <button className={styles.addBtn} onClick={() => addAd(set.key)}>
+              <button type="button" className={styles.addBtn} onClick={() => addAd(set.key)}>
                 + Add ad
               </button>
             </div>
@@ -1173,7 +1259,7 @@ function AdSetsStep({
         </div>
       ))}
 
-      <button className={styles.addBtn} onClick={addAdSet}>
+      <button type="button" className={styles.addBtn} onClick={addAdSet}>
         + Add ad set
       </button>
     </div>
@@ -1200,7 +1286,7 @@ function ReviewStep({ form, accounts, pages, offers, issues }: { form: CampaignF
   return (
     <div>
       {issues.length > 0 && (
-        <div className={styles.issues}>
+        <div className={styles.issues} role="alert">
           <div className={styles.issuesTitle}>Before you can submit:</div>
           <ul className={styles.issuesList}>
             {issues.map((issue) => (
@@ -1216,8 +1302,8 @@ function ReviewStep({ form, accounts, pages, offers, issues }: { form: CampaignF
         </div>
         {checks.map((c) => (
           <div key={c.label} className={styles.summaryRow}>
-            <span className={styles.summaryKey} style={{ color: c.ok ? 'var(--green)' : 'var(--red)' }}>
-              {c.ok ? '✓' : '⚠'} {c.label}
+            <span className={styles.summaryKey} style={{ color: c.ok ? 'var(--green)' : 'var(--red-text)' }}>
+              <span aria-hidden="true">{c.ok ? '✓' : '⚠'}</span> <span className="srOnly">{c.ok ? 'Ready: ' : 'Not ready: '}</span>{c.label}
             </span>
             <span />
           </div>

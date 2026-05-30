@@ -1,9 +1,16 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { articleBlocks, articleTeaser } from '@knn/shared';
-import { resolveSiteConfig } from '../../_afs/site-config';
+import { resolveSiteConfig, resolveSiteName } from '../../_afs/site-config';
 import { RelatedSearchUnit } from './related-search-unit';
 import styles from './article.module.css';
+
+/** Long-form date for the article byline (e.g. "May 30, 2026"). */
+const PUBLISH_DATE_FMT = new Intl.DateTimeFormat('en-US', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+});
 
 // Server-side base for the public article API. articles.<domain> is a different
 // origin than the API (app.<domain>), so this is an absolute URL.
@@ -60,8 +67,15 @@ export default async function ArticlePage({
 }) {
   const { slug } = await params;
   const sp = await searchParams;
-  const [article, site] = await Promise.all([fetchArticle(slug), resolveSiteConfig()]);
+  const [article, site, siteName] = await Promise.all([
+    fetchArticle(slug),
+    resolveSiteConfig(),
+    resolveSiteName(),
+  ]);
   if (!article) notFound();
+
+  const updated = PUBLISH_DATE_FMT.format(new Date());
+  const year = new Date().getFullYear();
 
   const teaser = articleTeaser(article.compliantContent);
   const blocks = articleBlocks(article.compliantContent);
@@ -81,38 +95,80 @@ export default async function ArticlePage({
     str(sp.terms) || article.relatedSearchTerms.join(',') || article.keywords.join(',') || undefined;
 
   return (
-    <main className={styles.page}>
-      <article className={styles.article}>
-        <h1 className={styles.title}>{article.title}</h1>
-        {teaser && <p className={styles.lead}>{teaser}</p>}
-
-        {/* RSOC related-search unit (content-targeted). Clicks → /search results page. */}
-        <RelatedSearchUnit referrerAdCreative={referrerAdCreative} terms={terms} txid={txid} channel={channel} site={site} />
-
-        <div className={styles.body}>
-          {bodyBlocks.map((block, i) => {
-            if (block.type === 'h2') return <h2 key={i}>{block.text}</h2>;
-            if (block.type === 'h3') return <h3 key={i}>{block.text}</h3>;
-            if (block.type === 'ul')
-              return (
-                <ul key={i}>
-                  {block.items.map((it, j) => (
-                    <li key={j}>{it}</li>
-                  ))}
-                </ul>
-              );
-            if (block.type === 'ol')
-              return (
-                <ol key={i}>
-                  {block.items.map((it, j) => (
-                    <li key={j}>{it}</li>
-                  ))}
-                </ol>
-              );
-            return <p key={i}>{block.text}</p>;
-          })}
+    <div className={styles.page}>
+      <a className="skipLink" href="#main-content">
+        Skip to content
+      </a>
+      <header className={styles.siteHeader}>
+        <div className={styles.siteHeaderInner}>
+          <a className={styles.brandLink} href="/">
+            {siteName}
+          </a>
+          <span className={styles.siteTagline}>News &amp; Guides</span>
         </div>
-      </article>
-    </main>
+      </header>
+
+      <main id="main-content" className={styles.main}>
+        <article className={styles.article}>
+          <h1 className={styles.title}>{article.title}</h1>
+          <div className={styles.meta}>
+            <span className={styles.byline}>{siteName} Editorial Team</span>
+            <span className={styles.metaDot} aria-hidden="true">
+              ·
+            </span>
+            <span>
+              Updated <time dateTime={new Date().toISOString().slice(0, 10)}>{updated}</time>
+            </span>
+          </div>
+          {teaser && <p className={styles.lead}>{teaser}</p>}
+
+          {/* RSOC related-search unit (content-targeted). Clicks → /search results page. */}
+          <RelatedSearchUnit referrerAdCreative={referrerAdCreative} terms={terms} txid={txid} channel={channel} site={site} />
+
+          <div className={styles.body}>
+            {bodyBlocks.map((block, i) => {
+              if (block.type === 'h2') return <h2 key={i}>{block.text}</h2>;
+              if (block.type === 'h3') return <h3 key={i}>{block.text}</h3>;
+              if (block.type === 'ul')
+                return (
+                  <ul key={i}>
+                    {block.items.map((it, j) => (
+                      <li key={j}>{it}</li>
+                    ))}
+                  </ul>
+                );
+              if (block.type === 'ol')
+                return (
+                  <ol key={i}>
+                    {block.items.map((it, j) => (
+                      <li key={j}>{it}</li>
+                    ))}
+                  </ol>
+                );
+              return <p key={i}>{block.text}</p>;
+            })}
+          </div>
+        </article>
+      </main>
+
+      <footer className={styles.siteFooter}>
+        <div className={styles.siteFooterInner}>
+          <nav className={styles.footerNav} aria-label="Footer">
+            <a className={styles.footerLink} href="/about">
+              About
+            </a>
+            <a className={styles.footerLink} href="/privacy">
+              Privacy
+            </a>
+            <a className={styles.footerLink} href="/contact">
+              Contact
+            </a>
+          </nav>
+          <span className={styles.copyright}>
+            © {year} {siteName}
+          </span>
+        </div>
+      </footer>
+    </div>
   );
 }

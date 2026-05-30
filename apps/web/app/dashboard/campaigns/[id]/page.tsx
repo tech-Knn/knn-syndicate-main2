@@ -3,7 +3,7 @@
 import { use, useCallback, useEffect, useState } from 'react';
 import { CampaignWizard } from '@/components/campaign-wizard';
 import { ApiError, campaigns } from '@/lib/api';
-import { Button, Spinner } from '@/components/ui';
+import { Banner, Button, Spinner, useConfirm, useToast } from '@/components/ui';
 import { type Campaign } from '@/lib/types';
 import { OffersEditor } from './offers-editor';
 
@@ -20,11 +20,13 @@ const LIVE_TOGGLEABLE = new Set(['ACTIVE', 'PAUSED']);
 
 export default function EditCampaignPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const toast = useToast();
+  const confirm = useConfirm();
   const [campaign, setCampaign] = useState<Campaign | null | 'error'>(null);
   const [launching, setLaunching] = useState(false);
   const [reopening, setReopening] = useState(false);
   const [toggling, setToggling] = useState(false);
-  const [note, setNote] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
+  const [note, setNote] = useState<{ tone: 'success' | 'info'; text: string } | null>(null);
 
   const load = useCallback(() => {
     void campaigns
@@ -35,7 +37,7 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
   useEffect(() => load(), [load]);
 
   if (campaign === 'error') {
-    return <p style={{ color: 'var(--muted)' }}>Campaign not found.</p>;
+    return <Banner tone="error" title="Campaign not found">We couldn’t load this campaign. It may have been deleted or you don’t have access.</Banner>;
   }
   if (campaign === null) {
     return (
@@ -51,41 +53,55 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
     setNote(null);
     try {
       const res = await campaigns.launch(c.id);
-      setNote({ tone: 'ok', text: res.fbCampaignId ? `Sent to Facebook — status: ${res.status}.` : `Launch queued — status: ${res.status}.` });
+      setNote({ tone: 'success', text: res.fbCampaignId ? `Sent to Facebook — status: ${res.status}.` : `Launch queued — status: ${res.status}.` });
       load();
     } catch (err) {
-      setNote({ tone: 'err', text: err instanceof ApiError ? err.message : 'Launch failed.' });
+      toast.error(err instanceof ApiError ? err.message : 'Launch failed.');
     } finally {
       setLaunching(false);
     }
   };
 
   const reopen = async (): Promise<void> => {
-    if (typeof window !== 'undefined' && !window.confirm('Reopen this campaign for editing? It returns to draft and releases its assigned channel back to the pool. You can resubmit when you\'re done.')) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Reopen for editing?',
+      body: 'This returns the campaign to a draft and releases its assigned channel back to the pool. You can resubmit when you are done.',
+      confirmLabel: 'Reopen',
+    });
+    if (!ok) return;
     setReopening(true);
     setNote(null);
     try {
       const updated = await campaigns.reopen(c.id);
       setCampaign(updated);
-      setNote({ tone: 'ok', text: 'Campaign reopened — it\'s now an editable draft. Make your changes and submit again.' });
+      setNote({ tone: 'success', text: 'Campaign reopened — it\'s now an editable draft. Make your changes and submit again.' });
     } catch (err) {
-      setNote({ tone: 'err', text: err instanceof ApiError ? err.message : 'Reopen failed.' });
+      toast.error(err instanceof ApiError ? err.message : 'Reopen failed.');
     } finally {
       setReopening(false);
     }
   };
 
   const toggleActive = async (active: boolean): Promise<void> => {
+    // Pausing is destructive (stops live delivery + spend) — confirm first.
+    // Resuming is non-destructive, so it stays single-click.
+    if (!active) {
+      const ok = await confirm({
+        title: 'Pause this campaign?',
+        body: 'Pausing stops live delivery on Facebook and halts ad spend. You can resume anytime.',
+        confirmLabel: 'Pause campaign',
+        tone: 'danger',
+      });
+      if (!ok) return;
+    }
     setToggling(true);
     setNote(null);
     try {
       const res = active ? await campaigns.resume(c.id) : await campaigns.pause(c.id);
       setCampaign({ ...c, status: res.status as Campaign['status'] });
-      setNote({ tone: 'ok', text: active ? 'Campaign resumed — ads are live on Facebook again.' : 'Campaign paused — ad delivery (and spend) is stopped. Resume anytime.' });
+      setNote({ tone: 'success', text: active ? 'Campaign resumed — ads are live on Facebook again.' : 'Campaign paused — ad delivery (and spend) is stopped. Resume anytime.' });
     } catch (err) {
-      setNote({ tone: 'err', text: err instanceof ApiError ? err.message : 'Could not change campaign status.' });
+      toast.error(err instanceof ApiError ? err.message : 'Could not change campaign status.');
     } finally {
       setToggling(false);
     }
@@ -93,94 +109,66 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {LIVE_TOGGLEABLE.has(c.status) && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '1rem',
-            padding: '0.85rem 1.1rem',
-            border: '1px solid var(--border-strong)',
-            borderRadius: 'var(--radius)',
-            background: 'var(--surface)',
-          }}
-        >
-          <div style={{ fontSize: '0.9rem', color: 'var(--cream)' }}>
-            {c.status === 'ACTIVE' ? (
-              <>
-                <strong>Live on Facebook</strong> — ads are delivering. Pause to stop delivery + spend without losing the campaign; resume anytime.
-              </>
-            ) : (
-              <>
-                <strong>Paused</strong> — ads are not delivering on Facebook. Resume to put them back live.
-              </>
-            )}
-          </div>
-          <div style={{ flexShrink: 0 }}>
-            {c.status === 'ACTIVE' ? (
+      {LIVE_TOGGLEABLE.has(c.status) &&
+        (c.status === 'ACTIVE' ? (
+          <Banner
+            tone="info"
+            title="Live on Facebook"
+            action={
               <Button variant="danger" onClick={() => void toggleActive(false)} loading={toggling}>
                 {toggling ? 'Pausing…' : 'Pause campaign'}
               </Button>
-            ) : (
+            }
+          >
+            Ads are delivering. Pause to stop delivery + spend without losing the campaign; resume anytime.
+          </Banner>
+        ) : (
+          <Banner
+            tone="warning"
+            title="Paused"
+            action={
               <Button onClick={() => void toggleActive(true)} loading={toggling}>
                 {toggling ? 'Resuming…' : 'Resume campaign'}
               </Button>
-            )}
-          </div>
-        </div>
-      )}
+            }
+          >
+            Ads are not delivering on Facebook. Resume to put them back live.
+          </Banner>
+        ))}
       {REOPENABLE.has(c.status) && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '1rem',
-            padding: '0.85rem 1.1rem',
-            border: '1px solid var(--border-strong)',
-            borderRadius: 'var(--radius)',
-            background: 'var(--surface)',
-          }}
-        >
-          <div style={{ fontSize: '0.9rem', color: 'var(--cream)' }}>
-            {c.status === 'QUEUED_NO_CHANNEL' ? (
-              <>
-                <strong>Waiting for a channel</strong> — no AdSense channel is free for this campaign yet. Reopen to edit it, or leave it queued.
-              </>
-            ) : (
-              <>
-                <strong>{c.status === 'BATCHED' ? 'Rate-limited' : 'Ready to publish'}</strong> — a channel is assigned. Launching generates the article, wires the
-                redirect, and creates the ads on Facebook. Need to fix something first? Reopen to edit.
-              </>
-            )}
-          </div>
-          <div style={{ display: 'flex', gap: '0.6rem', flexShrink: 0 }}>
-            <Button variant="ghost" onClick={() => void reopen()} loading={reopening} disabled={launching}>
-              {reopening ? 'Reopening…' : 'Reopen & edit'}
-            </Button>
-            {/* Manual launch is available to the campaign owner (buyer) and admins alike —
-                the API owner-scopes it. Approval stays admin-only; launch ≠ approval. */}
-            {LAUNCHABLE.has(c.status) && (
-              <Button onClick={() => void launch()} loading={launching} disabled={reopening}>
-                {launching ? 'Launching…' : 'Launch to Facebook'}
+        <Banner
+          tone={c.status === 'QUEUED_NO_CHANNEL' ? 'warning' : 'info'}
+          title={
+            c.status === 'QUEUED_NO_CHANNEL'
+              ? 'Waiting for a channel'
+              : c.status === 'BATCHED'
+                ? 'Rate-limited'
+                : 'Ready to publish'
+          }
+          action={
+            <div style={{ display: 'flex', gap: 'var(--space-2)', flexShrink: 0 }}>
+              <Button variant="ghost" onClick={() => void reopen()} loading={reopening} disabled={launching}>
+                {reopening ? 'Reopening…' : 'Reopen & edit'}
               </Button>
-            )}
-          </div>
-        </div>
+              {/* Manual launch is available to the campaign owner (buyer) and admins alike —
+                  the API owner-scopes it. Approval stays admin-only; launch ≠ approval. */}
+              {LAUNCHABLE.has(c.status) && (
+                <Button onClick={() => void launch()} loading={launching} disabled={reopening}>
+                  {launching ? 'Launching…' : 'Launch to Facebook'}
+                </Button>
+              )}
+            </div>
+          }
+        >
+          {c.status === 'QUEUED_NO_CHANNEL'
+            ? 'No AdSense channel is free for this campaign yet. Reopen to edit it, or leave it queued.'
+            : 'A channel is assigned. Launching generates the article, wires the redirect, and creates the ads on Facebook. Need to fix something first? Reopen to edit.'}
+        </Banner>
       )}
       {note && (
-        <div
-          style={{
-            padding: '0.75rem 1.1rem',
-            borderRadius: 'var(--radius-sm)',
-            background: note.tone === 'ok' ? 'rgba(58,160,90,0.12)' : 'rgba(200,60,60,0.12)',
-            color: note.tone === 'ok' ? 'var(--green)' : 'var(--red)',
-            fontSize: '0.88rem',
-          }}
-        >
+        <Banner tone={note.tone} onDismiss={() => setNote(null)}>
           {note.text}
-        </div>
+        </Banner>
       )}
       <CampaignWizard campaign={c} />
       <OffersEditor campaignId={c.id} status={c.status} />

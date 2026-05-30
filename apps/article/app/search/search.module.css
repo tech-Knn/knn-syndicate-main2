@@ -15,10 +15,15 @@
   padding-bottom: 1rem;
 }
 .brand {
+  display: inline-block;
   font-family: Georgia, serif;
   font-weight: 700;
   font-size: 1.1rem;
   color: #111;
+  text-decoration: none;
+}
+.brand:hover {
+  text-decoration: underline;
 }
 .query {
   font-size: 1.1rem;

@@ -42,6 +42,10 @@ export async function resolveSiteConfig(): Promise<SiteConfig> {
     return env;
   }
   if (!host) return env;
+  return resolveSiteConfigForHost(host, env);
+}
+
+async function resolveSiteConfigForHost(host: string, env: SiteConfig): Promise<SiteConfig> {
   try {
     // Cached per host (config changes rarely); the API also sends cache-control.
     const res = await fetch(`${API_BASE}/api/public/site-config?host=${encodeURIComponent(host)}`, {
@@ -60,4 +64,49 @@ export async function resolveSiteConfig(): Promise<SiteConfig> {
   } catch {
     return env;
   }
+}
+
+/**
+ * Per-host brand name for the editorial shell (header/footer/landing). Each registered
+ * Domain serves under its own brand, so the visible site name must be derived from the
+ * REQUEST host — never a hardcoded literal. We don't have a name column on the public
+ * site-config payload, so we title-case the registrable part of the host
+ * (`ten-lines-about.com` → "Ten Lines About"), which is what these publisher sites use as
+ * their masthead. Server-only (reads the request Host header); falls back to a neutral
+ * default when the host is unavailable.
+ */
+const DEFAULT_SITE_NAME = 'The Daily Read';
+
+export async function resolveSiteName(): Promise<string> {
+  let host = '';
+  try {
+    host = (await headers()).get('host') ?? '';
+  } catch {
+    return DEFAULT_SITE_NAME;
+  }
+  return siteNameFromHost(host);
+}
+
+/** Title-case the registrable label of a host into a human-readable masthead. */
+export function siteNameFromHost(rawHost: string): string {
+  const host = rawHost
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/.*$/, '')
+    .replace(/:\d+$/, '');
+  if (!host) return DEFAULT_SITE_NAME;
+
+  // Drop a leading "www"/article/app subdomain, then take the label before the public
+  // suffix (e.g. ".com"). For bare hosts (localhost) keep the whole label.
+  const labels = host.split('.').filter(Boolean);
+  const meaningful = labels.filter((l) => l !== 'www' && l !== 'articles' && l !== 'app');
+  const brandLabel = meaningful.length >= 2 ? meaningful[meaningful.length - 2] : meaningful[0] ?? host;
+
+  const words = (brandLabel ?? '')
+    .split(/[-_]+/)
+    .map((w) => w.trim())
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1));
+  return words.length ? words.join(' ') : DEFAULT_SITE_NAME;
 }

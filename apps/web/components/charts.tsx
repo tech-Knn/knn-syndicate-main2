@@ -10,12 +10,14 @@ const SPEND = '#d9512c'; // rust
 const GRID = 'rgba(255,255,255,0.06)';
 
 const W = 1000;
+const PAD_LEFT = 52; // reserve room for Y-axis $ labels
 
 /** Build an SVG path: a line ("L") and the matching closed area ("A") down to the baseline. */
 function paths(values: number[], max: number, h: number, padTop: number, padBottom: number) {
   const n = values.length;
   const innerH = h - padTop - padBottom;
-  const x = (i: number): number => (n <= 1 ? W / 2 : (i / (n - 1)) * W);
+  const innerW = W - PAD_LEFT;
+  const x = (i: number): number => PAD_LEFT + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW);
   const y = (v: number): number => padTop + (1 - (max > 0 ? v / max : 0)) * innerH;
   const pts = values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
   const line = pts.length ? `M${pts.join(' L')}` : '';
@@ -23,6 +25,13 @@ function paths(values: number[], max: number, h: number, padTop: number, padBott
     ? `M${x(0).toFixed(1)},${(h - padBottom).toFixed(1)} L${pts.join(' L')} L${x(n - 1).toFixed(1)},${(h - padBottom).toFixed(1)} Z`
     : '';
   return { line, area, x, y };
+}
+
+/** Compact USD for axis ticks: $1.2k / $340 / $0. */
+function tickUsd(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 1000) return `$${(n / 1000).toFixed(abs >= 10000 ? 0 : 1)}k`;
+  return `$${Math.round(n)}`;
 }
 
 /** Revenue-vs-spend area chart with a hover guide + floating tooltip. */
@@ -33,10 +42,41 @@ export function RevenueChart({ series, height = 260 }: { series: DailyPoint[]; h
 
   const padTop = 14;
   const padBottom = 26;
+  const n = series.length;
+
+  if (n === 0) {
+    return (
+      <div className={styles.empty} role="img" aria-label="No revenue in this range.">
+        No revenue in this range
+      </div>
+    );
+  }
+
   const max = Math.max(1, ...series.map((p) => Math.max(p.revenueUsd, p.spendUsd)));
   const rev = paths(series.map((p) => p.revenueUsd), max, height, padTop, padBottom);
   const spend = paths(series.map((p) => p.spendUsd), max, height, padTop, padBottom);
-  const n = series.length;
+  const innerH = height - padTop - padBottom;
+
+  // Y-axis ticks: baseline (0), quarters, top (max).
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((g) => ({
+    g,
+    value: max * (1 - g),
+    y: padTop + g * innerH,
+  }));
+
+  // X-axis labels: first / middle / last day (avoids overlap on long ranges).
+  const xLabelIdx = n === 1 ? [0] : [0, Math.floor((n - 1) / 2), n - 1];
+  const lastIdx = n - 1;
+
+  // Accessible summary of the revenue series for the chart's aria-label.
+  const revVals = series.map((p) => p.revenueUsd);
+  const minRev = Math.min(...revVals);
+  const maxRev = Math.max(...revVals);
+  const latest = series[lastIdx]!;
+  const ariaLabel =
+    `Revenue vs. spend over ${n} day${n === 1 ? '' : 's'}, ${series[0]!.day} to ${latest.day}. ` +
+    `Revenue ranges from ${formatUsd(minRev)} to ${formatUsd(maxRev)}; ` +
+    `latest day ${latest.day}: revenue ${formatUsd(latest.revenueUsd)}, spend ${formatUsd(latest.spendUsd)}, profit ${formatUsd(latest.profitUsd)}.`;
 
   const onMove = (e: MouseEvent<HTMLDivElement>): void => {
     const el = wrapRef.current;
@@ -56,6 +96,8 @@ export function RevenueChart({ series, height = 260 }: { series: DailyPoint[]; h
       onMouseMove={onMove}
       onMouseLeave={() => setHover(null)}
       style={{ aspectRatio: `${W} / ${height}` }}
+      role="img"
+      aria-label={ariaLabel}
     >
       <svg viewBox={`0 0 ${W} ${height}`} preserveAspectRatio="none" className={styles.svg} aria-hidden>
         <defs>
@@ -70,20 +112,80 @@ export function RevenueChart({ series, height = 260 }: { series: DailyPoint[]; h
         </defs>
         {/* gridlines */}
         {[0.25, 0.5, 0.75].map((g) => (
-          <line key={g} x1="0" x2={W} y1={padTop + g * (height - padTop - padBottom)} y2={padTop + g * (height - padTop - padBottom)} stroke={GRID} strokeWidth="1" />
+          <line key={g} x1={PAD_LEFT} x2={W} y1={padTop + g * innerH} y2={padTop + g * innerH} stroke={GRID} strokeWidth="1" />
         ))}
         <path d={spend.area} fill={`url(#spend-${gid})`} />
         <path d={rev.area} fill={`url(#rev-${gid})`} />
-        <path d={spend.line} fill="none" stroke={SPEND} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+        {/* Spend is dashed + revenue solid so the two are distinguishable without color (colorblind-safe). */}
+        <path d={spend.line} fill="none" stroke={SPEND} strokeWidth="2" strokeDasharray="6 4" vectorEffect="non-scaling-stroke" />
         <path d={rev.line} fill="none" stroke={REVENUE} strokeWidth="2.25" vectorEffect="non-scaling-stroke" />
+        {/* Distinct end-point markers: filled dot (revenue) vs hollow ring (spend). */}
+        <circle cx={rev.x(lastIdx)} cy={rev.y(latest.revenueUsd)} r="3.5" fill={REVENUE} />
+        <circle cx={spend.x(lastIdx)} cy={spend.y(latest.spendUsd)} r="3.5" fill="none" stroke={SPEND} strokeWidth="2" vectorEffect="non-scaling-stroke" />
         {hover != null && hp && (
           <g>
             <line x1={rev.x(hover)} x2={rev.x(hover)} y1={padTop} y2={height - padBottom} stroke="rgba(255,255,255,0.18)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
             <circle cx={rev.x(hover)} cy={rev.y(hp.revenueUsd)} r="3.5" fill={REVENUE} />
-            <circle cx={spend.x(hover)} cy={spend.y(hp.spendUsd)} r="3.5" fill={SPEND} />
+            <circle cx={spend.x(hover)} cy={spend.y(hp.spendUsd)} r="3.5" fill="none" stroke={SPEND} strokeWidth="2" vectorEffect="non-scaling-stroke" />
           </g>
         )}
       </svg>
+
+      {/* Y-axis tick labels (HTML overlay so text isn't squashed by preserveAspectRatio="none"). */}
+      <div className={styles.yAxis} aria-hidden>
+        {yTicks.map((t) => (
+          <span key={t.g} className={styles.yTick} style={{ top: `${(t.y / height) * 100}%` }}>
+            {tickUsd(t.value)}
+          </span>
+        ))}
+      </div>
+
+      {/* X-axis day labels (first / middle / last). */}
+      <div className={styles.xAxis} aria-hidden>
+        {xLabelIdx.map((i) => {
+          const pct = ((PAD_LEFT + (n <= 1 ? (W - PAD_LEFT) / 2 : (i / (n - 1)) * (W - PAD_LEFT))) / W) * 100;
+          const align = i === 0 ? 'flex-start' : i === lastIdx ? 'flex-end' : 'center';
+          const shift = i === 0 ? '0' : i === lastIdx ? '-100%' : '-50%';
+          return (
+            <span key={i} className={styles.xTick} style={{ left: `${pct}%`, transform: `translateX(${shift})`, justifyContent: align }}>
+              {series[i]!.day}
+            </span>
+          );
+        })}
+      </div>
+
+      {/* Legend: solid swatch (revenue) vs dashed swatch (spend) — reinforces the non-color cue. */}
+      <div className={styles.legend} aria-hidden>
+        <span className={styles.legItem}>
+          <span className={`${styles.swatch} ${styles.swatchRev}`} /> Revenue
+        </span>
+        <span className={styles.legItem}>
+          <span className={`${styles.swatch} ${styles.swatchSpend}`} /> Spend
+        </span>
+      </div>
+
+      {/* Visually-hidden data table — gives screen readers the full series (WCAG 1.1.1). */}
+      <table className={styles.srOnly}>
+        <caption>Daily revenue, spend, and profit</caption>
+        <thead>
+          <tr>
+            <th scope="col">Day</th>
+            <th scope="col">Revenue</th>
+            <th scope="col">Spend</th>
+            <th scope="col">Profit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {series.map((p) => (
+            <tr key={p.day}>
+              <th scope="row">{p.day}</th>
+              <td>{formatUsd(p.revenueUsd)}</td>
+              <td>{formatUsd(p.spendUsd)}</td>
+              <td>{formatUsd(p.profitUsd)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       {hover != null && hp && (
         <div
@@ -107,18 +209,44 @@ export function RevenueChart({ series, height = 260 }: { series: DailyPoint[]; h
 }
 
 /** Tiny inline sparkline for KPI tiles. */
-export function Sparkline({ values, tone = 'gold', height = 34 }: { values: number[]; tone?: 'gold' | 'rust' | 'green'; height?: number }) {
+export function Sparkline({
+  values,
+  tone = 'gold',
+  height = 34,
+  label,
+}: {
+  values: number[];
+  tone?: 'gold' | 'rust' | 'green';
+  height?: number;
+  label?: string;
+}) {
   const color = tone === 'rust' ? SPEND : tone === 'green' ? '#3fb27f' : REVENUE;
-  const max = Math.max(1, ...values);
   const w = 120;
   const n = values.length;
   if (n === 0) return <svg viewBox={`0 0 ${w} ${height}`} className={styles.spark} aria-hidden />;
+
+  // Domain spans both negatives and positives, anchored to include zero so a
+  // dip below the baseline (e.g. negative profit) renders correctly.
+  const lo = Math.min(0, ...values);
+  const hi = Math.max(0, ...values, 1);
+  const span = hi - lo || 1;
   const x = (i: number): number => (n <= 1 ? w / 2 : (i / (n - 1)) * w);
-  const y = (v: number): number => 3 + (1 - v / max) * (height - 6);
+  const y = (v: number): number => 3 + (1 - (v - lo) / span) * (height - 6);
   const line = `M${values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' L')}`;
+  const zeroY = y(0);
+  const lastIdx = n - 1;
+  const last = values[lastIdx]!;
+  const seriesLabel = label ?? 'Trend';
+  const ariaLabel = `${seriesLabel} sparkline: ${formatUsd(values[0]!)} to ${formatUsd(last)} over ${n} day${n === 1 ? '' : 's'}.`;
+
   return (
-    <svg viewBox={`0 0 ${w} ${height}`} preserveAspectRatio="none" className={styles.spark} aria-hidden>
-      <path d={line} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />
-    </svg>
+    <span className={styles.sparkWrap} role="img" aria-label={ariaLabel}>
+      <svg viewBox={`0 0 ${w} ${height}`} preserveAspectRatio="none" className={styles.spark} aria-hidden>
+        {/* Zero baseline — visible only when the series actually crosses below zero. */}
+        {lo < 0 && <line x1="0" x2={w} y1={zeroY} y2={zeroY} stroke={GRID} strokeWidth="1" vectorEffect="non-scaling-stroke" />}
+        <path d={line} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+        <circle cx={x(lastIdx)} cy={y(last)} r="2.25" fill={color} />
+      </svg>
+    </span>
   );
 }

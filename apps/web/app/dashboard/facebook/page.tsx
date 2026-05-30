@@ -1,13 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Badge, Button, Card, Spinner } from '@/components/ui';
+import { Badge, Banner, Button, Card, EmptyState, Spinner, useConfirm, useToast } from '@/components/ui';
 import { ApiError, facebook } from '@/lib/api';
 import { type FbAccount, type FbPage, type FbPixel, type FbProfile, type FbProfileWithOwner } from '@/lib/types';
 import { useAuth } from '../../providers';
 import styles from './facebook.module.css';
 
-interface Banner {
+interface PageBanner {
   tone: 'success' | 'error';
   text: string;
 }
@@ -17,13 +17,40 @@ function fmtDate(iso?: string): string {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-function relExpiry(iso?: string): string {
-  if (!iso) return '—';
-  const days = Math.round((new Date(iso).getTime() - Date.now()) / 86_400_000);
+/** Whole days from now until `iso` (negative = already expired). null when unknown. */
+function daysToExpiry(iso?: string): number | null {
+  if (!iso) return null;
+  return Math.round((new Date(iso).getTime() - Date.now()) / 86_400_000);
+}
+
+function relExpiry(days: number): string {
   if (days > 1) return `in ${days} days`;
   if (days === 1) return 'in 1 day';
   if (days === 0) return 'today';
+  if (days === -1) return '1 day ago';
   return `${Math.abs(days)} days ago`;
+}
+
+/** Token expiry rendered as a Badge: danger when expired, warning when ≤7 days out. */
+function TokenExpiry({ iso }: { iso?: string }): React.ReactNode {
+  const days = daysToExpiry(iso);
+  if (days === null) return <span className={styles.metaValue}>—</span>;
+  const rel = relExpiry(days);
+  if (days < 0) {
+    return (
+      <Badge tone="danger" dot>
+        Expired {rel}
+      </Badge>
+    );
+  }
+  if (days <= 7) {
+    return (
+      <Badge tone="warning" dot>
+        Expires {rel}
+      </Badge>
+    );
+  }
+  return <span className={styles.metaValue}>Expires {rel}</span>;
 }
 
 /** One connected profile: name + status + assets, expandable to its accounts & pages. */
@@ -37,21 +64,27 @@ function ProfileBlock({
   profile: FbProfile | FbProfileWithOwner;
   owner?: { email: string; org: string };
   onChanged: () => void;
-  setBanner: (b: Banner | null) => void;
+  setBanner: (b: PageBanner | null) => void;
   onReconnect: () => void;
 }): React.ReactNode {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [open, setOpen] = useState(false);
   const [accounts, setAccounts] = useState<FbAccount[] | null>(null);
   const [pages, setPages] = useState<FbPage[] | null>(null);
-  const [pixels, setPixels] = useState<Record<string, FbPixel[] | 'loading'>>({});
+  const [drillError, setDrillError] = useState(false);
+  const [pixels, setPixels] = useState<Record<string, FbPixel[] | 'loading' | 'error'>>({});
   const [expandedAcc, setExpandedAcc] = useState<Set<string>>(new Set());
   const [syncing, setSyncing] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const broken = profile.status === 'CONNECTION_BROKEN';
+  const expiryDays = daysToExpiry(profile.tokenExpiresAt);
+  const expired = expiryDays !== null && expiryDays < 0;
 
   const loadDrill = useCallback(async () => {
     setAccounts(null);
     setPages(null);
+    setDrillError(false);
     try {
       const [acc, pg] = await Promise.all([facebook.profileAccounts(profile.id), facebook.profilePages(profile.id)]);
       setAccounts(acc);
@@ -59,6 +92,7 @@ function ProfileBlock({
     } catch {
       setAccounts([]);
       setPages([]);
+      setDrillError(true);
     }
   }, [profile.id]);
 
@@ -69,6 +103,14 @@ function ProfileBlock({
     });
   };
 
+  const loadPixels = useCallback((a: FbAccount): void => {
+    setPixels((p) => ({ ...p, [a.id]: 'loading' }));
+    void facebook
+      .pixels(a.id)
+      .then((list) => setPixels((p) => ({ ...p, [a.id]: list })))
+      .catch(() => setPixels((p) => ({ ...p, [a.id]: 'error' })));
+  }, []);
+
   const togglePixels = (a: FbAccount): void => {
     setExpandedAcc((prev) => {
       const next = new Set(prev);
@@ -76,13 +118,7 @@ function ProfileBlock({
       else next.add(a.id);
       return next;
     });
-    if (!pixels[a.id]) {
-      setPixels((p) => ({ ...p, [a.id]: 'loading' }));
-      void facebook
-        .pixels(a.id)
-        .then((list) => setPixels((p) => ({ ...p, [a.id]: list })))
-        .catch(() => setPixels((p) => ({ ...p, [a.id]: [] })));
-    }
+    if (!pixels[a.id]) loadPixels(a);
   };
 
   const resync = async (): Promise<void> => {
@@ -90,11 +126,11 @@ function ProfileBlock({
     setBanner(null);
     try {
       const r = await facebook.syncProfile(profile.id);
-      setBanner({ tone: 'success', text: `Synced ${r.adAccounts} ad account(s), ${r.pages} page(s), ${r.pixels} pixel(s).` });
+      toast.success(`Synced ${r.adAccounts} ad account(s), ${r.pages} page(s), ${r.pixels} pixel(s).`);
       if (open) await loadDrill();
       onChanged();
     } catch (err) {
-      setBanner({ tone: 'error', text: err instanceof ApiError ? err.message : 'Sync failed.' });
+      toast.error(err instanceof ApiError ? err.message : 'Sync failed.');
       if (err instanceof ApiError && err.status === 409) onChanged();
     } finally {
       setSyncing(false);
@@ -102,14 +138,20 @@ function ProfileBlock({
   };
 
   const disconnect = async (): Promise<void> => {
-    if (!window.confirm(`Disconnect “${profile.name}”? Its synced accounts/pages will be removed.`)) return;
+    const ok = await confirm({
+      title: `Disconnect “${profile.name}”?`,
+      body: 'Its synced ad accounts and pages will be removed. Campaigns already launched are not affected.',
+      confirmLabel: 'Disconnect',
+      tone: 'danger',
+    });
+    if (!ok) return;
     setDisconnecting(true);
     try {
       await facebook.disconnectProfile(profile.id);
-      setBanner({ tone: 'success', text: `Disconnected “${profile.name}”.` });
+      toast.success(`Disconnected “${profile.name}”.`);
       onChanged();
     } catch {
-      setBanner({ tone: 'error', text: 'Could not disconnect.' });
+      toast.error('Could not disconnect.');
     } finally {
       setDisconnecting(false);
     }
@@ -119,7 +161,7 @@ function ProfileBlock({
     <Card className={styles.account}>
       <div className={styles.accountTop}>
         <div className={styles.accountId}>
-          <div className={styles.heroIcon} style={{ width: 40, height: 40, fontSize: '1.2rem' }}>
+          <div className={styles.heroIcon} style={{ width: 40, height: 40, fontSize: '1.2rem' }} aria-hidden>
             f
           </div>
           <div>
@@ -130,13 +172,13 @@ function ProfileBlock({
           </div>
         </div>
         <div className={styles.actions}>
-          <Button variant="ghost" onClick={toggleOpen}>
+          <Button variant="ghost" onClick={toggleOpen} aria-expanded={open}>
             {open ? 'Hide assets' : `Assets (${profile.adAccountCount}/${profile.pageCount})`}
           </Button>
-          {broken ? (
+          {broken || expired ? (
             <Button onClick={onReconnect}>Reconnect</Button>
           ) : (
-            <Button variant="ghost" onClick={() => void resync()} loading={syncing}>
+            <Button variant="secondary" onClick={() => void resync()} loading={syncing}>
               {syncing ? 'Syncing…' : 'Re-sync'}
             </Button>
           )}
@@ -153,6 +195,10 @@ function ProfileBlock({
             {broken ? (
               <Badge tone="danger" dot>
                 Reconnect needed
+              </Badge>
+            ) : expired ? (
+              <Badge tone="danger" dot>
+                Token expired
               </Badge>
             ) : (
               <Badge tone="success" dot>
@@ -171,7 +217,9 @@ function ProfileBlock({
         </div>
         <div className={styles.metaItem}>
           <span className={styles.metaLabel}>Token expires</span>
-          <span className={styles.metaValue}>{relExpiry(profile.tokenExpiresAt)}</span>
+          <span className={styles.metaValue}>
+            <TokenExpiry iso={profile.tokenExpiresAt} />
+          </span>
         </div>
         <div className={styles.metaItem}>
           <span className={styles.metaLabel}>Connected</span>
@@ -179,8 +227,31 @@ function ProfileBlock({
         </div>
       </div>
 
-      {broken && profile.lastError && (
-        <div className={`${styles.banner} ${styles.bannerError}`}>Connection lost: {profile.lastError}</div>
+      {profile.scopes.length > 0 && (
+        <div className={styles.metaItem} style={{ marginTop: 'var(--space-3)' }}>
+          <span className={styles.metaLabel}>Permissions granted</span>
+          <div className={styles.scopes}>
+            {profile.scopes.map((s) => (
+              <span key={s} className={styles.scope}>
+                {s}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(broken || expired) && (
+        <div className={styles.profileBanner}>
+          <Banner
+            tone="error"
+            title={broken ? 'Connection lost' : 'Access token expired'}
+            action={<Button onClick={onReconnect}>Reconnect</Button>}
+          >
+            {broken
+              ? (profile.lastError ?? 'Facebook revoked this connection. Reconnect to resume syncing.')
+              : 'Reconnect to re-authorize with Facebook and resume syncing this profile.'}
+          </Banner>
+        </div>
       )}
 
       {open && (
@@ -189,77 +260,108 @@ function ProfileBlock({
             <h3 className={styles.sectionTitle}>Ad accounts</h3>
             <span className={styles.count}>{accounts?.length ?? 0}</span>
           </div>
-          <div className={styles.list}>
-            <div className={`${styles.row} ${styles.rowHead}`}>
-              <span>Name</span>
-              <span>Account ID</span>
-              <span>Currency</span>
-              <span />
+          {accounts === null ? (
+            <div className={styles.loadingRow}>
+              <Spinner />
             </div>
-            {accounts === null ? (
-              <div className={styles.loadingRow}>
-                <Spinner />
-              </div>
-            ) : accounts.length > 0 ? (
-              accounts.map((a) => {
-                const px = pixels[a.id];
-                const isOpen = expandedAcc.has(a.id);
-                return (
-                  <div key={a.id} className={styles.row}>
-                    <span className={styles.cellName}>{a.name}</span>
-                    <span className={styles.cellMono}>{a.fbAccountId}</span>
-                    <span>
-                      {a.currency} · {a.timezone}
-                    </span>
-                    <button className={styles.expandBtn} onClick={() => togglePixels(a)}>
-                      {isOpen ? 'Hide pixels' : 'Pixels'}
-                    </button>
-                    {isOpen && (
-                      <div className={styles.pixels}>
-                        {px === 'loading' || px === undefined ? (
-                          <Spinner />
-                        ) : px.length > 0 ? (
-                          px.map((p) => (
-                            <span key={p.id} className={styles.pixel}>
-                              {p.name}
-                              <span className={styles.pixelId}>{p.fbPixelId}</span>
-                            </span>
-                          ))
-                        ) : (
-                          <span className={styles.empty}>No pixels on this account.</span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            ) : (
-              <div className={styles.empty}>No ad accounts found for this profile.</div>
-            )}
-          </div>
-
-          <div className={styles.sectionHead}>
-            <h3 className={styles.sectionTitle}>Pages</h3>
-            <span className={styles.count}>{pages?.length ?? 0}</span>
-          </div>
-          <div className={styles.list}>
-            {pages === null ? (
-              <div className={styles.loadingRow}>
-                <Spinner />
-              </div>
-            ) : pages.length > 0 ? (
-              pages.map((p) => (
-                <div key={p.id} className={styles.row}>
-                  <span className={styles.cellName}>{p.name}</span>
-                  <span className={styles.cellMono}>{p.fbPageId}</span>
-                  <span>{p.instagramId ? 'IG linked' : '—'}</span>
+          ) : drillError ? (
+            <div className={styles.profileBanner}>
+              <Banner
+                tone="error"
+                title="Couldn’t load assets"
+                action={
+                  <Button variant="secondary" onClick={() => void loadDrill()}>
+                    Retry
+                  </Button>
+                }
+              >
+                We couldn’t fetch this profile’s ad accounts and pages. Check the connection and try again.
+              </Banner>
+            </div>
+          ) : (
+            <>
+              <div className={styles.list}>
+                <div className={`${styles.row} ${styles.rowHead}`}>
+                  <span>Name</span>
+                  <span>Account ID</span>
+                  <span>Currency</span>
                   <span />
                 </div>
-              ))
-            ) : (
-              <div className={styles.empty}>No pages found for this profile.</div>
-            )}
-          </div>
+                {accounts.length > 0 ? (
+                  accounts.map((a) => {
+                    const px = pixels[a.id];
+                    const isOpen = expandedAcc.has(a.id);
+                    return (
+                      <div key={a.id} className={styles.row}>
+                        <span className={styles.cellName}>{a.name}</span>
+                        <span className={styles.cellMono}>{a.fbAccountId}</span>
+                        <span>
+                          {a.currency} · {a.timezone}
+                        </span>
+                        <button
+                          type="button"
+                          className={styles.expandBtn}
+                          onClick={() => togglePixels(a)}
+                          aria-expanded={isOpen}
+                          aria-label={isOpen ? `Hide pixels for ${a.name}` : `Show pixels for ${a.name}`}
+                        >
+                          {isOpen ? 'Hide pixels' : 'Pixels'}
+                        </button>
+                        {isOpen && (
+                          <div className={styles.pixels}>
+                            {px === 'loading' || px === undefined ? (
+                              <Spinner />
+                            ) : px === 'error' ? (
+                              <span className={styles.pixelError}>
+                                Couldn’t load pixels.{' '}
+                                <button type="button" className={styles.retryLink} onClick={() => loadPixels(a)}>
+                                  Retry
+                                </button>
+                              </span>
+                            ) : px.length > 0 ? (
+                              px.map((p) => (
+                                <span key={p.id} className={styles.pixel}>
+                                  {p.name}
+                                  <span className={styles.pixelId}>{p.fbPixelId}</span>
+                                </span>
+                              ))
+                            ) : (
+                              <span className={styles.empty}>No pixels on this account.</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className={styles.empty}>No ad accounts found for this profile.</div>
+                )}
+              </div>
+
+              <div className={styles.sectionHead}>
+                <h3 className={styles.sectionTitle}>Pages</h3>
+                <span className={styles.count}>{pages?.length ?? 0}</span>
+              </div>
+              <div className={styles.list}>
+                {pages === null ? (
+                  <div className={styles.loadingRow}>
+                    <Spinner />
+                  </div>
+                ) : pages.length > 0 ? (
+                  pages.map((p) => (
+                    <div key={p.id} className={styles.row}>
+                      <span className={styles.cellName}>{p.name}</span>
+                      <span className={styles.cellMono}>{p.fbPageId}</span>
+                      <span>{p.instagramId ? 'IG linked' : '—'}</span>
+                      <span />
+                    </div>
+                  ))
+                ) : (
+                  <div className={styles.empty}>No pages found for this profile.</div>
+                )}
+              </div>
+            </>
+          )}
         </>
       )}
     </Card>
@@ -272,7 +374,7 @@ export default function FacebookPage() {
   const [profiles, setProfiles] = useState<FbProfile[] | null>(null);
   const [allProfiles, setAllProfiles] = useState<FbProfileWithOwner[] | null>(null);
   const [loading, setLoading] = useState(true);
-  const [banner, setBanner] = useState<Banner | null>(null);
+  const [banner, setBanner] = useState<PageBanner | null>(null);
   const [connecting, setConnecting] = useState(false);
 
   const load = useCallback(async () => {
@@ -344,8 +446,10 @@ export default function FacebookPage() {
       </div>
 
       {banner && (
-        <div className={`${styles.banner} ${banner.tone === 'success' ? styles.bannerSuccess : styles.bannerError}`}>
-          {banner.text}
+        <div className={styles.pageBanner}>
+          <Banner tone={banner.tone} onDismiss={() => setBanner(null)}>
+            {banner.text}
+          </Banner>
         </div>
       )}
 
@@ -360,7 +464,9 @@ export default function FacebookPage() {
           </Card>
         ) : !profiles || profiles.length === 0 ? (
           <Card className={styles.hero}>
-            <div className={styles.heroIcon}>f</div>
+            <div className={styles.heroIcon} aria-hidden>
+              f
+            </div>
             <h2 className={styles.heroTitle}>Connect your first Facebook profile</h2>
             <p className={styles.heroText}>
               You&rsquo;ll be redirected to Facebook to authorize ad management. You can connect several
@@ -391,8 +497,8 @@ export default function FacebookPage() {
               <Spinner />
             </Card>
           ) : allProfiles.length === 0 ? (
-            <Card className={styles.hero}>
-              <p className={styles.heroText}>No profiles connected anywhere yet.</p>
+            <Card>
+              <EmptyState title="No profiles connected anywhere yet" description="Once any user connects a Facebook profile, it will appear here for platform oversight." />
             </Card>
           ) : (
             allProfiles.map((p) => (

@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
-import { resolveSiteConfig } from '../_afs/site-config';
+import { headers } from 'next/headers';
+import { resolveSiteConfig, resolveSiteName } from '../_afs/site-config';
 import { ConversionTracker } from './conversion-tracker';
 import { SearchAds } from './search-ads';
-import { WebResults } from './web-results';
+import { fetchWebResults, WebResults } from './web-results';
 import styles from './search.module.css';
 
 export const metadata: Metadata = { title: 'Search results', robots: { index: false } };
@@ -23,7 +23,17 @@ export default async function SearchPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
-  const site = await resolveSiteConfig();
+  const host = (await headers()).get('host') ?? '';
+  // Resolve config, the per-host brand, and the organic Web results together. The articles
+  // fetch is the SAME cached request <WebResults> renders from (Next memoizes identical
+  // fetches within a render), so it's a cache hit — not an extra DB round-trip on the hot path.
+  // We thread the result COUNT into the ads decision below: Google's Search-ads policy requires
+  // ads ≤ search results, so with zero organic results we must show zero ads.
+  const [site, siteName, articles] = await Promise.all([
+    resolveSiteConfig(),
+    resolveSiteName(),
+    fetchWebResults(host),
+  ]);
   // `q` is the default CSA results param (resultsPageQueryParam); accept `query` too.
   const query = str(sp.q) || str(sp.query);
   const referrerAdCreative = str(sp.rc) || undefined;
@@ -38,23 +48,33 @@ export default async function SearchPage({
   const currency = str(sp.ccy) || undefined;
 
   return (
-    <main className={styles.page}>
-      <div className={styles.header}>
-        <span className={styles.brand}>10 Lines About</span>
-        {query && (
-          <h1 className={styles.query}>
-            Results for <strong>{query}</strong>
-          </h1>
-        )}
-      </div>
-      <SearchAds query={query} referrerAdCreative={referrerAdCreative} channel={channel} site={site} />
-      {/* Organic results stream in via <Suspense> — they never block the ad request above
-          (which fires from an inline script in the first flushed chunk). The AFS ads thus
-          supplement REAL search results, per Google's Search-ads policy. */}
-      <Suspense fallback={null}>
-        <WebResults />
-      </Suspense>
-      <ConversionTracker clickId={clickId} value={value} currency={currency} />
-    </main>
+    <>
+      <a className="skipLink" href="#main-content">
+        Skip to content
+      </a>
+      <main id="main-content" className={styles.page}>
+        <div className={styles.header}>
+          <a className={styles.brand} href="/">
+            {siteName}
+          </a>
+          {query && (
+            <h1 className={styles.query}>
+              Results for <strong>{query}</strong>
+            </h1>
+          )}
+        </div>
+        {/* Ads supplement REAL search results: capped at (and suppressed without) the organic
+            Web-result count below — Google's Search-ads policy (ads ≤ results). */}
+        <SearchAds
+          query={query}
+          referrerAdCreative={referrerAdCreative}
+          channel={channel}
+          site={site}
+          maxAds={articles.length}
+        />
+        <WebResults host={host} articles={articles} />
+        <ConversionTracker clickId={clickId} value={value} currency={currency} />
+      </main>
+    </>
   );
 }

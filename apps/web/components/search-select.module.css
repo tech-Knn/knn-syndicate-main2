@@ -61,7 +61,8 @@
   font-size: 0.85rem;
 }
 .search:focus {
-  outline: none;
+  outline: 2px solid var(--rust);
+  outline-offset: -2px;
 }
 .list {
   max-height: 16rem;
@@ -83,8 +84,16 @@
 .item:hover {
   background: var(--surface-2);
 }
+/* The keyboard-active descendant (aria-activedescendant) — distinct from the selected value. */
+.itemFocus {
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 0 var(--rust);
+}
 .itemActive {
   background: rgba(var(--rust-rgb), 0.16);
+}
+.itemActive.itemFocus {
+  box-shadow: inset 2px 0 0 0 var(--rust);
 }
 .itemLabel {
   color: var(--cream);

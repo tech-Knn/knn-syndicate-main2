@@ -3,16 +3,20 @@
 import { type FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Button, Card, TextField } from '@/components/ui';
+import { Banner, Button, Card, TextField } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '../providers';
 import styles from './login.module.css';
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function LoginPage() {
   const router = useRouter();
   const { state, login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -20,9 +24,20 @@ export default function LoginPage() {
     if (state === 'authed') router.replace('/dashboard');
   }, [state, router]);
 
+  function validate() {
+    const next: { email?: string; password?: string } = {};
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) next.email = 'Email is required.';
+    else if (!EMAIL_RE.test(trimmedEmail)) next.email = 'Enter a valid email address.';
+    if (!password) next.password = 'Password is required.';
+    setFieldErrors(next);
+    return Object.keys(next).length === 0;
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!validate()) return;
     setSubmitting(true);
     try {
       await login(email.trim(), password);
@@ -43,26 +58,53 @@ export default function LoginPage() {
         </div>
 
         <form className={styles.form} onSubmit={onSubmit} noValidate>
-          {error && <div className={styles.error}>{error}</div>}
+          {error && (
+            <Banner tone="error" title="Couldn’t sign in">
+              {error}
+            </Banner>
+          )}
           <TextField
             id="email"
             label="Email"
             type="email"
-            autoComplete="email"
+            inputMode="email"
+            autoComplete="username"
+            autoFocus
+            requiredMark
             placeholder="you@company.com"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            error={fieldErrors.email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (fieldErrors.email) setFieldErrors((f) => ({ ...f, email: undefined }));
+            }}
             required
           />
           <TextField
             id="password"
             label="Password"
-            type="password"
+            type={showPassword ? 'text' : 'password'}
             autoComplete="current-password"
+            requiredMark
             placeholder="••••••••"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            error={fieldErrors.password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              if (fieldErrors.password) setFieldErrors((f) => ({ ...f, password: undefined }));
+            }}
             required
+            trailing={
+              <button
+                type="button"
+                className={styles.reveal}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                aria-pressed={showPassword}
+                onClick={() => setShowPassword((s) => !s)}
+              >
+                {showPassword ? 'Hide' : 'Show'}
+              </button>
+            }
           />
           <Button type="submit" block loading={submitting}>
             {submitting ? 'Signing in…' : 'Sign in'}

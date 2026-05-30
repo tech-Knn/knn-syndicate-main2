@@ -1,4 +1,3 @@
-import { headers } from 'next/headers';
 import styles from './search.module.css';
 
 /**
@@ -16,25 +15,39 @@ import styles from './search.module.css';
 
 const API_BASE = process.env.ARTICLE_API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3000';
 
-interface ArticleSummary {
+export interface ArticleSummary {
   slug: string;
   title: string;
   snippet: string;
 }
 
-export async function WebResults(): Promise<React.ReactElement | null> {
-  const host = (await headers()).get('host') ?? '';
-  if (!host) return null;
-
-  let articles: ArticleSummary[] = [];
+/**
+ * Fetch the host's organic Web results once, server-side. The result is shared by both the
+ * <SearchAds> decision (ads ≤ organic count — Google policy) and the rendered <WebResults>
+ * block, so the count is authoritative and there's no double fetch. Cached (revalidate + the
+ * API's Cache-Control), so it's a cache hit on the hot path — no DB on the money-page critical
+ * path. Errors / empty host → `[]`, which suppresses the ads entirely (no ads without results).
+ */
+export async function fetchWebResults(host: string): Promise<ArticleSummary[]> {
+  if (!host) return [];
   try {
     const res = await fetch(`${API_BASE}/api/public/articles?host=${encodeURIComponent(host)}&limit=5`, {
       next: { revalidate: 300 },
     });
-    if (res.ok) articles = ((await res.json()) as { articles?: ArticleSummary[] }).articles ?? [];
+    if (!res.ok) return [];
+    return ((await res.json()) as { articles?: ArticleSummary[] }).articles ?? [];
   } catch {
-    return null; // never break the results page for the organic block
+    return []; // never break the results page for the organic block
   }
+}
+
+export function WebResults({
+  host,
+  articles,
+}: {
+  host: string;
+  articles: ArticleSummary[];
+}): React.ReactElement | null {
   if (articles.length === 0) return null;
 
   return (

@@ -10,7 +10,7 @@ import {
   currentBusinessDay,
   formatUsd,
 } from '@knn/shared';
-import { Badge, type DateRange, DateRangePicker, Skeleton } from '@/components/ui';
+import { Badge, Banner, Button, type DateRange, DateRangePicker, EmptyState, Skeleton } from '@/components/ui';
 import { campaigns as campaignApi, stats } from '@/lib/api';
 import { useAuth } from '../../providers';
 import admin from '../admin.module.css';
@@ -230,12 +230,31 @@ export default function AnalyticsPage() {
   const arrow = (key: SortKey): string => (sortKey !== key ? '' : sortDir === 'asc' ? '▲' : '▼');
   const colSpan = 14 + (isAdmin ? 1 : 0) + (isSuper ? 1 : 0); // total columns incl. actions
 
-  const Th = ({ k, label }: { k: SortKey; label: string }): React.ReactNode => (
-    <th className={`${admin.thLeft} ${styles.sortable}`} onClick={() => sortBy(k)}>
-      {label}
-      <span className={styles.arrow}>{arrow(k)}</span>
-    </th>
-  );
+  const clearAllFilters = (): void => {
+    setSearch('');
+    setStatusSel(new Set());
+    setBuyerSel('');
+    setCompanySel('');
+    setProfitSel('all');
+  };
+  const hasFilters = search !== '' || statusSel.size > 0 || buyerSel !== '' || companySel !== '' || profitSel !== 'all';
+
+  const Th = ({ k, label, lowPriority }: { k: SortKey; label: string; lowPriority?: boolean }): React.ReactNode => {
+    const active = sortKey === k;
+    return (
+      <th
+        className={`${admin.thLeft} ${styles.sortable} ${lowPriority ? styles.lowPriority : ''}`}
+        aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      >
+        <button type="button" className={styles.sortBtn} onClick={() => sortBy(k)}>
+          {label}
+          <span className={styles.arrow} aria-hidden>
+            {arrow(k)}
+          </span>
+        </button>
+      </th>
+    );
+  };
 
   return (
     <div className={admin.page}>
@@ -248,7 +267,11 @@ export default function AnalyticsPage() {
         <DateRangePicker value={range} onChange={setRange} />
       </div>
 
-      {error && <div className={admin.section} style={{ color: 'var(--red)' }}>{error}</div>}
+      {error && (
+        <Banner tone="error" onDismiss={() => setError(null)}>
+          {error}
+        </Banner>
+      )}
 
       {/* Toolbar: search + filters */}
       <div className={styles.toolbar}>
@@ -283,7 +306,7 @@ export default function AnalyticsPage() {
         {statuses.length > 0 && (
           <div className={styles.chips}>
             {statuses.map((s) => (
-              <button key={s} type="button" className={`${styles.chip} ${statusSel.has(s) ? styles.chipActive : ''}`} onClick={() => toggleStatus(s)}>
+              <button key={s} type="button" aria-pressed={statusSel.has(s)} className={`${styles.chip} ${statusSel.has(s) ? styles.chipActive : ''}`} onClick={() => toggleStatus(s)}>
                 {statusLabel(s)}
               </button>
             ))}
@@ -303,10 +326,24 @@ export default function AnalyticsPage() {
           ))}
         </div>
       ) : filtered.length === 0 ? (
-        <p className={admin.empty}>No campaigns match. Adjust the filters or date range.</p>
+        <EmptyState
+          title="No campaigns match"
+          description={
+            hasFilters
+              ? 'No campaigns match the current filters. Clear them or widen the date range.'
+              : 'No campaign performance in this date range yet. Try a wider range.'
+          }
+          action={
+            hasFilters ? (
+              <Button variant="secondary" onClick={clearAllFilters}>
+                Clear all filters
+              </Button>
+            ) : undefined
+          }
+        />
       ) : (
         <>
-          <div className={admin.tableWrap}>
+          <div className={`${admin.tableWrap} ${styles.tableScroll}`}>
             <table className={admin.table}>
               <thead>
                 <tr>
@@ -321,26 +358,42 @@ export default function AnalyticsPage() {
                   <Th k="conversions" label="Conv" />
                   <Th k="cpa" label="CPA" />
                   <Th k="clicks" label="Clicks" />
-                  <Th k="cpc" label="CPC" />
-                  <Th k="ctr" label="CTR" />
-                  <Th k="impressions" label="Impr" />
-                  <Th k="rpc" label="RPC" />
-                  <th></th>
+                  <Th k="cpc" label="CPC" lowPriority />
+                  <Th k="ctr" label="CTR" lowPriority />
+                  <Th k="impressions" label="Impr" lowPriority />
+                  <Th k="rpc" label="RPC" lowPriority />
+                  <th aria-label="Actions"></th>
                 </tr>
               </thead>
               <tbody>
                 {pageRows.map((r) => {
                   const open = expanded === r.id;
                   const bd = breakdowns[r.id];
+                  const detailId = `analytics-detail-${r.id}`;
                   return (
                     <FragmentRow key={r.id}>
-                      <tr className={styles.clickRow} onClick={() => void toggleExpand(r.id)}>
+                      <tr className={open ? styles.rowOpen : undefined}>
                         <td className={admin.name}>
-                          <span className={`${styles.caret} ${open ? styles.caretOpen : ''}`}>▸</span> {r.name}
-                          {r.channelLabel && <div className={admin.subtle}>{r.channelLabel}</div>}
+                          <button
+                            type="button"
+                            className={styles.discloseBtn}
+                            aria-expanded={open}
+                            aria-controls={open ? detailId : undefined}
+                            onClick={() => void toggleExpand(r.id)}
+                          >
+                            <span className={`${styles.caret} ${open ? styles.caretOpen : ''}`} aria-hidden>
+                              ▸
+                            </span>
+                            <span className={styles.discloseName}>
+                              {r.name}
+                              {r.channelLabel && <span className={admin.subtle}>{r.channelLabel}</span>}
+                            </span>
+                          </button>
                         </td>
                         <td>
-                          <Badge tone={STATUS_TONE[r.status] ?? 'neutral'}>{statusLabel(r.status)}</Badge>
+                          <Badge tone={STATUS_TONE[r.status] ?? 'neutral'} dot>
+                            {statusLabel(r.status)}
+                          </Badge>
                         </td>
                         {isAdmin && <td className={admin.subtle}>{r.buyerName}</td>}
                         {isSuper && <td className={admin.subtle}>{r.companyName}</td>}
@@ -351,11 +404,11 @@ export default function AnalyticsPage() {
                         <td className={admin.num}>{r.conversions.toLocaleString()}</td>
                         <td className={admin.num}>{r.conversions ? num(cpa(r)) : '—'}</td>
                         <td className={admin.num}>{r.clicks.toLocaleString()}</td>
-                        <td className={admin.num}>{r.clicks ? num(cpc(r)) : '—'}</td>
-                        <td className={admin.num}>{ctr(r).toFixed(2)}%</td>
-                        <td className={admin.num}>{r.impressions.toLocaleString()}</td>
-                        <td className={admin.num}>{r.clicks ? num(rpc(r)) : '—'}</td>
-                        <td onClick={(e) => e.stopPropagation()}>
+                        <td className={`${admin.num} ${styles.lowPriority}`}>{r.clicks ? num(cpc(r)) : '—'}</td>
+                        <td className={`${admin.num} ${styles.lowPriority}`}>{ctr(r).toFixed(2)}%</td>
+                        <td className={`${admin.num} ${styles.lowPriority}`}>{r.impressions.toLocaleString()}</td>
+                        <td className={`${admin.num} ${styles.lowPriority}`}>{r.clicks ? num(rpc(r)) : '—'}</td>
+                        <td>
                           {r.status === 'ACTIVE' ? (
                             <button type="button" className={`${admin.actionBtn} ${admin.actionDanger}`} disabled={busy === r.id} onClick={() => void toggleActive(r, false)}>
                               {busy === r.id ? '…' : 'Pause'}
@@ -370,7 +423,7 @@ export default function AnalyticsPage() {
                         </td>
                       </tr>
                       {open && (
-                        <tr>
+                        <tr id={detailId}>
                           <td colSpan={colSpan}>
                             <CampaignDetail campaignId={r.id} bd={bd} range={range} />
                           </td>
@@ -392,10 +445,10 @@ export default function AnalyticsPage() {
                   <td className={admin.num}>{totals.conv.toLocaleString()}</td>
                   <td className={admin.num}>{totals.conv ? num(totals.cpa) : '—'}</td>
                   <td className={admin.num}>{totals.clicks.toLocaleString()}</td>
-                  <td className={admin.num}>{totals.clicks ? num(totals.cpc) : '—'}</td>
-                  <td className={admin.num}>{totals.ctr.toFixed(2)}%</td>
-                  <td className={admin.num}>{totals.impr.toLocaleString()}</td>
-                  <td className={admin.num}>{totals.clicks ? num(totals.rpc) : '—'}</td>
+                  <td className={`${admin.num} ${styles.lowPriority}`}>{totals.clicks ? num(totals.cpc) : '—'}</td>
+                  <td className={`${admin.num} ${styles.lowPriority}`}>{totals.ctr.toFixed(2)}%</td>
+                  <td className={`${admin.num} ${styles.lowPriority}`}>{totals.impr.toLocaleString()}</td>
+                  <td className={`${admin.num} ${styles.lowPriority}`}>{totals.clicks ? num(totals.rpc) : '—'}</td>
                   <td></td>
                 </tr>
               </tbody>

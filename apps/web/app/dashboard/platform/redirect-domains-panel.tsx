@@ -1,7 +1,7 @@
 'use client';
 
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
-import { Badge, Button, Card } from '@/components/ui';
+import { Badge, Banner, Button, Card, useConfirm, useToast } from '@/components/ui';
 import { ApiError, admin, type RedirectDomain } from '@/lib/api';
 
 /**
@@ -10,6 +10,8 @@ import { ApiError, admin, type RedirectDomain } from '@/lib/api';
  * domain ads point at, with a reachability check, plus an explainer of how it fits the funnel.
  */
 export function RedirectDomainsPanel(): React.ReactElement {
+  const confirm = useConfirm();
+  const toast = useToast();
   const [domains, setDomains] = useState<RedirectDomain[] | null>(null);
   const [host, setHost] = useState('');
   const [label, setLabel] = useState('');
@@ -17,8 +19,14 @@ export function RedirectDomainsPanel(): React.ReactElement {
   const [note, setNote] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
 
   const load = useCallback(() => {
-    void admin.redirectDomains().then(setDomains).catch(() => setDomains([]));
-  }, []);
+    void admin
+      .redirectDomains()
+      .then(setDomains)
+      .catch(() => {
+        setDomains([]);
+        toast.error('Could not load redirect domains.');
+      });
+  }, [toast]);
   useEffect(() => load(), [load]);
 
   const run = async (key: string, fn: () => Promise<unknown>, okMsg?: string): Promise<void> => {
@@ -59,23 +67,15 @@ export function RedirectDomainsPanel(): React.ReactElement {
         </div>
 
         {note && (
-          <div
-            style={{
-              padding: '0.6rem 0.9rem',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: '0.85rem',
-              background: note.tone === 'ok' ? 'rgba(58,160,90,0.12)' : 'rgba(200,60,60,0.12)',
-              color: note.tone === 'ok' ? 'var(--green)' : 'var(--red)',
-            }}
-          >
+          <Banner tone={note.tone === 'ok' ? 'success' : 'error'} onDismiss={() => setNote(null)}>
             {note.text}
-          </div>
+          </Banner>
         )}
 
         {!hasDefault && domains && domains.length > 0 && (
-          <div style={{ padding: '0.6rem 0.9rem', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem', background: 'rgba(200,140,40,0.12)', color: 'var(--gold)' }}>
+          <Banner tone="warning">
             No default set — new ads fall back to the <code>REDIRECT_DOMAIN</code> env value. Pick a default below.
-          </div>
+          </Banner>
         )}
 
         {/* List */}
@@ -123,9 +123,15 @@ export function RedirectDomainsPanel(): React.ReactElement {
                   <Button
                     variant="danger"
                     onClick={() => {
-                      if (typeof window !== 'undefined' && window.confirm(`Remove ${d.host}? New ads won't be able to use it.`)) {
-                        void run(`d-${d.id}`, () => admin.deleteRedirectDomain(d.id));
-                      }
+                      void (async () => {
+                        const ok = await confirm({
+                          title: `Remove ${d.host}?`,
+                          body: "New ads won't be able to use it.",
+                          confirmLabel: 'Remove domain',
+                          tone: 'danger',
+                        });
+                        if (ok) await run(`d-${d.id}`, () => admin.deleteRedirectDomain(d.id));
+                      })();
                     }}
                     loading={busy === `d-${d.id}`}
                   >
@@ -140,8 +146,9 @@ export function RedirectDomainsPanel(): React.ReactElement {
         {/* Add */}
         <form onSubmit={(e) => void add(e)} style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div style={{ flex: '1 1 16rem' }}>
-            <label style={{ display: 'block', fontSize: '0.78rem', color: 'var(--muted)', marginBottom: '0.25rem' }}>Host</label>
+            <label htmlFor="rd-host" style={{ display: 'block', fontSize: '0.78rem', color: 'var(--muted)', marginBottom: '0.25rem' }}>Host</label>
             <input
+              id="rd-host"
               value={host}
               onChange={(e) => setHost(e.target.value)}
               placeholder="go.example.com"
@@ -149,8 +156,9 @@ export function RedirectDomainsPanel(): React.ReactElement {
             />
           </div>
           <div style={{ flex: '0 1 12rem' }}>
-            <label style={{ display: 'block', fontSize: '0.78rem', color: 'var(--muted)', marginBottom: '0.25rem' }}>Label (optional)</label>
+            <label htmlFor="rd-label" style={{ display: 'block', fontSize: '0.78rem', color: 'var(--muted)', marginBottom: '0.25rem' }}>Label (optional)</label>
             <input
+              id="rd-label"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               placeholder="Primary edge"

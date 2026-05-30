@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Badge, Button, Card, Spinner } from '@/components/ui';
+import Link from 'next/link';
+import { Badge, Banner, Button, Card, EmptyState, Skeleton, useConfirm, useToast } from '@/components/ui';
 import { admin as adminApi, campaigns as campaignsApi } from '@/lib/api';
 import { type AdminOrg, type Campaign } from '@/lib/types';
 import { useAuth } from '../../providers';
@@ -15,6 +16,10 @@ const OBJECTIVE_LABEL: Record<string, string> = {
   OUTCOME_AWARENESS: 'Awareness',
   OUTCOME_APP_PROMOTION: 'App promotion',
 };
+
+/** Minimum characters for a rejection reason shown to the buyer. */
+const REASON_MIN = 10;
+const REASON_MAX = 500;
 
 function objectiveLabel(o: string): string {
   return OBJECTIVE_LABEL[o] ?? o.replace(/^OUTCOME_/, '').toLowerCase();
@@ -51,7 +56,11 @@ export default function ApprovalsPage() {
   const { user } = useAuth();
   const isCompanyAdmin = user?.role === 'COMPANY_ADMIN';
 
+  const toast = useToast();
+  const confirm = useConfirm();
+
   const [pending, setPending] = useState<Campaign[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [org, setOrg] = useState<AdminOrg | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
@@ -60,10 +69,14 @@ export default function ApprovalsPage() {
   const [togglingLaunch, setTogglingLaunch] = useState(false);
 
   const load = useCallback(() => {
+    setLoadError(false);
     void campaignsApi
       .pending()
       .then(setPending)
-      .catch(() => setPending([]));
+      .catch(() => {
+        setPending([]);
+        setLoadError(true);
+      });
     void adminApi
       .organization()
       .then(setOrg)
@@ -76,30 +89,48 @@ export default function ApprovalsPage() {
     setPending((prev) => prev?.filter((c) => c.id !== id) ?? prev);
   }
 
-  async function approve(id: string) {
-    setBusyId(id);
+  async function approve(c: Campaign) {
+    const autoLaunch = org?.autoLaunch ?? false;
+    const ok = await confirm({
+      title: `Approve “${c.name}”?`,
+      body: (
+        <>
+          Daily budget <b>{money(dailyBudgetCents(c))}</b>. Approving assigns this campaign a finite
+          AdSense channel from the shared pool.
+          {autoLaunch
+            ? ' Auto-launch is on — approving will launch live Facebook ads immediately and start spending budget.'
+            : ' It will then wait for a manual launch before any Facebook spend.'}
+        </>
+      ),
+      confirmLabel: 'Approve',
+    });
+    if (!ok) return;
+
+    setBusyId(c.id);
     try {
-      await campaignsApi.approve(id);
-      drop(id);
+      await campaignsApi.approve(c.id);
+      drop(c.id);
+      toast.success(`Approved “${c.name}”.`);
     } catch {
-      window.alert('Could not approve this campaign. It may have already been reviewed.');
+      toast.error('Could not approve this campaign. It may have already been reviewed.');
       load();
     } finally {
       setBusyId(null);
     }
   }
 
-  async function confirmReject(id: string) {
+  async function confirmReject(c: Campaign) {
     const text = reason.trim();
-    if (!text) return;
-    setBusyId(id);
+    if (text.length < REASON_MIN) return;
+    setBusyId(c.id);
     try {
-      await campaignsApi.reject(id, text);
-      drop(id);
+      await campaignsApi.reject(c.id, text);
+      drop(c.id);
       setRejectingId(null);
       setReason('');
+      toast.success(`Rejected “${c.name}” — the buyer has been notified.`);
     } catch {
-      window.alert('Could not reject this campaign. It may have already been reviewed.');
+      toast.error('Could not reject this campaign. It may have already been reviewed.');
       load();
     } finally {
       setBusyId(null);
@@ -112,8 +143,11 @@ export default function ApprovalsPage() {
     try {
       const updated = await adminApi.setAutoApprove(org.id, !org.autoApprove);
       setOrg(updated);
+      toast.success(
+        updated.autoApprove ? 'Auto-approve turned on.' : 'Auto-approve turned off — submissions now wait for review.',
+      );
     } catch {
-      window.alert('Could not change the approval mode.');
+      toast.error('Could not change the approval mode.');
     } finally {
       setTogglingAuto(false);
     }
@@ -125,8 +159,13 @@ export default function ApprovalsPage() {
     try {
       const updated = await adminApi.setAutoLaunch(org.id, !org.autoLaunch);
       setOrg(updated);
+      toast.success(
+        updated.autoLaunch
+          ? 'Auto-launch turned on — approved campaigns go live automatically.'
+          : 'Auto-launch turned off — approved campaigns wait for a manual launch.',
+      );
     } catch {
-      window.alert('Could not change the launch mode.');
+      toast.error('Could not change the launch mode.');
     } finally {
       setTogglingLaunch(false);
     }
@@ -187,26 +226,65 @@ export default function ApprovalsPage() {
         )}
       </div>
 
+      {loadError && (
+        <div className={styles.loadError}>
+          <Banner
+            tone="error"
+            title="Couldn’t load the review queue"
+            action={
+              <Button variant="secondary" onClick={load}>
+                Retry
+              </Button>
+            }
+          >
+            Something went wrong fetching pending campaigns.
+          </Banner>
+        </div>
+      )}
+
       {pending === null ? (
-        <Card className={styles.center}>
-          <Spinner />
-        </Card>
+        <div className={styles.list} aria-busy="true" aria-label="Loading campaigns">
+          {[0, 1, 2].map((i) => (
+            <Card key={i} className={styles.card}>
+              <div className={styles.cardTop}>
+                <Skeleton className={styles.skName} />
+                <Skeleton className={styles.skWhen} />
+              </div>
+              <div className={styles.skMeta}>
+                <Skeleton className={styles.skLine} />
+                <Skeleton className={styles.skLineShort} />
+              </div>
+              <div className={styles.skActions}>
+                <Skeleton className={styles.skBtn} />
+                <Skeleton className={styles.skBtn} />
+              </div>
+            </Card>
+          ))}
+        </div>
       ) : pending.length === 0 ? (
-        <Card className={styles.empty}>
-          <h2 className={styles.emptyTitle}>Nothing to review</h2>
-          <p className={styles.emptyText}>
-            Campaigns submitted by your media buyers will appear here for approval.
-          </p>
+        <Card>
+          <EmptyState
+            icon={<span aria-hidden>📥</span>}
+            title="Nothing to review"
+            description="Campaigns submitted by your media buyers will appear here for approval."
+          />
         </Card>
       ) : (
         <div className={styles.list}>
           {pending.map((c) => {
             const cc = countries(c);
             const busy = busyId === c.id;
+            const trimmed = reason.trim();
+            const reasonValid = trimmed.length >= REASON_MIN;
             return (
               <Card key={c.id} className={styles.card}>
                 <div className={styles.cardTop}>
-                  <span className={styles.cardName}>{c.name}</span>
+                  <div className={styles.cardHead}>
+                    <span className={styles.cardName}>{c.name}</span>
+                    <Link href={`/dashboard/campaigns/${c.id}`} className={styles.viewLink}>
+                      View campaign
+                    </Link>
+                  </div>
                   <span className={styles.cardWhen}>Submitted {whenLabel(c.submittedAt)}</span>
                 </div>
 
@@ -221,6 +299,11 @@ export default function ApprovalsPage() {
                   <span>
                     <b>{money(dailyBudgetCents(c))}</b>/day ({c.budgetMode === 'CAMPAIGN' ? 'CBO' : 'ABO'})
                   </span>
+                  {c.racValue && (
+                    <span>
+                      RAC <b>{c.racValue}</b>
+                    </span>
+                  )}
                   {cc.length > 0 && (
                     <span>
                       Geo <b>{cc.slice(0, 6).join(', ')}</b>
@@ -260,9 +343,22 @@ export default function ApprovalsPage() {
                       className={styles.textarea}
                       value={reason}
                       autoFocus
+                      maxLength={REASON_MAX}
+                      minLength={REASON_MIN}
+                      aria-describedby={`reason-help-${c.id}`}
                       placeholder="e.g. Landing page needs a clearer disclaimer before launch."
                       onChange={(e) => setReason(e.target.value)}
                     />
+                    <div className={styles.reasonMeta} id={`reason-help-${c.id}`}>
+                      <span className={reasonValid ? styles.reasonOk : styles.reasonNeed}>
+                        {reasonValid
+                          ? 'Looks good.'
+                          : `At least ${REASON_MIN} characters (${trimmed.length}/${REASON_MIN}).`}
+                      </span>
+                      <span className={styles.reasonCount}>
+                        {reason.length}/{REASON_MAX}
+                      </span>
+                    </div>
                     <div className={styles.rejectActions}>
                       <Button
                         variant="ghost"
@@ -274,10 +370,10 @@ export default function ApprovalsPage() {
                         Cancel
                       </Button>
                       <Button
-                        variant="danger"
+                        variant="danger-solid"
                         loading={busy}
-                        disabled={!reason.trim()}
-                        onClick={() => void confirmReject(c.id)}
+                        disabled={!reasonValid}
+                        onClick={() => void confirmReject(c)}
                       >
                         Confirm rejection
                       </Button>
@@ -285,7 +381,7 @@ export default function ApprovalsPage() {
                   </div>
                 ) : (
                   <div className={styles.actions}>
-                    <Button loading={busy} onClick={() => void approve(c.id)}>
+                    <Button loading={busy} onClick={() => void approve(c)}>
                       Approve
                     </Button>
                     <div className={styles.spacer} />

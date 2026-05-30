@@ -14,6 +14,7 @@ import styles from '../../admin.module.css';
 export default function ArticlesPage() {
   const [rows, setRows] = useState<ArticleRow[] | null>(null);
   const [search, setSearch] = useState('');
+  const [debounced, setDebounced] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const [usage, setUsage] = useState<Record<string, ArticleUsage | 'loading' | 'error'>>({});
 
@@ -21,11 +22,17 @@ export default function ArticlesPage() {
     void admin.articles().then(setRows).catch(() => setRows([]));
   }, []);
 
+  // Debounce the client filter so typing over the full set stays smooth.
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(search), 200);
+    return () => clearTimeout(t);
+  }, [search]);
+
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = debounced.trim().toLowerCase();
     const out = (rows ?? []).filter((r) => !q || r.title.toLowerCase().includes(q) || r.slug.toLowerCase().includes(q));
     return out;
-  }, [rows, search]);
+  }, [rows, debounced]);
 
   const toggle = useCallback(
     (id: string): void => {
@@ -57,9 +64,13 @@ export default function ArticlesPage() {
 
       <Card className={styles.section}>
         <div className={styles.sectionHead}>
-          <span className={styles.sectionTitle}>Articles</span>
+          <span className={styles.sectionTitle}>
+            Articles{rows ? ` (${filtered.length.toLocaleString()}${debounced.trim() ? ` of ${rows.length.toLocaleString()}` : ''})` : ''}
+          </span>
           <input
             className={styles.rangeInput}
+            type="search"
+            aria-label="Search articles by title or slug"
             placeholder="Search title or slug…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -88,12 +99,22 @@ export default function ArticlesPage() {
                   const open = openId === a.id;
                   return (
                     <Fragment key={a.id}>
-                      <tr onClick={() => toggle(a.id)} style={{ cursor: 'pointer' }}>
+                      <tr>
                         <td className={styles.name}>{a.title}</td>
                         <td className="mono">{a.slug}</td>
                         <td><Badge tone={a.status === 'READY' ? 'success' : 'neutral'}>{a.status.toLowerCase()}</Badge></td>
                         <td className={styles.subtle}>{new Date(a.createdAt).toLocaleDateString()}</td>
-                        <td className={styles.subtle}>{open ? '▲' : '▼'}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className={styles.actionBtn}
+                            aria-expanded={open}
+                            aria-label={open ? `Hide lineage for ${a.title}` : `Show lineage for ${a.title}`}
+                            onClick={() => toggle(a.id)}
+                          >
+                            {open ? '▲ Hide' : '▼ Lineage'}
+                          </button>
+                        </td>
                       </tr>
                       {open && (
                         <tr>

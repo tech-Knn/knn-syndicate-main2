@@ -81,6 +81,10 @@
   transform: translateX(20px);
 }
 
+.loadError {
+  margin-bottom: 1rem;
+}
+
 .list {
   display: flex;
   flex-direction: column;
@@ -95,10 +99,30 @@
   justify-content: space-between;
   gap: 1rem;
 }
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+}
 .cardName {
   color: var(--cream);
   font-size: 1.1rem;
   font-weight: 600;
+}
+.viewLink {
+  font-size: 0.8rem;
+  color: var(--rust);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.viewLink:hover {
+  border-bottom-color: var(--rust);
+}
+.viewLink:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 .cardWhen {
   font-size: 0.78rem;
@@ -177,32 +201,67 @@
   outline: none;
   border-color: var(--rust);
 }
+.reasonMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.74rem;
+}
+.reasonOk {
+  color: var(--green);
+}
+.reasonNeed {
+  color: var(--muted-2);
+}
+.reasonCount {
+  color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .rejectActions {
   display: flex;
   gap: 0.6rem;
   justify-content: flex-end;
 }
 
-.empty {
-  padding: 3rem 1.5rem;
-  text-align: center;
+/* loading skeleton cards (mirror the real card layout) */
+.skName {
+  display: block;
+  width: 40%;
+  height: 1.1rem;
+}
+.skWhen {
+  display: block;
+  width: 7rem;
+  height: 0.8rem;
+}
+.skMeta {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 0.6rem;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
 }
-.emptyTitle {
-  font-size: 1.2rem;
-  color: var(--cream);
+.skLine {
+  display: block;
+  width: 80%;
+  height: 0.82rem;
 }
-.emptyText {
-  color: var(--muted);
-  font-size: 0.9rem;
-  max-width: 40ch;
+.skLineShort {
+  display: block;
+  width: 45%;
+  height: 0.82rem;
 }
-.center {
+.skActions {
   display: flex;
-  justify-content: center;
-  padding: 2.5rem;
-  color: var(--muted);
+  gap: 0.6rem;
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+.skBtn {
+  display: block;
+  width: 6rem;
+  height: 2.1rem;
+  border-radius: var(--radius-sm);
 }

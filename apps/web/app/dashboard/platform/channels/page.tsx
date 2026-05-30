@@ -2,7 +2,7 @@
 
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { type ChannelSummary, type ChannelUsage } from '@knn/shared';
-import { Badge, Button, Card, Skeleton } from '@/components/ui';
+import { Badge, Banner, Button, Card, Skeleton, useConfirm } from '@/components/ui';
 import { ApiError, admin, adsense, domains } from '@/lib/api';
 import { type AfsChannelRow, type DomainRow } from '@/lib/types';
 import styles from '../../admin.module.css';
@@ -12,7 +12,13 @@ import styles from '../../admin.module.css';
  * (2) per-website catalog/import, (3) "where is this channel used" lineage. The hub
  * layout (platform/layout.tsx) guards super-admin.
  */
+// Cap how many catalog rows we paint at once. The API can return up to ~2,000 matches
+// (and accounts hold 100k+ channels); rendering them all jank the page, so we show a
+// window and tell the user to narrow the range to reach the rest.
+const ROW_CAP = 200;
+
 export default function ChannelsPage() {
+  const confirm = useConfirm();
   const [summary, setSummary] = useState<ChannelSummary | null>(null);
   const [domainList, setDomainList] = useState<DomainRow[]>([]);
   const [note, setNote] = useState<string | null>(null);
@@ -74,7 +80,8 @@ export default function ChannelsPage() {
     });
   const toggleSelAll = (): void =>
     setChSel((s) => {
-      const ids = (chRows ?? []).map((c) => c.channelId);
+      // Only the rows actually shown (capped) can be select-all'd.
+      const ids = (chRows ?? []).slice(0, ROW_CAP).map((c) => c.channelId);
       const all = ids.length > 0 && ids.every((id) => s.has(id));
       return all ? new Set() : new Set(ids);
     });
@@ -113,6 +120,18 @@ export default function ChannelsPage() {
     } finally {
       setChBusy(false);
     }
+  };
+
+  const removeSelected = async (): Promise<void> => {
+    if (!chDomain || chSel.size === 0) return;
+    const ok = await confirm({
+      title: `Remove ${chSel.size} channel${chSel.size === 1 ? '' : 's'}?`,
+      body: `These channels stop being usable on ${chDomain.host}. Channels currently assigned to a campaign are skipped.`,
+      confirmLabel: 'Remove selected',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    await applyChannels('remove');
   };
 
   const applyChannels = async (mode: 'add' | 'remove'): Promise<void> => {
@@ -167,7 +186,11 @@ export default function ChannelsPage() {
         </div>
       </div>
 
-      {note && <Card className={styles.errorCard}>{note}</Card>}
+      {note && (
+        <Banner tone="info" onDismiss={() => setNote(null)}>
+          {note}
+        </Banner>
+      )}
 
       {/* 1. Channel usage lineage */}
       <Card className={styles.section}>
@@ -175,7 +198,7 @@ export default function ChannelsPage() {
           <span className={styles.sectionTitle}>Channel usage</span>
         </div>
         <form className={styles.domainForm} onSubmit={(e) => void lookup(e)}>
-          <input className={styles.rangeInput} placeholder="Search by channel id (the ch value)…" value={usageQ} onChange={(e) => setUsageQ(e.target.value)} />
+          <input className={styles.rangeInput} aria-label="Channel id to look up" placeholder="Search by channel id (the ch value)…" value={usageQ} onChange={(e) => setUsageQ(e.target.value)} />
           <Button type="submit" loading={usageBusy} disabled={!usageQ.trim()}>Look up</Button>
         </form>
         {usage === 'none' ? (
@@ -290,41 +313,53 @@ export default function ChannelsPage() {
               {chMeta && (<> Scanned {chMeta.scanned.toLocaleString()}{chMeta.truncated ? '+' : ''} · <strong>{chMeta.total.toLocaleString()} match</strong>{chMeta.truncated ? ' (first 2,000 — narrow the range)' : ''}.</>)}
             </p>
             <form className={styles.domainForm} onSubmit={(e) => { e.preventDefault(); void loadChannels(chDomain.id, chQuery, chRange); }}>
-              <input className={styles.rangeInput} placeholder="id range, e.g. 00500-01499" value={chRange} onChange={(e) => setChRange(e.target.value)} />
-              <input className={styles.rangeInput} placeholder="or search by name / id…" value={chQuery} onChange={(e) => setChQuery(e.target.value)} />
+              <input className={styles.rangeInput} aria-label="Channel id range" placeholder="id range, e.g. 00500-01499" value={chRange} onChange={(e) => setChRange(e.target.value)} />
+              <input className={styles.rangeInput} aria-label="Search channels by name or id" placeholder="or search by name / id…" value={chQuery} onChange={(e) => setChQuery(e.target.value)} />
               <Button type="submit" variant="ghost" loading={chBusy}>Preview</Button>
               <Button type="button" variant="ghost" onClick={() => void syncCatalog()} disabled={chBusy} title="Pull the account's full channel list from AdSense for instant browsing">Sync from AdSense</Button>
               <Button type="button" onClick={() => void importAll()} disabled={chBusy || (!chRange.trim() && !chQuery.trim())}>{chRange.trim() ? 'Import range' : 'Import all matching'}</Button>
               <Button type="button" onClick={() => void applyChannels('add')} disabled={chSel.size === 0}>Import selected ({chSel.size})</Button>
-              <button type="button" className={`${styles.actionBtn} ${styles.actionDanger}`} disabled={chSel.size === 0} onClick={() => void applyChannels('remove')}>Remove selected</button>
+              <button type="button" className={`${styles.actionBtn} ${styles.actionDanger}`} disabled={chSel.size === 0} onClick={() => void removeSelected()}>Remove selected</button>
             </form>
             {!chRows ? (
               <div className={styles.rowsSkel}>{Array.from({ length: 4 }).map((_, i) => (<Skeleton key={i} className={styles.rowSkel} />))}</div>
             ) : chRows.length === 0 ? (
               <p className={styles.empty}>No channels found{chQuery ? ` for “${chQuery}”` : ''}.</p>
             ) : (
-              <div className={styles.tableWrap}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th className={styles.thLeft}><input type="checkbox" title="Select all shown" checked={chRows.length > 0 && chRows.every((c) => chSel.has(c.channelId))} onChange={toggleSelAll} /></th>
-                      <th className={styles.thLeft}>Channel name</th>
-                      <th className={styles.thLeft}>Channel ID</th>
-                      <th className={styles.thLeft}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {chRows.map((c) => (
-                      <tr key={c.channelId}>
-                        <td><input type="checkbox" checked={chSel.has(c.channelId)} onChange={() => toggleSel(c.channelId)} /></td>
-                        <td className={styles.name}>{c.displayName ?? <span className={styles.subtle}>(unnamed)</span>}</td>
-                        <td className="mono">{c.channelId}</td>
-                        <td>{c.imported ? <Badge tone={c.status === 'ASSIGNED' ? 'brand' : 'success'}>{(c.status ?? 'imported').toLowerCase()}</Badge> : <span className={styles.subtle}>—</span>}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              (() => {
+                const visible = chRows.slice(0, ROW_CAP);
+                return (
+                  <>
+                    {chRows.length > ROW_CAP && (
+                      <Banner tone="info">
+                        Showing {visible.length.toLocaleString()} of {chRows.length.toLocaleString()} matched channels — narrow the id range or refine the search to see more.
+                      </Banner>
+                    )}
+                    <div className={styles.tableWrap}>
+                      <table className={styles.table}>
+                        <thead>
+                          <tr>
+                            <th className={styles.thLeft}><input type="checkbox" aria-label="Select all shown channels" title="Select all shown" checked={visible.length > 0 && visible.every((c) => chSel.has(c.channelId))} onChange={toggleSelAll} /></th>
+                            <th className={styles.thLeft}>Channel name</th>
+                            <th className={styles.thLeft}>Channel ID</th>
+                            <th className={styles.thLeft}>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {visible.map((c) => (
+                            <tr key={c.channelId}>
+                              <td><input type="checkbox" aria-label={`Select channel ${c.channelId}`} checked={chSel.has(c.channelId)} onChange={() => toggleSel(c.channelId)} /></td>
+                              <td className={styles.name}>{c.displayName ?? <span className={styles.subtle}>(unnamed)</span>}</td>
+                              <td className="mono">{c.channelId}</td>
+                              <td>{c.imported ? <Badge tone={c.status === 'ASSIGNED' ? 'brand' : 'success'}>{(c.status ?? 'imported').toLowerCase()}</Badge> : <span className={styles.subtle}>—</span>}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                );
+              })()
             )}
           </>
         )}

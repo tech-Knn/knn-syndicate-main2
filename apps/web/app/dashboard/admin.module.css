@@ -295,3 +295,28 @@
 .rowSkel {
   height: 40px;
 }
+
+/* ---- Mobile: keep wide tables usable ----
+   A subtle right-edge scroll-shadow hints there's more to scroll, and on narrow
+   viewports the first column sticks so the row's identity stays visible. */
+.tableWrap {
+  background:
+    linear-gradient(to right, var(--surface, #161310) 30%, rgba(22, 19, 16, 0)) 0 0 / 28px 100% no-repeat,
+    linear-gradient(to left, var(--surface, #161310) 30%, rgba(22, 19, 16, 0)) 100% 0 / 28px 100% no-repeat,
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.32), rgba(0, 0, 0, 0)) 0 0 / 14px 100% no-repeat,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.32), rgba(0, 0, 0, 0)) 100% 0 / 14px 100% no-repeat;
+  background-attachment: local, local, scroll, scroll;
+}
+
+@media (max-width: 900px) {
+  .table thead th:first-child,
+  .table tbody td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--surface, #161310);
+  }
+  .table thead th:first-child {
+    z-index: 2;
+  }
+}

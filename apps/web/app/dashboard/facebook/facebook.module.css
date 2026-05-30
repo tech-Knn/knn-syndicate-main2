@@ -16,25 +16,13 @@
   font-size: 0.92rem;
 }
 
-.banner {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.7rem 0.9rem;
-  border-radius: var(--radius-sm);
-  font-size: 0.88rem;
-  margin-bottom: 1.25rem;
-  animation: knn-rise 0.3s ease both;
+/* Wrappers around the shared <Banner> primitive (spacing only — the Banner
+   owns its own colour/role/aria-live). */
+.pageBanner {
+  margin-bottom: var(--space-5);
 }
-.bannerSuccess {
-  background: rgba(63, 178, 127, 0.12);
-  border: 1px solid rgba(63, 178, 127, 0.4);
-  color: #8fe0bb;
-}
-.bannerError {
-  background: rgba(217, 72, 59, 0.12);
-  border: 1px solid rgba(217, 72, 59, 0.4);
-  color: #f0a59d;
+.profileBanner {
+  margin-top: var(--space-4);
 }
 
 /* Empty / broken state hero */
@@ -238,6 +226,25 @@
   padding: 0.85rem 1.1rem;
   color: var(--muted-2);
   font-size: 0.85rem;
+}
+.pixelError {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--red-text);
+}
+.retryLink {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--rust);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.retryLink:hover {
+  color: var(--cream);
 }
 .loadingRow {
   padding: 1.25rem;

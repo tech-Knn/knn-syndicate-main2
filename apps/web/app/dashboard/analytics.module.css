@@ -46,7 +46,7 @@
   border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: 0.75rem;
   cursor: pointer;
   white-space: nowrap;
@@ -56,6 +56,10 @@
   border-color: var(--border-strong);
   color: var(--cream);
 }
+.chip:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: 2px;
+}
 .chipActive {
   background: rgba(var(--rust-rgb), 0.18);
   border-color: var(--rust);
@@ -63,17 +67,52 @@
 }
 
 .sortable {
-  cursor: pointer;
-  user-select: none;
+  padding: 0 !important;
   white-space: nowrap;
 }
-.sortable:hover {
+/* The actual interactive control inside each sortable <th>. */
+.sortBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  user-select: none;
+}
+.sortBtn:hover {
+  color: var(--cream);
+}
+.sortBtn:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+  color: var(--cream);
+}
+/* Right-aligned numeric headers: push the label/arrow to the end. */
+.table thead th:not(.thLeft) .sortBtn {
+  justify-content: flex-end;
+}
+.sortable[aria-sort='ascending'],
+.sortable[aria-sort='descending'] {
   color: var(--cream);
 }
 .arrow {
   color: var(--rust);
   font-size: 0.7rem;
   margin-left: 0.15rem;
+}
+
+/* Low-priority columns: hidden on narrow viewports (see media query below). */
+.lowPriority {
+  /* shown by default */
 }
 
 .totalsRow td {
@@ -102,21 +141,50 @@
   opacity: 0.4;
   cursor: default;
 }
+.pagerBtn:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: 2px;
+}
 .pageInfo {
   font-size: 0.8rem;
-  color: var(--muted-2);
+  color: var(--muted);
   font-family: var(--font-mono);
 }
 
-.clickRow {
+/* Disclosure control in the campaign-name cell: expands the detail row. */
+.discloseBtn {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
 }
-.clickRow:hover {
+.discloseBtn:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.discloseName {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.discloseBtn:hover .discloseName {
+  color: var(--rust);
+}
+.rowOpen > td {
   background: var(--surface-2);
 }
 .caret {
   display: inline-block;
   width: 0.9rem;
+  flex: none;
   color: var(--muted);
   transition: transform 0.12s ease;
 }
@@ -139,12 +207,16 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: 0.78rem;
   cursor: pointer;
 }
 .detailTab:hover {
   color: var(--cream);
+}
+.detailTab:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: 2px;
 }
 .detailTabActive {
   background: rgba(var(--rust-rgb), 0.18);
@@ -158,7 +230,7 @@
 }
 .adIndent {
   padding-left: 1.6rem !important;
-  color: var(--muted-2);
+  color: var(--muted);
 }
 .suppressed {
   color: var(--muted);
@@ -178,7 +250,7 @@
   gap: 1rem;
   padding: 0.25rem 0;
   font-size: 0.8rem;
-  color: var(--muted-2);
+  color: var(--muted);
 }
 .adName {
   min-width: 12rem;
@@ -188,5 +260,41 @@
   color: var(--green);
 }
 .neg {
-  color: var(--red);
+  color: var(--red-text);
+}
+
+/* ---------------------------------------------------------- Responsive table */
+
+/* Scroll container: keeps horizontal overflow scrollable and paints a
+   right-edge shadow as a cue that more columns exist off-screen. */
+.tableScroll {
+  position: relative;
+  background:
+    /* right-edge fade, pinned via local-no-repeat against the right padding box */
+    linear-gradient(to left, var(--bg), rgba(0, 0, 0, 0)) right center / 2rem 100% no-repeat local;
+}
+
+@media (max-width: 900px) {
+  /* Hide low-priority metric columns to keep the core columns readable. */
+  .lowPriority {
+    display: none;
+  }
+
+  /* Pin the first column (campaign name) so context stays visible while
+     the rest of the row scrolls horizontally. */
+  .tableScroll table thead th:first-child,
+  .tableScroll table tbody td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--surface);
+    box-shadow: 1px 0 0 var(--border);
+  }
+  /* Match the open-row / totals tint on the pinned cell so it doesn't look detached. */
+  .rowOpen > td:first-child {
+    background: var(--surface-2);
+  }
+  .totalsRow td:first-child {
+    background: var(--surface);
+  }
 }
