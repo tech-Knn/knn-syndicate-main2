@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { resolveSiteConfig, resolveSiteName } from '../_afs/site-config';
-import { ConversionTracker } from './conversion-tracker';
+import { ConversionTracker } from '../funnel-beacons';
 import { SearchAds } from './search-ads';
 import { fetchWebResults, WebResults } from './web-results';
 import styles from './search.module.css';

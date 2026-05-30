@@ -349,11 +349,13 @@ model AdSet {
   placementMode String   @default("automatic") @map("placement_mode")
   placements    String[] @default([])
 
-  /// Conversion tracking lives at the ad-set level (FB model; D10 revised): the
-  /// pixel + the conversion event (pxe) the whole ad set optimizes/attributes on.
+  /// Conversion tracking lives at the ad-set level (FB model; D10 revised): the pixel +
+  /// the MAIN conversion event the ad set optimizes toward. The funnel fires ViewContent
+  /// (lander) → AddToCart (search) → Search (adclick); `pxeEvent` is the deepest/money one
+  /// (default "adclick" → custom_event_type SEARCH).
   pixelId  String? @map("pixel_id") @db.Uuid
-  pxeEvent String  @default("search") @map("pxe_event")
-  /// Conversion reporting: "instant" (no revenue) or "estimates" (for ROAS).
+  pxeEvent String  @default("adclick") @map("pxe_event")
+  /// Deprecated (kept for back-compat; no longer surfaced in the UI or sent to Facebook).
   conversionType String @default("instant") @map("conversion_type")
 
   /// Additional targeting (parity): exclusions, language, device/OS, Advantage+.
@@ -748,8 +750,10 @@ model ConversionEvent {
   orgId          String    @map("org_id") @db.Uuid
   campaignId     String    @map("campaign_id") @db.Uuid
   adId           String    @map("ad_id") @db.Uuid
-  /// The redirect click id (txid) — the join key + FB CAPI `event_id` (dedup).
-  clickId        String    @unique @map("click_id")
+  /// The redirect click id (txid) — the join key + FB CAPI `event_id` basis (dedup).
+  /// One click can fire several funnel events (ViewContent/AddToCart/Search), so the
+  /// uniqueness is on (clickId, eventName), not clickId alone (see @@unique below).
+  clickId        String    @map("click_id")
   /// Facebook click id (from the original /go click) → builds `fbc` for attribution.
   fbclid         String?
   /// Resolved at ingest: the FB pixel id (from the ad set) + the matching event name.
@@ -772,6 +776,7 @@ model ConversionEvent {
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
+  @@unique([clickId, eventName])
   @@index([orgId, createdAt])
   @@index([campaignId, createdAt])
   @@index([status])

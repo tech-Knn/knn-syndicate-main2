@@ -8,16 +8,14 @@ import {
   AGE_BOUND_MIN,
   ATTRIBUTION_WINDOWS,
   BID_STRATEGIES,
+  ALL_COUNTRY_CODES,
   CAMPAIGN_OBJECTIVES,
-  CONVERSION_TYPES,
   COUNTRIES,
   CTA_OPTIONS,
   DEVICE_PLATFORMS,
   GENDERS,
   MOBILE_OS,
-  PERFORMANCE_GOAL_LABELS,
   PLACEMENT_OPTIONS,
-  PXE_EVENTS,
   SPECIAL_AD_CATEGORIES,
   type AttributionWindow,
   type BidStrategy,
@@ -32,10 +30,8 @@ import {
   type PxeEvent,
   type SpecialAdCategory,
   countryName,
-  defaultPerformanceGoal,
   goalRequiresPixel,
   isValidPerformanceGoal,
-  performanceGoalsFor,
 } from '@knn/shared';
 import { ApiError, campaigns as campaignsApi, facebook, uploads as uploadsApi } from '@/lib/api';
 import { type Campaign, type FbAccount, type FbPage, type FbPixel, type OfferDomainOption } from '@/lib/types';
@@ -134,7 +130,7 @@ function emptyAdSet(n: number): AdSetForm {
     placementMode: 'automatic',
     placements: [],
     optimizationGoal: 'OFFSITE_CONVERSIONS', // valid for the default OUTCOME_SALES objective
-    pxeEvent: 'search',
+    pxeEvent: 'adclick',
     conversionType: 'instant',
     bidStrategy: '',
     costCap: '',
@@ -197,7 +193,7 @@ function toForm(c?: Campaign): CampaignForm {
       placements: s.placements ?? [],
       optimizationGoal: s.optimizationGoal ?? 'OFFSITE_CONVERSIONS',
       pixelId: s.pixelId ?? undefined,
-      pxeEvent: (s.pxeEvent as PxeEvent) ?? 'search',
+      pxeEvent: (s.pxeEvent as PxeEvent) ?? 'adclick',
       conversionType: (s.conversionType as ConversionType) ?? 'instant',
       bidStrategy: (s.bidStrategy as BidStrategy) ?? '',
       costCap: s.costCapCents ? (s.costCapCents / 100).toString() : '',
@@ -417,7 +413,8 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
     setForm((f) => ({
       ...f,
       objective,
-      adSets: f.adSets.map((s) => (isValidPerformanceGoal(objective, s.optimizationGoal) ? s : { ...s, optimizationGoal: defaultPerformanceGoal(objective) })),
+      // This tool optimizes for Conversions only — the goal is always OFFSITE_CONVERSIONS.
+      adSets: f.adSets.map((s) => ({ ...s, optimizationGoal: 'OFFSITE_CONVERSIONS' })),
     }));
   }, []);
   const patchAdSet = useCallback(
@@ -636,12 +633,30 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
 
 // ---- Reusable pickers ------------------------------------------------------
 
-function CountryPicker({ selected, onChange, placeholder, ariaLabel }: { selected: string[]; onChange: (codes: string[]) => void; placeholder?: string; ariaLabel?: string }) {
+function CountryPicker({ selected, onChange, placeholder, ariaLabel, worldwide }: { selected: string[]; onChange: (codes: string[]) => void; placeholder?: string; ariaLabel?: string; worldwide?: boolean }) {
   const [search, setSearch] = useState('');
   const label = ariaLabel ?? placeholder ?? 'Search countries';
   const filtered = COUNTRIES.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()) || c.code.toLowerCase() === search.toLowerCase());
+  const allSelected = selected.length === ALL_COUNTRY_CODES.length;
   return (
     <div role="group" aria-label={label}>
+      {worldwide && (
+        <div className={styles.chips} style={{ marginBottom: '0.5rem' }}>
+          <button
+            type="button"
+            className={`${styles.toggleBtn} ${allSelected ? styles.toggleOn : ''}`}
+            aria-pressed={allSelected}
+            onClick={() => onChange(allSelected ? [] : ALL_COUNTRY_CODES)}
+          >
+            {allSelected && <span aria-hidden="true">✓ </span>}🌍 Worldwide (all countries)
+          </button>
+          {selected.length > 0 && (
+            <button type="button" className={styles.toggleBtn} onClick={() => onChange([])}>
+              Clear
+            </button>
+          )}
+        </div>
+      )}
       {selected.length > 0 && (
         <div className={styles.chips} style={{ marginBottom: '0.5rem' }}>
           {selected.map((code) => (
@@ -1113,7 +1128,7 @@ function AdSetsStep({
             </div>
             <div className={styles.field}>
               <span className={styles.label}>Countries<Req /></span>
-              <CountryPicker ariaLabel="Target countries" selected={set.countries} onChange={(codes) => patchAdSet(set.key, { countries: codes })} />
+              <CountryPicker ariaLabel="Target countries" worldwide selected={set.countries} onChange={(codes) => patchAdSet(set.key, { countries: codes })} />
             </div>
             <div className={styles.field} style={{ marginTop: '1rem' }}>
               <span className={styles.label}>Exclude countries</span>
@@ -1193,20 +1208,19 @@ function AdSetsStep({
             </div>
             <div className={styles.grid}>
               <div className={styles.field}>
-                <label className={styles.label} htmlFor={`${set.key}-goal`}>Performance goal</label>
-                <select id={`${set.key}-goal`} className={styles.select} value={set.optimizationGoal} onChange={(e) => patchAdSet(set.key, { optimizationGoal: e.target.value })}>
-                  {performanceGoalsFor(form.objective).map((g) => (
-                    <option key={g} value={g}>
-                      {PERFORMANCE_GOAL_LABELS[g] ?? g}
-                    </option>
-                  ))}
-                </select>
+                <span className={styles.label}>Performance goal</span>
+                <div className={styles.staticField} aria-label="Performance goal: Conversions">
+                  Conversions
+                </div>
                 <span className={styles.hint}>
-                  Conversion location: Website. {goalRequiresPixel(set.optimizationGoal) ? 'Optimizing for conversions — a pixel is required below.' : 'No pixel needed for this goal.'}
+                  Conversion location: Website. Optimized for the monetized ad click (Facebook “Search” event) — a pixel is required.
                 </span>
               </div>
               <div className={styles.field}>
-                <label className={styles.label} htmlFor={`${set.key}-pixel`}>Pixel{goalRequiresPixel(set.optimizationGoal) ? <Req /> : ' (optional)'}</label>
+                <label className={styles.label} htmlFor={`${set.key}-pixel`}>
+                  Pixel
+                  <Req />
+                </label>
                 <select id={`${set.key}-pixel`} className={styles.select} value={set.pixelId ?? ''} onChange={(e) => patchAdSet(set.key, { pixelId: e.target.value || undefined })} disabled={!hasAccount}>
                   <option value="">{hasAccount ? 'Select a pixel…' : 'Pick an ad account first'}</option>
                   {pixels.map((px) => (
@@ -1216,31 +1230,12 @@ function AdSetsStep({
                   ))}
                 </select>
               </div>
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor={`${set.key}-pxe`}>Conversion event (pxe)</label>
-                <select id={`${set.key}-pxe`} className={styles.select} value={set.pxeEvent} onChange={(e) => patchAdSet(set.key, { pxeEvent: e.target.value as PxeEvent })}>
-                  {PXE_EVENTS.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className={styles.field}>
-                <span className={styles.label}>Conversion reporting</span>
-                <div className={styles.toggle} role="group" aria-label="Conversion reporting">
-                  {CONVERSION_TYPES.map((c) => {
-                    const on = set.conversionType === c;
-                    return (
-                      <button key={c} type="button" className={`${styles.toggleBtn} ${on ? styles.toggleOn : ''}`} aria-pressed={on} onClick={() => patchAdSet(set.key, { conversionType: c })}>
-                        {on && <span className={styles.toggleCheck} aria-hidden="true">✓ </span>}
-                        {c[0]!.toUpperCase() + c.slice(1)}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
             </div>
+            <p className={styles.hint}>
+              The conversion funnel fires automatically: <strong>ViewContent</strong> (article view) →{' '}
+              <strong>AddToCart</strong> (search results) → <strong>Search</strong> (monetized ad click). Facebook optimizes
+              delivery toward the deepest one — the ad click.
+            </p>
           </div>
 
           {/* Optimization & schedule */}

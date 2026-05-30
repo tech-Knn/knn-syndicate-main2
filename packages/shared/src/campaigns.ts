@@ -158,7 +158,7 @@ export const adSetInputSchema = z
     advantageAudience: z.boolean().default(false),
     // Conversion tracking (ad-set level).
     pixelId: uuid.optional(),
-    pxeEvent: z.enum(PXE_EVENTS).default('search'),
+    pxeEvent: z.enum(PXE_EVENTS).default('adclick'),
     conversionType: z.enum(CONVERSION_TYPES).default('instant'),
     // Optimization knobs.
     costCapCents: z.number().int().min(1).optional(),

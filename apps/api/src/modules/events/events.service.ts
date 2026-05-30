@@ -1,19 +1,23 @@
 import { withSystem } from '@knn/db';
 import { QUEUES, getQueue } from '@knn/queue';
-import { pxeToFbEvent } from '@knn/shared';
+import { type FunnelStage, MAIN_CONVERSION_STAGE, pxeToFbEvent } from '@knn/shared';
 import { type ClickRecord, readClick as defaultReadClick } from '../../lib/kv-sync.js';
 
 /**
- * Conversion ingest (RSOC final ad-click). The /search page beacons here with the
- * click id (txid). We resolve that click (edge KV) → the ad → its pixel + the owning
- * campaign/buyer, record a `ConversionEvent` (deduped on the click id), and enqueue a
- * CAPI dispatch job. The pixel + token are derived SERVER-SIDE from the click — never
- * trusted from the caller (the beacon is public/unauthenticated). All DB work runs
- * under `withSystem`: there's no tenant session, and the org is resolved from the click.
+ * Conversion ingest (RSOC funnel). The article funnel beacons here at each stage with
+ * the click id (txid) + the stage: `lander` (article view → ViewContent), `search`
+ * (/search reached → AddToCart), `adclick` (AFS ad clicked → Search, the MAIN event).
+ * We resolve the click (edge KV) → the ad → its pixel + owning campaign/buyer, record a
+ * `ConversionEvent` (deduped on (clickId, eventName) — a click fires each event once),
+ * and enqueue a CAPI dispatch job. The pixel + token are derived SERVER-SIDE from the
+ * click — never trusted from the caller (the beacon is public/unauthenticated). All DB
+ * work runs under `withSystem`: there's no tenant session, org resolved from the click.
  */
 
 export interface ConversionInput {
   clickId: string;
+  /** Which funnel event fired (defaults to the main, 'adclick'). */
+  stage?: FunnelStage;
   valueMinor?: number;
   currency?: string;
   url?: string;
@@ -51,14 +55,22 @@ export async function recordConversion(
   const click = await deps.readClick(input.clickId);
   if (!click) return { recorded: false, reason: 'unknown_click' };
 
+  // The recorded Facebook event is determined by the FUNNEL STAGE, not the ad set
+  // (the ad set's pxeEvent is only the optimization target / custom_event_type).
+  const stage: FunnelStage = input.stage ?? MAIN_CONVERSION_STAGE;
+  const eventName = pxeToFbEvent(stage);
+
   const result = await withSystem(async (tx) => {
-    // Dedup: a click converts at most once.
-    const existing = await tx.conversionEvent.findUnique({ where: { clickId: input.clickId }, select: { id: true } });
+    // Dedup: a click fires each funnel event at most once (composite unique).
+    const existing = await tx.conversionEvent.findUnique({
+      where: { clickId_eventName: { clickId: input.clickId, eventName } },
+      select: { id: true },
+    });
     if (existing) return { id: existing.id, deduped: true, status: 'existing' as const };
 
     const ad = await tx.ad.findUnique({
       where: { redirectId: click.redirectId },
-      select: { id: true, orgId: true, adSet: { select: { campaignId: true, pixelId: true, pxeEvent: true } } },
+      select: { id: true, orgId: true, adSet: { select: { campaignId: true, pixelId: true } } },
     });
     if (!ad) return null;
 
@@ -77,7 +89,7 @@ export async function recordConversion(
         clickId: input.clickId,
         fbclid: click.fbclid ?? null,
         pixelFbId,
-        eventName: pxeToFbEvent(ad.adSet.pxeEvent),
+        eventName,
         valueMinor: input.valueMinor ?? null,
         currency: input.currency || 'USD',
         clientIp: input.clientIp ?? null,

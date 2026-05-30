@@ -1,16 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { buildFbc, pxeToFbEvent } from './conversions.js';
+import { buildFbc, pxeToCustomEventType, pxeToFbEvent } from './conversions.js';
 
 describe('pxeToFbEvent', () => {
-  it('maps the ad-set pxe to the standard Facebook event name', () => {
-    expect(pxeToFbEvent('search')).toBe('Search');
+  it('maps each funnel stage to its standard Facebook event name', () => {
     expect(pxeToFbEvent('lander')).toBe('ViewContent');
-    expect(pxeToFbEvent('adclick')).toBe('Lead');
+    expect(pxeToFbEvent('search')).toBe('AddToCart');
+    expect(pxeToFbEvent('adclick')).toBe('Search');
   });
-  it('is case-insensitive and defaults to Search', () => {
-    expect(pxeToFbEvent('SEARCH')).toBe('Search');
+  it('is case-insensitive and defaults to the main event (Search)', () => {
+    expect(pxeToFbEvent('ADCLICK')).toBe('Search');
     expect(pxeToFbEvent(null)).toBe('Search');
     expect(pxeToFbEvent('unknown')).toBe('Search');
+  });
+});
+
+describe('pxeToCustomEventType', () => {
+  it('maps each funnel stage to the FB custom_event_type enum', () => {
+    expect(pxeToCustomEventType('lander')).toBe('VIEW_CONTENT');
+    expect(pxeToCustomEventType('search')).toBe('ADD_TO_CART');
+    expect(pxeToCustomEventType('adclick')).toBe('SEARCH');
+    expect(pxeToCustomEventType(null)).toBe('SEARCH');
   });
 });
 

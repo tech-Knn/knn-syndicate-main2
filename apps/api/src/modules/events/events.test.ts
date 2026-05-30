@@ -67,10 +67,10 @@ describe('recordConversion', () => {
     );
     expect(res).toEqual({ recorded: true, deduped: false, dispatched: true });
 
-    const ev = await withSystem((tx) => tx.conversionEvent.findUnique({ where: { clickId: 'tx-1' } }));
+    const ev = await withSystem((tx) => tx.conversionEvent.findFirst({ where: { clickId: 'tx-1' } }));
     expect(ev).toMatchObject({
       pixelFbId: 'PX_999',
-      eventName: 'Search',
+      eventName: 'Search', // default stage = adclick → Search (the main conversion)
       fbclid: 'FBCL1',
       valueMinor: 5,
       currency: 'USD',
@@ -104,8 +104,22 @@ describe('recordConversion', () => {
     const enqueue = vi.fn(async () => {});
     const res = await recordConversion({ clickId: 'tx-nopx' }, deps({ redirectId, ts: 1 }, enqueue));
     expect(res).toEqual({ recorded: true, deduped: false, dispatched: false });
-    const ev = await withSystem((tx) => tx.conversionEvent.findUnique({ where: { clickId: 'tx-nopx' } }));
+    const ev = await withSystem((tx) => tx.conversionEvent.findFirst({ where: { clickId: 'tx-nopx' } }));
     expect(ev).toMatchObject({ pixelFbId: '', status: 'skipped' });
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('records the funnel: one click fires lander/search/adclick as distinct FB events', async () => {
+    const redirectId = await seedAd(true);
+    const enqueue = vi.fn(async () => {});
+    const d = deps({ redirectId, fbclid: 'F', ts: 1 }, enqueue);
+    await recordConversion({ clickId: 'tx-funnel', stage: 'lander' }, d);
+    await recordConversion({ clickId: 'tx-funnel', stage: 'search' }, d);
+    await recordConversion({ clickId: 'tx-funnel', stage: 'adclick' }, d);
+    // The same stage again dedups (composite unique on clickId+eventName).
+    await recordConversion({ clickId: 'tx-funnel', stage: 'adclick' }, d);
+    const evs = await withSystem((tx) => tx.conversionEvent.findMany({ where: { clickId: 'tx-funnel' } }));
+    expect(evs.map((e) => e.eventName).sort()).toEqual(['AddToCart', 'Search', 'ViewContent']);
+    expect(enqueue).toHaveBeenCalledTimes(3); // 3 distinct events, the 4th deduped
   });
 });

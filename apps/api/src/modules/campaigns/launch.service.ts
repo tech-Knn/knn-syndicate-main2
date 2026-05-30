@@ -16,7 +16,7 @@ import {
   updateFbCampaignStatus,
   uploadFbAdImage,
 } from '@knn/fb';
-import { CAMPAIGN_STATUS, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, canTransitionCampaign, goalRequiresPixel } from '@knn/shared';
+import { CAMPAIGN_STATUS, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, canTransitionCampaign, goalRequiresPixel, pxeToCustomEventType } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { KvNotConfiguredError, type RedirectConfigPayload, writeRedirectConfigs } from '../../lib/kv-sync.js';
@@ -46,13 +46,6 @@ function decryptConnectionToken(accessTokenEnc: string): string {
     throw err;
   }
 }
-
-/** Our pxe → a Facebook standard conversion event. */
-const PXE_TO_EVENT: Record<string, string> = {
-  search: 'SEARCH',
-  lander: 'VIEW_CONTENT',
-  adclick: 'LEAD',
-};
 
 export interface FbStructureResult {
   fbCampaignId: string;
@@ -262,7 +255,7 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
       destinationType: WEBSITE_DESTINATION_GOALS.has(set.optimizationGoal) ? 'WEBSITE' : undefined,
       promotedObject:
         goalRequiresPixel(set.optimizationGoal) && fbPixelId
-          ? { pixel_id: fbPixelId, custom_event_type: PXE_TO_EVENT[set.pxeEvent] ?? 'SEARCH' }
+          ? { pixel_id: fbPixelId, custom_event_type: pxeToCustomEventType(set.pxeEvent) }
           : undefined,
       targeting: buildTargeting(set),
       startTime: set.startTime?.toISOString(),

@@ -3,6 +3,7 @@ import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { articleBlocks, articleTeaser } from '@knn/shared';
 import { resolveSiteConfig, resolveSiteName } from '../../_afs/site-config';
+import { LanderBeacon } from '../../funnel-beacons';
 import { RelatedSearchUnit } from './related-search-unit';
 import styles from './article.module.css';
 
@@ -130,6 +131,8 @@ export default async function ArticlePage({
       </header>
 
       <main id="main-content" className={styles.main}>
+        {/* Paid visitors fire the `lander` (ViewContent) funnel event on view. */}
+        <LanderBeacon clickId={txid} />
         <article className={styles.article}>
           <h1 className={styles.title}>{article.title}</h1>
           <div className={styles.meta}>

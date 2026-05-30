@@ -37,7 +37,7 @@ describe('campaign draft schema', () => {
 
   it('ad sets default audience + conversion fields', () => {
     const set = adSetInputSchema.parse({ name: 'S' });
-    expect(set.pxeEvent).toBe('search');
+    expect(set.pxeEvent).toBe('adclick');
     expect(set.placementMode).toBe('automatic');
     expect(set.ageMin).toBe(18);
     expect(set.ageMax).toBe(65);
