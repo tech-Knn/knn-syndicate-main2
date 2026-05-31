@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { prisma, withSystem } from '@knn/db';
 import { ROLES, USER_STATUS } from '@knn/shared';
 import { type ClickRecord } from '../../lib/kv-sync.js';
-import { type ConversionDeps, recordConversion } from './events.service.js';
+import { type ConversionDeps, capiJobId, recordConversion } from './events.service.js';
 
 const suffix = Date.now().toString(36);
 let orgId = '';
@@ -55,6 +55,16 @@ afterAll(async () => {
     await tx.organization.deleteMany({ where: { id: orgId } });
   });
   await prisma.$disconnect();
+});
+
+describe('capiJobId (BullMQ de-dupe key)', () => {
+  it('is colon-free — BullMQ rejects a custom job id containing ":"', () => {
+    // Regression: `capi:${id}` throws "Custom Id cannot contain :" on bullmq >=5.7x,
+    // which silently broke CAPI dispatch (every conversion beacon failed to enqueue).
+    const id = '7c1f2e3a-0000-4444-8888-abcabcabcabc';
+    expect(capiJobId(id)).toBe(`capi-${id}`);
+    expect(capiJobId(id)).not.toContain(':');
+  });
 });
 
 describe('recordConversion', () => {

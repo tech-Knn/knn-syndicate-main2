@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prisma, withSystem } from '@knn/db';
 import { ROLES, USER_STATUS } from '@knn/shared';
-import { type FbLaunchJob, runFbLaunch, triggerAutoLaunch } from './launch-trigger.js';
+import { type FbLaunchJob, launchJobId, runFbLaunch, triggerAutoLaunch } from './launch-trigger.js';
 
 const suffix = Date.now().toString(36);
 let orgId = '';
@@ -160,6 +160,17 @@ describe('triggerAutoLaunch', () => {
 
     expect(res.enqueued).toBe(false);
     expect(enqueueLaunch).not.toHaveBeenCalled();
+  });
+});
+
+describe('launchJobId (BullMQ de-dupe key)', () => {
+  it('is colon-free — BullMQ rejects a custom job id containing ":"', () => {
+    // Regression: `launch:${id}` throws "Custom Id cannot contain :" on bullmq >=5.7x,
+    // which silently broke the approve→assign→auto-launch chain (the channel-maintenance
+    // `assign` job failed the moment it tried to enqueue the launch). Keep this colon-free.
+    const id = '883851b6-1e91-4163-9d96-6b7c783685d0';
+    expect(launchJobId(id)).toBe(`launch-${id}`);
+    expect(launchJobId(id)).not.toContain(':');
   });
 });
 

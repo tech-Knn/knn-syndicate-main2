@@ -10,6 +10,13 @@ export interface AutoLaunchDeps {
   enqueueLaunch: (campaignId: string) => Promise<void>;
 }
 
+/**
+ * De-dupe key for a campaign's auto-launch job. BullMQ forbids ':' in a custom job id
+ * (throws "Custom Id cannot contain :"), so the prefix is '-'-joined. Keep it colon-free
+ * (guarded by a test) — a ':' here silently breaks the whole approve→assign→launch chain.
+ */
+export const launchJobId = (campaignId: string): string => `launch-${campaignId}`;
+
 /** Enqueue an FB_LAUNCH job (deduped). The launch runs on the API side. */
 async function defaultEnqueueLaunch(campaignId: string): Promise<void> {
   await getQueue(QUEUES.FB_LAUNCH).add(
@@ -22,7 +29,7 @@ async function defaultEnqueueLaunch(campaignId: string): Promise<void> {
       // duplicate FB campaign. A rate-limit is NOT a job failure: the API parks the
       // campaign in BATCHED (a 200) for the stats/meta crons to re-drive. A genuinely
       // failed job lands in Bull-Board for an admin to retry via the manual launch.
-      jobId: `launch:${campaignId}`,
+      jobId: launchJobId(campaignId),
       attempts: 1,
       removeOnComplete: 200,
       removeOnFail: 200,

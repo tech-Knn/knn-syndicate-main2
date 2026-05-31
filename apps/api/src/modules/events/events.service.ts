@@ -30,11 +30,18 @@ export interface ConversionDeps {
   enqueueDispatch: (conversionEventId: string) => Promise<void>;
 }
 
+/**
+ * De-dupe key for a conversion's CAPI dispatch job. BullMQ forbids ':' in a custom job
+ * id (it's their Redis key separator → throws "Custom Id cannot contain :"), so the
+ * prefix is '-'-joined, NOT ':'-joined. Keep it colon-free (guarded by a test).
+ */
+export const capiJobId = (conversionEventId: string): string => `capi-${conversionEventId}`;
+
 async function defaultEnqueueDispatch(conversionEventId: string): Promise<void> {
   await getQueue(QUEUES.CAPI_DISPATCH).add(
     'dispatch',
     { conversionEventId },
-    { jobId: `capi:${conversionEventId}`, attempts: 5, backoff: { type: 'exponential', delay: 15_000 }, removeOnComplete: 500, removeOnFail: 500 },
+    { jobId: capiJobId(conversionEventId), attempts: 5, backoff: { type: 'exponential', delay: 15_000 }, removeOnComplete: 500, removeOnFail: 500 },
   );
 }
 
