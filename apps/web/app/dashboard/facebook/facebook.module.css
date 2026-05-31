@@ -5,6 +5,13 @@
   gap: 1rem;
   margin-bottom: 1.5rem;
 }
+.connectActions {
+  display: flex;
+  gap: 0.6rem;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
 .title {
   font-size: 1.9rem;
   color: var(--cream);

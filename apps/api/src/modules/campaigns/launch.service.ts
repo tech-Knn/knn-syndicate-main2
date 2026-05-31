@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { env } from '@knn/config';
-import { FbConnectionStatus, withSystem } from '@knn/db';
+import { FbConnectionStatus, type TxClient, withSystem } from '@knn/db';
 import {
+  type FbAppKind,
   FbAccountRestrictedError,
   FbApiError,
   FbConnectionBrokenError,
@@ -13,6 +14,7 @@ import {
   createFbAdSet,
   createFbCampaign,
   decryptToken,
+  hasLaunchApp,
   updateFbCampaignStatus,
   uploadFbAdImage,
 } from '@knn/fb';
@@ -47,6 +49,52 @@ function decryptConnectionToken(accessTokenEnc: string): string {
   }
 }
 
+/** The connection that OWNS the campaign's ad account (always a DATA connection). */
+interface OwningConnection {
+  id: string;
+  userId: string;
+  fbUserId: string;
+  accessTokenEnc: string;
+  status: FbConnectionStatus;
+}
+interface WriteAuth {
+  token: string;
+  appKind: FbAppKind;
+  /** The connection whose token we're using — so a token break (err 190) marks the right one. */
+  connectionId: string;
+}
+
+/**
+ * Resolve the credential for FB *writes* (create/modify ads). When a separate LAUNCH app
+ * is configured, FB ad-publish must use the SAME PERSON's short-lived LAUNCH token — it's
+ * what clears the 31/3858385 checkpoint; falling back to the DATA token would just trip it
+ * again. So if a LAUNCH connection exists for this profile it MUST be usable (else a clean,
+ * actionable "reconnect the launch app" 409, since launch tokens are short-lived by design).
+ * With no launch app configured — or no LAUNCH connection for this person yet — we use the
+ * DATA connection exactly as before (single-app, fully backwards-compatible).
+ */
+async function resolveWriteAuth(tx: TxClient, dataConn: OwningConnection): Promise<WriteAuth> {
+  if (hasLaunchApp()) {
+    const launch = await tx.fbConnection.findFirst({
+      where: { userId: dataConn.userId, fbUserId: dataConn.fbUserId, appKind: 'LAUNCH' },
+      select: { id: true, accessTokenEnc: true, tokenExpiresAt: true, status: true },
+    });
+    if (launch) {
+      if (launch.status === FbConnectionStatus.CONNECTION_BROKEN || launch.tokenExpiresAt.getTime() <= Date.now()) {
+        throw new AppError(
+          409,
+          'Your Facebook launch-app token has expired — reconnect the Launch app in Settings → Facebook, then relaunch. (Launch tokens are short-lived by design, so reconnect right before launching.)',
+        );
+      }
+      return { token: decryptConnectionToken(launch.accessTokenEnc), appKind: 'LAUNCH', connectionId: launch.id };
+    }
+  }
+  if (dataConn.status === FbConnectionStatus.CONNECTION_BROKEN) {
+    throw new AppError(409, 'Facebook connection is broken — reconnect first');
+  }
+  return { token: decryptConnectionToken(dataConn.accessTokenEnc), appKind: 'DATA', connectionId: dataConn.id };
+}
+
 export interface FbStructureResult {
   fbCampaignId: string;
   adSets: { id: string; fbAdSetId: string; ads: { id: string; fbAdId: string }[] }[];
@@ -58,9 +106,11 @@ type StoredAdSet = CampaignWithChildren['adSets'][number];
 interface LaunchPlan {
   campaign: CampaignWithChildren;
   token: string;
+  /** Which app issued `token` (DATA or the short-lived LAUNCH app) — for appsecret_proof. */
+  appKind: FbAppKind;
   fbAccountId: string;
   fbPageId: string;
-  /** The connection that owns the chosen ad account — so a token break can mark it (D13). */
+  /** The connection whose token we're using — so a token break can mark it (D13). */
   connectionId: string;
   adSets: { set: StoredAdSet; fbPixelId: string | null; ads: { ad: StoredAdSet['ads'][number]; storageKey: string | null }[] }[];
 }
@@ -95,19 +145,20 @@ async function resolveLaunchPlan(auth: AuthContext, campaignId: string): Promise
     if (issues.length > 0) throw new AppError(422, 'Campaign is not complete enough to launch', issues);
     if (!campaign.adAccountId || !campaign.pageId) throw new AppError(400, 'Campaign is missing its ad account or page');
 
-    // The launch token comes from the connection that OWNS the campaign's chosen ad
-    // account — a buyer may have several connected profiles, so we must not assume one.
+    // The ad account is owned by a DATA connection (a buyer may have several profiles, so
+    // we must not assume one). Writes, though, use the matching LAUNCH token when present.
     const [adAccount, page] = await Promise.all([
       tx.fbAdAccount.findUnique({
         where: { id: campaign.adAccountId },
-        select: { fbAccountId: true, connection: { select: { id: true, accessTokenEnc: true, status: true } } },
+        select: {
+          fbAccountId: true,
+          connection: { select: { id: true, userId: true, fbUserId: true, accessTokenEnc: true, status: true } },
+        },
       }),
       tx.fbPage.findUnique({ where: { id: campaign.pageId }, select: { fbPageId: true } }),
     ]);
     if (!adAccount || !page) throw new AppError(400, 'Selected ad account/page no longer exists');
-    if (adAccount.connection.status === FbConnectionStatus.CONNECTION_BROKEN) {
-      throw new AppError(409, 'Facebook connection is broken — reconnect first');
-    }
+    const writeAuth = await resolveWriteAuth(tx, adAccount.connection);
 
     const adSets = await Promise.all(
       campaign.adSets.map(async (set) => {
@@ -128,10 +179,11 @@ async function resolveLaunchPlan(auth: AuthContext, campaignId: string): Promise
 
     return {
       campaign,
-      token: decryptConnectionToken(adAccount.connection.accessTokenEnc),
+      token: writeAuth.token,
+      appKind: writeAuth.appKind,
       fbAccountId: adAccount.fbAccountId,
       fbPageId: page.fbPageId,
-      connectionId: adAccount.connection.id,
+      connectionId: writeAuth.connectionId,
       adSets,
     };
   });
@@ -162,17 +214,18 @@ export async function setCampaignActive(
     if (campaign.status !== CAMPAIGN_STATUS.ACTIVE && campaign.status !== CAMPAIGN_STATUS.PAUSED) {
       throw new AppError(409, `Only an active or paused campaign can be ${active ? 'resumed' : 'paused'}`);
     }
-    let fb: { fbCampaignId: string; fbAccountId: string; token: string; connectionId: string } | null = null;
+    let fb: { fbCampaignId: string; fbAccountId: string; token: string; appKind: FbAppKind; connectionId: string } | null = null;
     if (campaign.fbCampaignId && campaign.adAccountId) {
       const acc = await tx.fbAdAccount.findUnique({
         where: { id: campaign.adAccountId },
-        select: { fbAccountId: true, connection: { select: { id: true, accessTokenEnc: true, status: true } } },
+        select: {
+          fbAccountId: true,
+          connection: { select: { id: true, userId: true, fbUserId: true, accessTokenEnc: true, status: true } },
+        },
       });
       if (!acc) throw new AppError(400, 'Selected ad account no longer exists');
-      if (acc.connection.status === FbConnectionStatus.CONNECTION_BROKEN) {
-        throw new AppError(409, 'Facebook connection is broken — reconnect first');
-      }
-      fb = { fbCampaignId: campaign.fbCampaignId, fbAccountId: acc.fbAccountId, token: decryptConnectionToken(acc.connection.accessTokenEnc), connectionId: acc.connection.id };
+      const writeAuth = await resolveWriteAuth(tx, acc.connection);
+      fb = { fbCampaignId: campaign.fbCampaignId, fbAccountId: acc.fbAccountId, token: writeAuth.token, appKind: writeAuth.appKind, connectionId: writeAuth.connectionId };
     }
     return { done: false as const, orgId: campaign.orgId, fb };
   });
@@ -181,7 +234,7 @@ export async function setCampaignActive(
   // Network phase (outside any txn): tell Facebook to pause/resume delivery.
   if (plan.fb) {
     try {
-      await updateFbCampaignStatus(plan.fb.fbCampaignId, plan.fb.fbAccountId, plan.fb.token, active ? 'ACTIVE' : 'PAUSED');
+      await updateFbCampaignStatus(plan.fb.fbCampaignId, plan.fb.fbAccountId, plan.fb.token, active ? 'ACTIVE' : 'PAUSED', plan.fb.appKind);
     } catch (err) {
       if (err instanceof FbRateLimitError) throw new AppError(429, 'Facebook is rate-limiting — try again in a moment');
       // Pause/resume is also a "modify" — same account security hold applies (FB code 368).
@@ -226,7 +279,7 @@ async function resolveRedirectBase(): Promise<string> {
 }
 
 async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'): Promise<FbStructureResult> {
-  const { campaign, token, fbAccountId, fbPageId } = plan;
+  const { campaign, token, appKind, fbAccountId, fbPageId } = plan;
   const cbo = campaign.budgetMode === 'CAMPAIGN';
   const redirectBase = await resolveRedirectBase();
 
@@ -239,7 +292,7 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
     status,
     dailyBudgetCents: cbo ? campaign.dailyBudgetCents ?? undefined : undefined,
     bidStrategy: cbo ? 'LOWEST_COST_WITHOUT_CAP' : undefined,
-  });
+  }, appKind);
 
   const adSets: FbStructureResult['adSets'] = [];
   for (const { set, fbPixelId, ads } of plan.adSets) {
@@ -261,7 +314,7 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
       startTime: set.startTime?.toISOString(),
       endTime: set.endTime?.toISOString(),
       status,
-    });
+    }, appKind);
 
     const adResults: { id: string; fbAdId: string }[] = [];
     for (const { ad, storageKey } of ads) {
@@ -278,7 +331,7 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
         }
         throw err;
       }
-      const imageHash = await uploadFbAdImage(fbAccountId, token, bytes.toString('base64'));
+      const imageHash = await uploadFbAdImage(fbAccountId, token, bytes.toString('base64'), appKind);
       const destination = `${redirectBase}/go/${ad.redirectId}`;
       const creative = await createFbAdCreative(fbAccountId, token, {
         name: ad.name,
@@ -293,13 +346,13 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
             call_to_action: { type: ad.cta, value: { link: destination } },
           },
         },
-      });
+      }, appKind);
       const fbAd = await createFbAd(fbAccountId, token, {
         name: ad.name,
         adSetId: fbAdSet.id,
         creativeId: creative.id,
         status,
-      });
+      }, appKind);
       adResults.push({ id: ad.id, fbAdId: fbAd.id });
     }
     adSets.push({ id: set.id, fbAdSetId: fbAdSet.id, ads: adResults });

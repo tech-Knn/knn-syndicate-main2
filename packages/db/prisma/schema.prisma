@@ -98,6 +98,10 @@ model FbConnection {
   /// The Facebook profile's display name (from /me). Shown in the UI; one user
   /// may connect several profiles, so this is how they're identified.
   fbName         String?            @map("fb_name")
+  /// Which FB app issued this token: "DATA" (default — long-lived, sync/reads/CAPI/refresh)
+  /// or "LAUNCH" (short-lived, used ONLY to create/modify ads, to dodge the 31/3858385
+  /// checkpoint). A person can hold BOTH for the same FB profile (#two-app, temporary).
+  appKind        String             @default("DATA") @map("app_kind")
   accessTokenEnc String             @map("access_token_enc")
   tokenExpiresAt DateTime           @map("token_expires_at")
   scopes         String             @default("")
@@ -110,9 +114,10 @@ model FbConnection {
   adAccounts FbAdAccount[]
   pages      FbPage[]
 
-  // One row per (user, FB profile): a user can connect multiple profiles, but
-  // reconnecting the same profile updates the existing row (no duplicates).
-  @@unique([userId, fbUserId])
+  // One row per (user, FB profile, app): a user can connect multiple profiles, and the
+  // same profile under both the DATA and LAUNCH apps; reconnecting the same (profile, app)
+  // updates the existing row (no duplicates).
+  @@unique([userId, fbUserId, appKind])
   @@index([userId])
   @@index([orgId, status])
   @@index([status, tokenExpiresAt])

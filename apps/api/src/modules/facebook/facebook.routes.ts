@@ -27,10 +27,12 @@ interface CallbackQuery {
 
 export async function facebookRoutes(app: FastifyInstance): Promise<void> {
   // Start the OAuth flow — returns the Facebook dialog URL to open in the browser.
-  app.get('/auth-url', { preHandler: [authenticate] }, async (req, reply) => {
+  // `?app=launch` connects the optional short-lived LAUNCH app; default is the DATA app.
+  app.get<{ Querystring: { app?: string } }>('/auth-url', { preHandler: [authenticate] }, async (req, reply) => {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     try {
-      return reply.send(await getAuthUrl(req.auth));
+      const appKind = req.query.app === 'launch' ? 'LAUNCH' : 'DATA';
+      return reply.send(await getAuthUrl(req.auth, appKind));
     } catch (err) {
       return handleRouteError(err, reply);
     }

@@ -14,6 +14,9 @@ vi.mock('@knn/fb', async (importOriginal) => {
   return {
     ...actual,
     decryptToken: vi.fn(() => 'tok'),
+    // Default: no separate LAUNCH app (single-app) → writes resolve to the DATA token.
+    // A specific test flips this to exercise the LAUNCH-token resolution.
+    hasLaunchApp: vi.fn(() => false),
     createFbCampaign: vi.fn(async () => ({ id: 'fbcamp-1' })),
     createFbAdSet: vi.fn(async () => ({ id: 'fbadset-1' })),
     uploadFbAdImage: vi.fn(async () => 'imghash'),
@@ -150,6 +153,51 @@ describe('launchCampaign (Phase 8)', () => {
     expect(campaign?.fbCampaignId).toBe('fbcamp-1');
     expect(campaign?.adSets[0]?.fbAdSetId).toBe('fbadset-1');
     expect(campaign?.adSets[0]?.ads[0]?.fbAdId).toBe('fbad-1');
+  });
+
+  it('two-app: writes use the same person\'s LAUNCH connection (short-lived token) when configured', async () => {
+    // A separate LAUNCH app is configured, and this person has a usable LAUNCH connection
+    // for the SAME FB profile (fbUserId "fb") that owns the ad account → ad writes must go
+    // through the LAUNCH token, so every create carries appKind 'LAUNCH' (for appsecret_proof).
+    const launchConn = await withSystem((tx) =>
+      tx.fbConnection.create({
+        data: { orgId, userId: buyerId, fbUserId: 'fb', appKind: 'LAUNCH', accessTokenEnc: 'enc-launch', tokenExpiresAt: new Date(Date.now() + 3_600_000), status: 'ACTIVE' },
+      }),
+    );
+    vi.mocked(fb.hasLaunchApp).mockReturnValue(true);
+    vi.mocked(fb.createFbCampaign).mockClear();
+    try {
+      const campaignId = await makeCampaign();
+      const result = await launchCampaign(auth(), campaignId, {
+        generateArticle: vi.fn(async () => ({ slug: 'health-2026' })),
+        writeRedirectConfigs: vi.fn(async () => undefined),
+      });
+      expect(result.status).toBe('ACTIVE');
+      // 4th arg = appKind. With a usable LAUNCH connection it must be 'LAUNCH', not 'DATA'.
+      expect(fb.createFbCampaign).toHaveBeenCalledWith('act_1', 'tok', expect.any(Object), 'LAUNCH');
+      expect(fb.createFbAd).toHaveBeenCalledWith('act_1', 'tok', expect.any(Object), 'LAUNCH');
+    } finally {
+      vi.mocked(fb.hasLaunchApp).mockReturnValue(false);
+      await withSystem((tx) => tx.fbConnection.delete({ where: { id: launchConn.id } }));
+    }
+  });
+
+  it('two-app: an EXPIRED launch token yields a clear reconnect-launch 409 (no silent DATA fallback)', async () => {
+    const launchConn = await withSystem((tx) =>
+      tx.fbConnection.create({
+        data: { orgId, userId: buyerId, fbUserId: 'fb', appKind: 'LAUNCH', accessTokenEnc: 'enc-launch', tokenExpiresAt: new Date(Date.now() - 1_000), status: 'ACTIVE' },
+      }),
+    );
+    vi.mocked(fb.hasLaunchApp).mockReturnValue(true);
+    try {
+      const campaignId = await makeCampaign();
+      await expect(
+        launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
+      ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('launch-app token has expired') });
+    } finally {
+      vi.mocked(fb.hasLaunchApp).mockReturnValue(false);
+      await withSystem((tx) => tx.fbConnection.delete({ where: { id: launchConn.id } }));
+    }
   });
 
   it('parks the campaign in BATCHED on a Facebook rate-limit error', async () => {
@@ -363,12 +411,12 @@ describe('setCampaignActive (pause/resume optimization)', () => {
 
     const paused = await setCampaignActive(auth(), c.id, false);
     expect(paused.status).toBe('PAUSED');
-    expect(fb.updateFbCampaignStatus).toHaveBeenCalledWith('fbcamp-pr', 'act_1', 'tok', 'PAUSED');
+    expect(fb.updateFbCampaignStatus).toHaveBeenCalledWith('fbcamp-pr', 'act_1', 'tok', 'PAUSED', 'DATA');
     expect((await withSystem((tx) => tx.campaign.findUnique({ where: { id: c.id }, select: { status: true } })))?.status).toBe('PAUSED');
 
     const resumed = await setCampaignActive(auth(), c.id, true);
     expect(resumed.status).toBe('ACTIVE');
-    expect(fb.updateFbCampaignStatus).toHaveBeenLastCalledWith('fbcamp-pr', 'act_1', 'tok', 'ACTIVE');
+    expect(fb.updateFbCampaignStatus).toHaveBeenLastCalledWith('fbcamp-pr', 'act_1', 'tok', 'ACTIVE', 'DATA');
   });
 
   it('refuses to pause a non-launched (DRAFT) campaign', async () => {

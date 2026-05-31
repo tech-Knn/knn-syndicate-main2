@@ -356,3 +356,37 @@ the approved plan.
   Google token-refresh cron — the hourly attribution refreshes lazily). Resolves the build half of
   OPEN_QUESTIONS #13; the remaining blocker is purely external (AFS Management API access + the `GOOGLE_*`
   envs + a `…/api/adsense/callback` redirect URI).
+
+### 2026-05-31 — D23: Two Facebook apps — short-lived LAUNCH token for ad writes, long-lived DATA token for everything else
+
+- **Problem:** the main app's **long-lived (~60d) per-user token trips Facebook's `31/3858385`
+  "authenticate your account in Ads Manager" checkpoint** on ad create/modify from the datacenter IP,
+  while a fresh **short-lived** token from a *separate* app publishes cleanly (re-confirmed on staging
+  2026-05-31: flipping `FB_SKIP_LONGLIVED` on → the relaunch went `ACTIVE`, zero `3858385`). There is no
+  API to clear the checkpoint, so the interim fix is to never present the token that trips it for writes.
+- **Decision (temporary, `#two-app`, until the checkpoint is solved at the account/IP level):** run TWO
+  FB apps. A connection is tagged `app_kind`:
+  - **`DATA`** (existing `FB_APP_*`) — long-lived token. ALL reads/sync/insights/CAPI + the daily
+    token-refresh. Owns the ad accounts/pages/pixels.
+  - **`LAUNCH`** (optional `FB_LAUNCH_*`) — short-lived token. ONLY campaign create/modify (and
+    pause/resume). Owns no assets. Reconnected right before launching (token lives ~1–2h).
+- **Mechanics:**
+  - `FbConnection.appKind` ('DATA' default) + unique key now `(userId, fbUserId, appKind)` — a person can
+    hold both apps for the same FB profile. Migration `20260531150608_fb_connection_app_kind` (additive;
+    hand-written to skip the pgvector `articles_embedding_idx` DROP footgun).
+  - `@knn/fb` `fbAppCreds(kind)` resolves app id/secret/config; **`LAUNCH` falls back to `DATA` when
+    `FB_LAUNCH_*` is unset**, so single-app installs are unaffected. `buildAuthUrl`/`exchangeCodeForToken`/
+    `getMe` take an `appKind`; `GraphRequest.appKind` makes `appsecret_proof` sign with the **token-issuing
+    app's secret** (the one real gotcha — a LAUNCH token must be proofed with the LAUNCH secret).
+  - Launch resolves the SAME person's usable `LAUNCH` connection; if a LAUNCH connection exists but is
+    expired/broken it returns a clear "reconnect the launch app" 409 (no silent DATA fallback that would
+    just re-trip the checkpoint). No launch app / no LAUNCH connection → DATA, exactly as before.
+  - The callback stores `LAUNCH` as **short-lived always** (never exchanges for long-lived) and **skips the
+    asset sync** (DATA already synced them). Token-refresh only touches `DATA` (LAUNCH "expired" is normal).
+  - OAuth redirect URI is **shared** by both apps (add the same `…/api/facebook/callback` to each in Meta);
+    the app being connected travels in the signed `state`. Web: a "Connect launch app" button + a
+    "Launch app · short-lived" badge per profile.
+- **Setup (per environment):** set `FB_LAUNCH_APP_ID` / `FB_LAUNCH_APP_SECRET` / `FB_LAUNCH_CONFIG_ID`,
+  turn `FB_SKIP_LONGLIVED` **off** (DATA should be long-lived again now that LAUNCH carries the short
+  token), connect both apps. Remove the whole split once the checkpoint is solved (drop `FB_LAUNCH_*`,
+  the `app_kind` column, and the LAUNCH branches).

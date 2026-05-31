@@ -1,9 +1,14 @@
+import { type FbAppKind } from './app-creds.js';
 import { graphRequest } from './graph.js';
 
 /**
  * Facebook Marketing API *write* layer — creates Campaign → Ad Set → Ad Creative
  * → Ad on an ad account. Object/array params are JSON-stringified as Graph expects
  * in form-encoded bodies. All calls go through the per-account rate limiter.
+ *
+ * Every write takes a trailing optional `appKind`: writes use the short-lived LAUNCH
+ * app token when one is connected (it clears the 31/3858385 checkpoint), so the call
+ * must carry that app's kind for the appsecret_proof. Defaults to 'DATA'.
  */
 interface CreatedId {
   id: string;
@@ -14,6 +19,7 @@ function postEdge<T>(
   accessToken: string,
   edge: string,
   params: Record<string, string>,
+  appKind: FbAppKind = 'DATA',
 ): Promise<T> {
   return graphRequest<T>({
     path: `/act_${fbAccountId}/${edge}`,
@@ -21,6 +27,7 @@ function postEdge<T>(
     params,
     accessToken,
     accountId: fbAccountId,
+    appKind,
   });
 }
 
@@ -30,6 +37,7 @@ export function updateFbCampaignStatus(
   fbAccountId: string,
   accessToken: string,
   status: 'ACTIVE' | 'PAUSED',
+  appKind: FbAppKind = 'DATA',
 ): Promise<{ success?: boolean }> {
   return graphRequest<{ success?: boolean }>({
     path: `/${fbCampaignId}`,
@@ -37,6 +45,7 @@ export function updateFbCampaignStatus(
     params: { status },
     accessToken,
     accountId: fbAccountId,
+    appKind,
   });
 }
 
@@ -53,6 +62,7 @@ export function createFbCampaign(
   fbAccountId: string,
   accessToken: string,
   p: FbCampaignParams,
+  appKind: FbAppKind = 'DATA',
 ): Promise<CreatedId> {
   const params: Record<string, string> = {
     name: p.name,
@@ -68,7 +78,7 @@ export function createFbCampaign(
     // ABO (no campaign budget): Facebook requires this flag to be set explicitly.
     params.is_adset_budget_sharing_enabled = 'false';
   }
-  return postEdge<CreatedId>(fbAccountId, accessToken, 'campaigns', params);
+  return postEdge<CreatedId>(fbAccountId, accessToken, 'campaigns', params, appKind);
 }
 
 export interface FbAdSetParams {
@@ -91,6 +101,7 @@ export function createFbAdSet(
   fbAccountId: string,
   accessToken: string,
   p: FbAdSetParams,
+  appKind: FbAppKind = 'DATA',
 ): Promise<CreatedId> {
   const params: Record<string, string> = {
     name: p.name,
@@ -108,7 +119,7 @@ export function createFbAdSet(
   if (p.promotedObject) params.promoted_object = JSON.stringify(p.promotedObject);
   if (p.startTime) params.start_time = p.startTime;
   if (p.endTime) params.end_time = p.endTime;
-  return postEdge<CreatedId>(fbAccountId, accessToken, 'adsets', params);
+  return postEdge<CreatedId>(fbAccountId, accessToken, 'adsets', params, appKind);
 }
 
 /** Upload an image (base64 bytes) → returns the image hash for use in a creative. */
@@ -116,12 +127,14 @@ export async function uploadFbAdImage(
   fbAccountId: string,
   accessToken: string,
   base64Bytes: string,
+  appKind: FbAppKind = 'DATA',
 ): Promise<string> {
   const res = await postEdge<{ images: Record<string, { hash: string }> }>(
     fbAccountId,
     accessToken,
     'adimages',
     { bytes: base64Bytes },
+    appKind,
   );
   const first = Object.values(res.images)[0];
   if (!first) throw new Error('Image upload returned no hash');
@@ -137,11 +150,15 @@ export function createFbAdCreative(
   fbAccountId: string,
   accessToken: string,
   p: FbCreativeParams,
+  appKind: FbAppKind = 'DATA',
 ): Promise<CreatedId> {
-  return postEdge<CreatedId>(fbAccountId, accessToken, 'adcreatives', {
-    name: p.name,
-    object_story_spec: JSON.stringify(p.objectStorySpec),
-  });
+  return postEdge<CreatedId>(
+    fbAccountId,
+    accessToken,
+    'adcreatives',
+    { name: p.name, object_story_spec: JSON.stringify(p.objectStorySpec) },
+    appKind,
+  );
 }
 
 export interface FbAdParams {
@@ -155,11 +172,18 @@ export function createFbAd(
   fbAccountId: string,
   accessToken: string,
   p: FbAdParams,
+  appKind: FbAppKind = 'DATA',
 ): Promise<CreatedId> {
-  return postEdge<CreatedId>(fbAccountId, accessToken, 'ads', {
-    name: p.name,
-    adset_id: p.adSetId,
-    creative: JSON.stringify({ creative_id: p.creativeId }),
-    status: p.status ?? 'PAUSED',
-  });
+  return postEdge<CreatedId>(
+    fbAccountId,
+    accessToken,
+    'ads',
+    {
+      name: p.name,
+      adset_id: p.adSetId,
+      creative: JSON.stringify({ creative_id: p.creativeId }),
+      status: p.status ?? 'PAUSED',
+    },
+    appKind,
+  );
 }

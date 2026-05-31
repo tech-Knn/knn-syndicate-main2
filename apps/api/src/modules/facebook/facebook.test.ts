@@ -16,6 +16,7 @@ interface Profile {
   id: string;
   fbUserId: string;
   name: string;
+  appKind: string;
   status: string;
   lastError: string | null;
   adAccountCount: number;
@@ -109,9 +110,9 @@ async function profiles(token: string): Promise<Profile[]> {
   const res = await app.inject({ method: 'GET', url: '/api/facebook/profiles', headers: h(token) });
   return res.json<{ profiles: Profile[] }>().profiles;
 }
-async function connect(meId: string, meName: string): Promise<void> {
+async function connect(meId: string, meName: string, appKind: 'DATA' | 'LAUNCH' = 'DATA'): Promise<void> {
   vi.stubGlobal('fetch', goodFbFetch(meId, meName));
-  const state = await signFbState({ userId: buyerId, orgId });
+  const state = await signFbState({ userId: buyerId, orgId, appKind });
   const cb = await app.inject({ method: 'GET', url: `/api/facebook/callback?code=c&state=${encodeURIComponent(state)}` });
   expect(cb.statusCode).toBe(302);
   expect(cb.headers.location).toContain('fb_connected=1');
@@ -234,5 +235,18 @@ describe('facebook integration', () => {
     expect(del.statusCode).toBe(204);
     const remaining = await profiles(token);
     expect(remaining.map((p) => p.fbUserId)).toEqual(['fbuser_2']);
+  });
+
+  it('connects the same FB profile under the LAUNCH app — coexists with DATA, no asset sync', async () => {
+    // Only fbuser_2 (DATA) remains here. Connecting it again as LAUNCH must ADD a row
+    // (composite unique on userId+fbUserId+appKind), not replace the DATA one.
+    await connect('fbuser_2', 'Second Profile', 'LAUNCH');
+    const token = await bearer();
+    const forUser2 = (await profiles(token)).filter((p) => p.fbUserId === 'fbuser_2');
+    expect(forUser2.map((p) => p.appKind).sort()).toEqual(['DATA', 'LAUNCH']);
+    // The LAUNCH connection holds only a write token — it owns no ad accounts/pages.
+    const launch = forUser2.find((p) => p.appKind === 'LAUNCH')!;
+    expect(launch.adAccountCount).toBe(0);
+    expect(launch.pageCount).toBe(0);
   });
 });

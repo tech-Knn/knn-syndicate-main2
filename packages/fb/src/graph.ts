@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { ProxyAgent, fetch as undiciFetch } from 'undici';
 import { env } from '@knn/config';
+import { type FbAppKind, fbAppCreds } from './app-creds.js';
 import { classifyFbError, type FbErrorBody } from './errors.js';
 import { sharedRateLimiter, type FbRateLimiter } from './rate-limiter.js';
 
@@ -45,6 +46,11 @@ export interface GraphRequest {
   params?: Record<string, string>;
   accessToken?: string;
   accountId?: string;
+  /**
+   * Which FB app issued `accessToken`, so `appsecret_proof` is signed with that app's
+   * secret. Defaults to 'DATA' (the main app) — only LAUNCH-app writes pass 'LAUNCH'.
+   */
+  appKind?: FbAppKind;
 }
 
 function graphBase(): string {
@@ -82,7 +88,10 @@ async function doRequest<T>(req: GraphRequest): Promise<T> {
   if (req.accessToken) {
     headers.Authorization = `Bearer ${req.accessToken}`;
     // Prove the call comes from our app's server (reduces token-replay security flags).
-    if (env.FB_APP_SECRET) params.appsecret_proof = computeAppSecretProof(req.accessToken, env.FB_APP_SECRET);
+    // The proof MUST be signed with the secret of the app that issued this token — so a
+    // LAUNCH-app token is proofed with the launch app's secret, not the DATA app's.
+    const appSecret = fbAppCreds(req.appKind).appSecret;
+    if (appSecret) params.appsecret_proof = computeAppSecretProof(req.accessToken, appSecret);
   }
 
   const init: RequestInit = { method, headers };

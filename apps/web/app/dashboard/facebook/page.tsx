@@ -196,7 +196,10 @@ function ProfileBlock({
             f
           </div>
           <div>
-            <div className={styles.accountName}>{profile.name}</div>
+            <div className={styles.accountName}>
+              {profile.name}{' '}
+              {profile.appKind === 'LAUNCH' ? <Badge tone="warning">Launch app · short-lived</Badge> : null}
+            </div>
             <div className={styles.accountSub}>
               {owner ? `${owner.email} · ${owner.org}` : `id ${profile.fbUserId}`}
             </div>
@@ -472,18 +475,20 @@ export default function FacebookPage() {
     void loadAll();
   }, [load, loadAll]);
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (app: 'data' | 'launch' = 'data') => {
     setConnecting(true);
     setBanner(null);
     try {
-      const { url } = await facebook.authUrl();
+      const { url } = await facebook.authUrl(app);
       window.location.href = url;
     } catch (err) {
       setBanner({
         tone: 'error',
         text:
           err instanceof ApiError && err.status === 503
-            ? 'Facebook is not configured on this environment yet.'
+            ? app === 'launch'
+              ? 'The Facebook launch app is not configured on this environment yet.'
+              : 'Facebook is not configured on this environment yet.'
             : 'Could not start the Facebook connection.',
       });
       setConnecting(false);
@@ -501,9 +506,16 @@ export default function FacebookPage() {
               : 'Connect one or more Facebook profiles to sync ad accounts, pages, and pixels for launching campaigns.'}
           </p>
         </div>
-        <Button onClick={() => void connect()} loading={connecting}>
-          {connecting ? 'Redirecting…' : 'Connect a profile'}
-        </Button>
+        <div className={styles.connectActions}>
+          <Button onClick={() => void connect('data')} loading={connecting}>
+            {connecting ? 'Redirecting…' : 'Connect a profile'}
+          </Button>
+          {/* The short-lived LAUNCH app (used only to publish ads past the FB security
+              checkpoint). Reconnect it right before launching — its token is short-lived. */}
+          <Button variant="secondary" onClick={() => void connect('launch')} loading={connecting}>
+            Connect launch app
+          </Button>
+        </div>
       </div>
 
       {banner && (
@@ -541,7 +553,13 @@ export default function FacebookPage() {
           </Card>
         ) : (
           profiles.map((p) => (
-            <ProfileBlock key={p.id} profile={p} onChanged={refresh} setBanner={setBanner} onReconnect={() => void connect()} />
+            <ProfileBlock
+              key={p.id}
+              profile={p}
+              onChanged={refresh}
+              setBanner={setBanner}
+              onReconnect={() => void connect(p.appKind === 'LAUNCH' ? 'launch' : 'data')}
+            />
           ))
         )}
       </section>

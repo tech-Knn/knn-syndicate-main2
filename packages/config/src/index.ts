@@ -95,6 +95,17 @@ const EnvSchema = z.object({
   // exchanging for a long-lived one — to test whether the long-lived/never-expiring
   // token is what trips the ad-publish security checkpoint (err 31/3858385).
   FB_SKIP_LONGLIVED: optionalString,
+  // Optional SECOND Facebook app, used ONLY to LAUNCH campaigns (create/modify ads) with a
+  // SHORT-lived token. Background: the main (DATA) app's long-lived per-user token trips the
+  // 31/3858385 ad-publish security checkpoint; a fresh short-lived token from a separate app
+  // does not. All reads/sync/insights/CAPI stay on the DATA app (FB_APP_*). When these are
+  // empty the platform is single-app and the LAUNCH path transparently falls back to the DATA
+  // app — so leaving them blank changes nothing. The OAuth redirect URI is shared with the
+  // DATA app (FB_OAUTH_REDIRECT_URI), so add that same callback to BOTH apps in Meta.
+  FB_LAUNCH_APP_ID: optionalString,
+  FB_LAUNCH_APP_SECRET: optionalString,
+  // Facebook Login for Business config id for the LAUNCH app (falls back to FB_LOGIN_CONFIG_ID).
+  FB_LAUNCH_CONFIG_ID: optionalString,
 
   // Google / AdSense
   GOOGLE_CLIENT_ID: optionalString,

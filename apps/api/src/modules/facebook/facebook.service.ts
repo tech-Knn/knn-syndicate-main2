@@ -2,6 +2,7 @@ import { env } from '@knn/config';
 import { FbConnectionStatus, withSystem } from '@knn/db';
 import {
   FB_SCOPES,
+  type FbAppKind,
   FbConnectionBrokenError,
   buildAuthUrl,
   decryptToken,
@@ -14,6 +15,7 @@ import {
   fetchPixels,
   fetchPromotePages,
   getMe,
+  hasLaunchApp,
   isFbConfigured,
 } from '@knn/fb';
 import { ROLES } from '@knn/shared';
@@ -28,6 +30,8 @@ export interface FbProfile {
   id: string;
   fbUserId: string;
   name: string;
+  /** Which app this connection is for: DATA (sync/reads/CAPI) or LAUNCH (short-lived, ad writes). */
+  appKind: FbAppKind;
   status: FbConnectionStatus;
   scopes: string[];
   tokenExpiresAt: Date;
@@ -56,13 +60,17 @@ function profileName(c: { fbName: string | null; fbUserId: string }): string {
   return c.fbName?.trim() || `Profile ${c.fbUserId}`;
 }
 
-/** Build the Facebook OAuth dialog URL for the authenticated user (spec §5.2.1). */
-export async function getAuthUrl(auth: AuthContext): Promise<{ url: string }> {
+/** Build the Facebook OAuth dialog URL for the authenticated user (spec §5.2.1). The
+ *  `appKind` picks which app to connect — DATA (default) or the optional LAUNCH app. */
+export async function getAuthUrl(auth: AuthContext, appKind: FbAppKind = 'DATA'): Promise<{ url: string }> {
   if (!isFbConfigured()) {
     throw new AppError(503, 'Facebook integration is not configured on this environment');
   }
-  const state = await signFbState({ userId: auth.userId, orgId: auth.orgId });
-  return { url: buildAuthUrl(state) };
+  if (appKind === 'LAUNCH' && !hasLaunchApp()) {
+    throw new AppError(503, 'The Facebook launch app is not configured on this environment');
+  }
+  const state = await signFbState({ userId: auth.userId, orgId: auth.orgId, appKind });
+  return { url: buildAuthUrl(state, appKind) };
 }
 
 /**
@@ -178,14 +186,18 @@ export async function markConnectionBroken(connectionId: string, message: string
  * adds a row; reconnecting the SAME profile refreshes it.
  */
 export async function handleCallback(code: string, state: string): Promise<void> {
-  const { userId, orgId } = await verifyFbState(state);
+  const { userId, orgId, appKind } = await verifyFbState(state);
 
-  const short = await exchangeCodeForToken(code);
-  // Diagnostic: optionally keep the short-lived token (skip the long-lived exchange) to
-  // test whether the long-lived/never-expiring token is what trips the ad-publish
-  // security checkpoint (err 31/3858385). Default path exchanges for ~60-day long-lived.
-  const tok = env.FB_SKIP_LONGLIVED ? short : await exchangeForLongLivedToken(short.accessToken);
-  const me = await getMe(tok.accessToken);
+  const short = await exchangeCodeForToken(code, appKind);
+  // The LAUNCH app's whole point is a SHORT-lived token (it clears the 31/3858385 ad-publish
+  // checkpoint), so we NEVER exchange it for a long-lived one. The DATA app exchanges for a
+  // ~60-day long-lived token, unless FB_SKIP_LONGLIVED is set for the legacy single-app
+  // diagnostic. (Once a LAUNCH app is configured, leave FB_SKIP_LONGLIVED off — DATA wants long.)
+  const tok =
+    appKind === 'LAUNCH' || env.FB_SKIP_LONGLIVED
+      ? short
+      : await exchangeForLongLivedToken(short.accessToken, appKind);
+  const me = await getMe(tok.accessToken, appKind);
 
   const accessTokenEnc = encryptToken(tok.accessToken);
   const tokenExpiresAt = new Date(Date.now() + tok.expiresInSec * 1_000);
@@ -193,12 +205,13 @@ export async function handleCallback(code: string, state: string): Promise<void>
 
   const conn = await withSystem((tx) =>
     tx.fbConnection.upsert({
-      where: { userId_fbUserId: { userId, fbUserId: me.id } },
+      where: { userId_fbUserId_appKind: { userId, fbUserId: me.id, appKind } },
       create: {
         orgId,
         userId,
         fbUserId: me.id,
         fbName: me.name,
+        appKind,
         accessTokenEnc,
         tokenExpiresAt,
         scopes,
@@ -215,13 +228,17 @@ export async function handleCallback(code: string, state: string): Promise<void>
     }),
   );
 
-  // Best-effort initial sync. A broken token here is recorded; other transient
-  // failures leave the connection ACTIVE so the buyer can retry from the UI.
-  try {
-    await syncFromFacebook({ connectionId: conn.id, orgId, accessToken: tok.accessToken });
-  } catch (err) {
-    if (err instanceof FbConnectionBrokenError) {
-      await markConnectionBroken(conn.id, err.message);
+  // The LAUNCH connection holds only a token for ad writes — it does NOT own ad
+  // accounts/pages/pixels (the DATA connection already synced those for the same person),
+  // so skip the asset sync. For DATA, run the best-effort initial sync: a broken token is
+  // recorded; other transient failures leave it ACTIVE so the buyer can retry from the UI.
+  if (appKind === 'DATA') {
+    try {
+      await syncFromFacebook({ connectionId: conn.id, orgId, accessToken: tok.accessToken });
+    } catch (err) {
+      if (err instanceof FbConnectionBrokenError) {
+        await markConnectionBroken(conn.id, err.message);
+      }
     }
   }
 }
@@ -238,6 +255,7 @@ export async function listProfiles(auth: AuthContext): Promise<FbProfile[]> {
       id: c.id,
       fbUserId: c.fbUserId,
       name: profileName(c),
+      appKind: c.appKind as FbAppKind,
       status: c.status,
       scopes: c.scopes ? c.scopes.split(',') : [],
       tokenExpiresAt: c.tokenExpiresAt,
@@ -266,6 +284,7 @@ export async function listAllProfiles(): Promise<FbProfileWithOwner[]> {
       id: c.id,
       fbUserId: c.fbUserId,
       name: profileName(c),
+      appKind: c.appKind as FbAppKind,
       status: c.status,
       scopes: c.scopes ? c.scopes.split(',') : [],
       tokenExpiresAt: c.tokenExpiresAt,
@@ -290,7 +309,7 @@ async function loadConnection(auth: AuthContext, connectionId: string) {
   const conn = await runScoped(auth, (tx) =>
     tx.fbConnection.findUnique({
       where: { id: connectionId },
-      select: { id: true, userId: true, orgId: true, accessTokenEnc: true, status: true },
+      select: { id: true, userId: true, orgId: true, accessTokenEnc: true, status: true, appKind: true },
     }),
   );
   if (!conn) throw new AppError(404, 'Facebook profile not found');
@@ -306,12 +325,16 @@ export async function resync(auth: AuthContext, connectionId: string): Promise<S
   if (conn.status === FbConnectionStatus.CONNECTION_BROKEN) {
     throw new AppError(409, 'Facebook connection is broken — reconnect first');
   }
+  const appKind = conn.appKind as FbAppKind;
   const accessToken = decryptToken(conn.accessTokenEnc);
   try {
     // Refresh the profile's display name too, so profiles connected before names
     // were stored get their real name on a re-sync (no full reconnect needed).
-    const me = await getMe(accessToken);
+    const me = await getMe(accessToken, appKind);
     await withSystem((tx) => tx.fbConnection.update({ where: { id: conn.id }, data: { fbName: me.name } }));
+    // A LAUNCH connection holds only a write token — it owns no ad accounts/pages/pixels
+    // (those live on the same person's DATA connection), so never sync assets under it.
+    if (appKind === 'LAUNCH') return { adAccounts: 0, pages: 0, pixels: 0 };
     return await syncFromFacebook({ connectionId: conn.id, orgId: conn.orgId, accessToken });
   } catch (err) {
     if (err instanceof FbConnectionBrokenError) {

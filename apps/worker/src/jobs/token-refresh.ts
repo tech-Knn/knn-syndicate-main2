@@ -69,8 +69,12 @@ export async function refreshFbTokens(deps: TokenRefreshDeps = {}): Promise<Toke
   const notify = deps.notify ?? defaultNotify;
   const nowMs = now();
 
+  // DATA connections only. LAUNCH connections hold short-lived tokens by design (they clear
+  // the 31/3858385 checkpoint); trying to extend one would fail, and "expired" is its normal
+  // resting state — the buyer reconnects the launch app right before launching, so we must
+  // not degrade/notify on it here.
   const connections = await withSystem((tx) =>
-    tx.fbConnection.findMany({ where: { status: FbConnectionStatus.ACTIVE } }),
+    tx.fbConnection.findMany({ where: { status: FbConnectionStatus.ACTIVE, appKind: 'DATA' } }),
   );
 
   const summary: TokenRefreshSummary = {

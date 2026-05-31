@@ -232,7 +232,9 @@ export const auth = {
 };
 
 export const facebook = {
-  authUrl: async (): Promise<{ url: string }> => parse(await authedFetch('/api/facebook/auth-url')),
+  // `app: 'launch'` starts OAuth for the optional short-lived LAUNCH app; default = DATA app.
+  authUrl: async (app: 'data' | 'launch' = 'data'): Promise<{ url: string }> =>
+    parse(await authedFetch(`/api/facebook/auth-url${app === 'launch' ? '?app=launch' : ''}`)),
   // The actor's own connected profiles.
   profiles: async (): Promise<FbProfile[]> =>
     (await parse<{ profiles: FbProfile[] }>(await authedFetch('/api/facebook/profiles'))).profiles,
