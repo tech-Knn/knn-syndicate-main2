@@ -18,7 +18,7 @@ vi.mock('@knn/fb', async (importOriginal) => {
     // A specific test flips this to exercise the LAUNCH-token resolution.
     hasLaunchApp: vi.fn(() => false),
     // Default: the launch app can see all assets. A specific test returns a gap.
-    checkAssetAccess: vi.fn(async () => ({ missingAccount: false, missingPage: false, missingPixelIds: [], ok: true })),
+    checkAssetAccess: vi.fn(async () => ({ missingAccountIds: [], missingPageIds: [], missingPixelIds: [], ok: true })),
     createFbCampaign: vi.fn(async () => ({ id: 'fbcamp-1' })),
     createFbAdSet: vi.fn(async () => ({ id: 'fbadset-1' })),
     uploadFbAdImage: vi.fn(async () => 'imghash'),
@@ -192,7 +192,7 @@ describe('launchCampaign (Phase 8)', () => {
     );
     vi.mocked(fb.hasLaunchApp).mockReturnValue(true);
     // The launch app wasn't granted this campaign's pixel.
-    vi.mocked(fb.checkAssetAccess).mockResolvedValueOnce({ missingAccount: false, missingPage: false, missingPixelIds: ['px'], ok: false });
+    vi.mocked(fb.checkAssetAccess).mockResolvedValueOnce({ missingAccountIds: [], missingPageIds: [], missingPixelIds: ['px'], ok: false });
     vi.mocked(fb.createFbCampaign).mockClear();
     try {
       const campaignId = await makeCampaign();

@@ -5,6 +5,7 @@ import {
   type FbAppKind,
   FbConnectionBrokenError,
   buildAuthUrl,
+  checkAssetAccess,
   decryptToken,
   encryptToken,
   exchangeCodeForToken,
@@ -309,7 +310,7 @@ async function loadConnection(auth: AuthContext, connectionId: string) {
   const conn = await runScoped(auth, (tx) =>
     tx.fbConnection.findUnique({
       where: { id: connectionId },
-      select: { id: true, userId: true, orgId: true, accessTokenEnc: true, status: true, appKind: true },
+      select: { id: true, userId: true, orgId: true, accessTokenEnc: true, status: true, appKind: true, tokenExpiresAt: true },
     }),
   );
   if (!conn) throw new AppError(404, 'Facebook profile not found');
@@ -449,6 +450,60 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
 export async function listPixels(auth: AuthContext, adAccountId: string) {
   const account = await loadOwnedAccount(auth, adAccountId);
   return runScoped(auth, (tx) => tx.fbPixel.findMany({ where: { adAccountId: account.id }, orderBy: { name: 'asc' } }));
+}
+
+export interface LaunchAccessResult {
+  status: 'ok' | 'gaps' | 'expired' | 'broken' | 'no_assets';
+  total: number;
+  accessible: number;
+  missing: { type: 'account' | 'page' | 'pixel'; id: string; name: string }[];
+}
+
+/**
+ * Verify a LAUNCH connection's (short-lived) token can SEE every asset the same person's
+ * DATA connection synced — so the buyer knows, right after connecting, that a clone/relaunch
+ * won't hit Facebook's "the ad account and pixel don't match" error (which happens when the
+ * launch app wasn't granted an asset). Returns the gaps with readable names to re-grant.
+ */
+export async function checkLaunchAccess(auth: AuthContext, connectionId: string): Promise<LaunchAccessResult> {
+  const conn = await loadConnection(auth, connectionId);
+  if ((conn.appKind as FbAppKind) !== 'LAUNCH') {
+    throw new AppError(400, 'Asset coverage applies only to a launch-app connection');
+  }
+  if (conn.status === FbConnectionStatus.CONNECTION_BROKEN) return { status: 'broken', total: 0, accessible: 0, missing: [] };
+  if (conn.tokenExpiresAt.getTime() <= Date.now()) return { status: 'expired', total: 0, accessible: 0, missing: [] };
+
+  // The SAME person's DATA-synced assets (LAUNCH owns none) — accounts, Pages, pixels.
+  const data = await runScoped(auth, async (tx) => {
+    const dataConns = await tx.fbConnection.findMany({ where: { userId: conn.userId, appKind: 'DATA' }, select: { id: true } });
+    const ids = dataConns.map((c) => c.id);
+    if (ids.length === 0) return { accounts: [], pages: [], pixels: [] };
+    const [accounts, pages] = await Promise.all([
+      tx.fbAdAccount.findMany({ where: { connectionId: { in: ids } }, select: { id: true, fbAccountId: true, name: true } }),
+      tx.fbPage.findMany({ where: { connectionId: { in: ids } }, select: { fbPageId: true, name: true } }),
+    ]);
+    const pixelRows = await tx.fbPixel.findMany({ where: { adAccountId: { in: accounts.map((a) => a.id) } }, select: { fbPixelId: true, name: true } });
+    // A pixel can be shared across accounts → dedupe by fbPixelId.
+    const pixels = [...new Map(pixelRows.map((p) => [p.fbPixelId, p])).values()];
+    return { accounts, pages, pixels };
+  });
+
+  const total = data.accounts.length + data.pages.length + data.pixels.length;
+  if (total === 0) return { status: 'no_assets', total: 0, accessible: 0, missing: [] };
+
+  const res = await checkAssetAccess(
+    decryptToken(conn.accessTokenEnc),
+    { accountIds: data.accounts.map((a) => a.fbAccountId), pageIds: data.pages.map((p) => p.fbPageId), pixelIds: data.pixels.map((p) => p.fbPixelId) },
+    'LAUNCH',
+  );
+  const missing = [
+    ...res.missingAccountIds.map((id) => ({ type: 'account' as const, id, name: data.accounts.find((a) => a.fbAccountId === id)?.name ?? id })),
+    ...res.missingPageIds.map((id) => ({ type: 'page' as const, id, name: data.pages.find((p) => p.fbPageId === id)?.name ?? id })),
+    ...res.missingPixelIds.map((id) => ({ type: 'pixel' as const, id, name: data.pixels.find((p) => p.fbPixelId === id)?.name ?? id })),
+  ];
+  // All assets unreachable usually means a dead/limited token, not 50 individual grant gaps.
+  if (missing.length === total) return { status: 'expired', total, accessible: 0, missing: [] };
+  return { status: res.ok ? 'ok' : 'gaps', total, accessible: total - missing.length, missing };
 }
 
 /** Disconnect one profile (deletes the connection + cascades its accounts/pages/pixels). */

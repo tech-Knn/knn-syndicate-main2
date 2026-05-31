@@ -13,6 +13,7 @@ import {
   type FbPixel,
   type FbProfile,
   type FbProfileWithOwner,
+  type LaunchAccessResult,
   type ArticleVariantOption,
   type OfferDomainOption,
   type OfferInput,
@@ -243,6 +244,9 @@ export const facebook = {
     (await parse<{ profiles: FbProfileWithOwner[] }>(await authedFetch('/api/facebook/profiles/all'))).profiles,
   syncProfile: async (id: string): Promise<SyncResult> =>
     parse(await authedFetch(`/api/facebook/profiles/${id}/sync`, { method: 'POST' })),
+  // Does a launch-app connection's token cover all the same person's DATA assets?
+  launchAccess: async (id: string): Promise<LaunchAccessResult> =>
+    parse(await authedFetch(`/api/facebook/profiles/${id}/launch-access`)),
   disconnectProfile: async (id: string): Promise<void> =>
     parse(await authedFetch(`/api/facebook/profiles/${id}`, { method: 'DELETE' })),
   profileAccounts: async (id: string): Promise<FbAccount[]> =>

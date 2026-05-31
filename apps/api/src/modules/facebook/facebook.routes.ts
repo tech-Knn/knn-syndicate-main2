@@ -4,6 +4,7 @@ import { ROLES } from '@knn/shared';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate, requireRole } from '../../middleware/authenticate.js';
 import {
+  checkLaunchAccess,
   disconnect,
   getAuthUrl,
   handleCallback,
@@ -81,6 +82,17 @@ export async function facebookRoutes(app: FastifyInstance): Promise<void> {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     try {
       return reply.send(await resync(req.auth, req.params.id));
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // Asset-coverage check for a launch-app connection: does its short-lived token see all
+  // the same person's DATA assets? (So clone/relaunch won't hit a "different account" error.)
+  app.get<{ Params: { id: string } }>('/profiles/:id/launch-access', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await checkLaunchAccess(req.auth, req.params.id));
     } catch (err) {
       return handleRouteError(err, reply);
     }

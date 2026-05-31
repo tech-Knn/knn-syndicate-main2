@@ -21,23 +21,23 @@ describe('checkAssetAccess', () => {
   it('flags only the assets this token cannot see', async () => {
     // Everything visible except pixel PXBAD (the launch app wasn't granted it).
     stubGraph((url) => !url.includes('/PXBAD'));
-    const res = await checkAssetAccess('tok', { accountId: '123', fbPageId: 'PG1', fbPixelIds: ['PXOK', 'PXBAD'] }, 'LAUNCH');
-    expect(res.missingAccount).toBe(false);
-    expect(res.missingPage).toBe(false);
+    const res = await checkAssetAccess('tok', { accountIds: ['123'], pageIds: ['PG1'], pixelIds: ['PXOK', 'PXBAD'] }, 'LAUNCH');
+    expect(res.missingAccountIds).toEqual([]);
+    expect(res.missingPageIds).toEqual([]);
     expect(res.missingPixelIds).toEqual(['PXBAD']);
     expect(res.ok).toBe(false);
   });
 
   it('ok=true when the token can see every asset', async () => {
     stubGraph(() => true);
-    const res = await checkAssetAccess('tok', { accountId: '123', fbPageId: 'PG1', fbPixelIds: ['PX'] });
-    expect(res).toMatchObject({ missingAccount: false, missingPage: false, missingPixelIds: [], ok: true });
+    const res = await checkAssetAccess('tok', { accountIds: ['123'], pageIds: ['PG1'], pixelIds: ['PX'] });
+    expect(res).toMatchObject({ missingAccountIds: [], missingPageIds: [], missingPixelIds: [], ok: true });
   });
 
-  it('flags a missing ad account', async () => {
+  it('flags a missing ad account among several', async () => {
     stubGraph((url) => !url.includes('act_999'));
-    const res = await checkAssetAccess('tok', { accountId: '999', fbPixelIds: ['PX'] }, 'LAUNCH');
-    expect(res.missingAccount).toBe(true);
+    const res = await checkAssetAccess('tok', { accountIds: ['123', '999'], pixelIds: ['PX'] }, 'LAUNCH');
+    expect(res.missingAccountIds).toEqual(['999']);
     expect(res.ok).toBe(false);
   });
 });

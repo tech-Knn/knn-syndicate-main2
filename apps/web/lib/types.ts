@@ -39,6 +39,14 @@ export interface FbProfile {
   pageCount: number;
 }
 
+/** Whether a launch-app connection's token can see all the same person's DATA assets. */
+export interface LaunchAccessResult {
+  status: 'ok' | 'gaps' | 'expired' | 'broken' | 'no_assets';
+  total: number;
+  accessible: number;
+  missing: { type: 'account' | 'page' | 'pixel'; id: string; name: string }[];
+}
+
 /** A profile plus its owner — for the super-admin platform oversight view. */
 export interface FbProfileWithOwner extends FbProfile {
   ownerId: string;

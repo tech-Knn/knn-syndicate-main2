@@ -189,16 +189,16 @@ export function createFbAd(
 }
 
 export interface AssetAccessCheck {
-  /** fbAccountId WITHOUT the `act_` prefix. */
-  accountId?: string;
-  fbPageId?: string;
-  fbPixelIds?: string[];
+  /** fbAccountIds WITHOUT the `act_` prefix. */
+  accountIds?: string[];
+  pageIds?: string[];
+  pixelIds?: string[];
 }
 export interface AssetAccessResult {
-  missingAccount: boolean;
-  missingPage: boolean;
+  missingAccountIds: string[];
+  missingPageIds: string[];
   missingPixelIds: string[];
-  /** Convenience: any asset inaccessible to this token. */
+  /** True when this token can see every requested asset. */
   ok: boolean;
 }
 
@@ -207,7 +207,9 @@ export interface AssetAccessResult {
  * grants asset access PER APP at consent, so a separate LAUNCH app can be missing an ad
  * account / Page / pixel that the DATA app synced; referencing it in a create then fails
  * with a confusing "the ad account and pixel don't match" error AFTER half the campaign is
- * built. Run this with the LAUNCH token BEFORE creating anything to fail fast + clearly.
+ * built. Used two ways: (1) the launcher checks the specific campaign assets before creating
+ * anything (fail fast, no orphans); (2) the connect flow checks ALL the user's assets so the
+ * buyer knows the launch app has full coverage before they ever clone/relaunch.
  */
 export async function checkAssetAccess(
   accessToken: string,
@@ -222,18 +224,21 @@ export async function checkAssetAccess(
       return false;
     }
   };
-  const [account, page, pixelChecks] = await Promise.all([
-    assets.accountId ? canSee(`/act_${assets.accountId}`, assets.accountId) : Promise.resolve(true),
-    assets.fbPageId ? canSee(`/${assets.fbPageId}`) : Promise.resolve(true),
-    Promise.all((assets.fbPixelIds ?? []).map(async (px) => [px, await canSee(`/${px}`)] as const)),
+  const checkAll = (ids: string[] | undefined, toPath: (id: string) => string, scoped: boolean) =>
+    Promise.all((ids ?? []).map(async (id) => [id, await canSee(toPath(id), scoped ? id : undefined)] as const));
+  const [accountChecks, pageChecks, pixelChecks] = await Promise.all([
+    checkAll(assets.accountIds, (id) => `/act_${id}`, true),
+    checkAll(assets.pageIds, (id) => `/${id}`, false),
+    checkAll(assets.pixelIds, (id) => `/${id}`, false),
   ]);
-  const missingPixelIds = pixelChecks.filter(([, seen]) => !seen).map(([px]) => px);
-  const missingAccount = !account;
-  const missingPage = !page;
+  const missing = (checks: ReadonlyArray<readonly [string, boolean]>) => checks.filter(([, seen]) => !seen).map(([id]) => id);
+  const missingAccountIds = missing(accountChecks);
+  const missingPageIds = missing(pageChecks);
+  const missingPixelIds = missing(pixelChecks);
   return {
-    missingAccount,
-    missingPage,
+    missingAccountIds,
+    missingPageIds,
     missingPixelIds,
-    ok: !missingAccount && !missingPage && missingPixelIds.length === 0,
+    ok: missingAccountIds.length === 0 && missingPageIds.length === 0 && missingPixelIds.length === 0,
   };
 }

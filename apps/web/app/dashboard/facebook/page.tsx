@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Badge, Banner, Button, Card, EmptyState, Spinner, useConfirm, useToast } from '@/components/ui';
 import { ApiError, facebook } from '@/lib/api';
-import { type FbAccount, type FbPage, type FbPixel, type FbProfile, type FbProfileWithOwner } from '@/lib/types';
+import { type FbAccount, type FbPage, type FbPixel, type FbProfile, type FbProfileWithOwner, type LaunchAccessResult } from '@/lib/types';
 import { useAuth } from '../../providers';
 import styles from './facebook.module.css';
 
@@ -110,10 +110,27 @@ function ProfileBlock({
   const [expandedAcc, setExpandedAcc] = useState<Set<string>>(new Set());
   const [syncing, setSyncing] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [access, setAccess] = useState<LaunchAccessResult | 'loading' | null>(null);
   const broken = profile.status === 'CONNECTION_BROKEN';
   const expiryMs = msToExpiry(profile.tokenExpiresAt);
   const expired = expiryMs !== null && expiryMs < 0;
   const isLaunch = profile.appKind === 'LAUNCH';
+  const canCheckAccess = isLaunch && !broken && !expired && !owner;
+
+  const checkAccess = useCallback(async () => {
+    setAccess('loading');
+    try {
+      setAccess(await facebook.launchAccess(profile.id));
+    } catch {
+      setAccess(null);
+    }
+  }, [profile.id]);
+
+  // Auto-verify a launch app's asset coverage on mount, so the buyer sees right away
+  // whether a clone/relaunch will work (no surprise "different account" error later).
+  useEffect(() => {
+    if (canCheckAccess) void checkAccess();
+  }, [canCheckAccess, checkAccess]);
   // Super-admin oversight rows carry an `owner`; only the owner can re-authorize,
   // so the Reconnect control dead-ends here — surface guidance instead.
   const isOversight = !!owner;
@@ -261,14 +278,18 @@ function ProfileBlock({
             )}
           </span>
         </div>
-        <div className={styles.metaItem}>
-          <span className={styles.metaLabel}>Ad accounts</span>
-          <span className={styles.metaValue}>{profile.adAccountCount}</span>
-        </div>
-        <div className={styles.metaItem}>
-          <span className={styles.metaLabel}>Pages</span>
-          <span className={styles.metaValue}>{profile.pageCount}</span>
-        </div>
+        {!isLaunch && (
+          <>
+            <div className={styles.metaItem}>
+              <span className={styles.metaLabel}>Ad accounts</span>
+              <span className={styles.metaValue}>{profile.adAccountCount}</span>
+            </div>
+            <div className={styles.metaItem}>
+              <span className={styles.metaLabel}>Pages</span>
+              <span className={styles.metaValue}>{profile.pageCount}</span>
+            </div>
+          </>
+        )}
         <div className={styles.metaItem}>
           <span className={styles.metaLabel}>Token expires</span>
           <span className={styles.metaValue}>
@@ -280,6 +301,43 @@ function ProfileBlock({
           <span className={styles.metaValue}>{fmtDate(profile.connectedAt)}</span>
         </div>
       </div>
+
+      {/* Launch-app asset coverage: does this short-lived token see everything the main
+          connection synced? Green ✓ = clone/relaunch will work; gaps = re-grant first. */}
+      {canCheckAccess && (
+        <div className={styles.accessRow}>
+          {access === 'loading' || access === null ? (
+            <span className={styles.metaValue}>Checking asset access…</span>
+          ) : access.status === 'ok' ? (
+            <Badge tone="success" dot>
+              Covers all {access.total} of your assets — ready to launch
+            </Badge>
+          ) : access.status === 'no_assets' ? (
+            <span className={styles.metaValue}>Connect your main profile first (no synced assets to cover yet).</span>
+          ) : access.status === 'expired' || access.status === 'broken' ? (
+            <Badge tone="warning" dot>
+              Token expired — reconnect to publish
+            </Badge>
+          ) : (
+            <div className={styles.accessGaps}>
+              <Badge tone="danger" dot>
+                Missing access to {access.missing.length} of {access.total} assets
+              </Badge>
+              <span className={styles.accessGapList}>
+                {access.missing.map((m) => `${m.type}: ${m.name}`).join(' · ')}
+              </span>
+              <span className={styles.accessHint}>
+                Reconnect the launch app and grant these — otherwise launching a campaign that uses them will fail.
+              </span>
+            </div>
+          )}
+          {access !== 'loading' && (
+            <button type="button" className={styles.accessRecheck} onClick={() => void checkAccess()}>
+              Re-check
+            </button>
+          )}
+        </div>
+      )}
 
       {profile.scopes.length > 0 && (
         <div className={styles.metaItem} style={{ marginTop: 'var(--space-3)' }}>

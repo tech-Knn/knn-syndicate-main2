@@ -288,12 +288,13 @@ async function resolveRedirectBase(): Promise<string> {
 async function assertLaunchAssetsAccessible(plan: LaunchPlan): Promise<void> {
   if (plan.appKind !== 'LAUNCH') return;
   const fbPixelIds = [...new Set(plan.adSets.map((s) => s.fbPixelId).filter((p): p is string => !!p))];
-  const res = await checkAssetAccess(plan.token, { accountId: plan.fbAccountId, fbPageId: plan.fbPageId, fbPixelIds }, 'LAUNCH');
+  const res = await checkAssetAccess(plan.token, { accountIds: [plan.fbAccountId], pageIds: [plan.fbPageId], pixelIds: fbPixelIds }, 'LAUNCH');
   if (res.ok) return;
-  const missing: string[] = [];
-  if (res.missingAccount) missing.push(`ad account act_${plan.fbAccountId}`);
-  if (res.missingPage) missing.push(`Page ${plan.fbPageId}`);
-  for (const px of res.missingPixelIds) missing.push(`pixel ${px}`);
+  const missing = [
+    ...res.missingAccountIds.map((a) => `ad account act_${a}`),
+    ...res.missingPageIds.map((p) => `Page ${p}`),
+    ...res.missingPixelIds.map((px) => `pixel ${px}`),
+  ];
   throw new AppError(
     409,
     `Your Facebook launch app can't access ${missing.join(', ')}. These belong to your main connection but weren't granted to the launch app. Reconnect the launch app (Settings → Facebook → Connect launch app) and grant it the SAME ad accounts, Pages and pixels as your main profile, then relaunch.`,
@@ -709,6 +710,22 @@ export async function launchCampaign(
     if (err instanceof FbConnectionBrokenError) {
       if (plan?.connectionId) await markConnectionBroken(plan.connectionId, err.message).catch(() => undefined);
       throw new AppError(409, 'This Facebook connection has expired or been revoked — reconnect the profile in Settings → Facebook, then relaunch.');
+    }
+
+    // A LAUNCH-app create that still failed on an asset/permission rejection (e.g. "the ad
+    // account and pixel don't match", a Page-permission error) — almost always the short-lived
+    // launch token isn't granted the same asset as the main connection. Rewrite FB's cryptic
+    // message into an actionable one. Scoped to asset/permission keywords so an unrelated error
+    // (e.g. a bad objective) still surfaces verbatim.
+    if (
+      plan?.appKind === 'LAUNCH' &&
+      err instanceof FbApiError &&
+      /pixel|page|ad ?account|permission|belong|different|access|not.*(eligible|match)/i.test(err.message)
+    ) {
+      throw new AppError(
+        409,
+        `Facebook rejected the launch with your launch app: "${err.message}". This usually means the launch app isn't granted the same ad account, Page or pixel as your main connection. Reconnect it (Settings → Facebook → Connect launch app), grant it the SAME assets, then relaunch.`,
+      );
     }
 
     // Any other failure (FB rejection, creative/pixel error, …): rethrow for the UI.
