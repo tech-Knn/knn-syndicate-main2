@@ -17,6 +17,8 @@ vi.mock('@knn/fb', async (importOriginal) => {
     // Default: no separate LAUNCH app (single-app) → writes resolve to the DATA token.
     // A specific test flips this to exercise the LAUNCH-token resolution.
     hasLaunchApp: vi.fn(() => false),
+    // Default: the launch app can see all assets. A specific test returns a gap.
+    checkAssetAccess: vi.fn(async () => ({ missingAccount: false, missingPage: false, missingPixelIds: [], ok: true })),
     createFbCampaign: vi.fn(async () => ({ id: 'fbcamp-1' })),
     createFbAdSet: vi.fn(async () => ({ id: 'fbadset-1' })),
     uploadFbAdImage: vi.fn(async () => 'imghash'),
@@ -176,6 +178,31 @@ describe('launchCampaign (Phase 8)', () => {
       // 4th arg = appKind. With a usable LAUNCH connection it must be 'LAUNCH', not 'DATA'.
       expect(fb.createFbCampaign).toHaveBeenCalledWith('act_1', 'tok', expect.any(Object), 'LAUNCH');
       expect(fb.createFbAd).toHaveBeenCalledWith('act_1', 'tok', expect.any(Object), 'LAUNCH');
+    } finally {
+      vi.mocked(fb.hasLaunchApp).mockReturnValue(false);
+      await withSystem((tx) => tx.fbConnection.delete({ where: { id: launchConn.id } }));
+    }
+  });
+
+  it('two-app: a launch app missing the pixel fails fast with a clear 409 before any FB object is created', async () => {
+    const launchConn = await withSystem((tx) =>
+      tx.fbConnection.create({
+        data: { orgId, userId: buyerId, fbUserId: 'fb', appKind: 'LAUNCH', accessTokenEnc: 'enc-launch', tokenExpiresAt: new Date(Date.now() + 3_600_000), status: 'ACTIVE' },
+      }),
+    );
+    vi.mocked(fb.hasLaunchApp).mockReturnValue(true);
+    // The launch app wasn't granted this campaign's pixel.
+    vi.mocked(fb.checkAssetAccess).mockResolvedValueOnce({ missingAccount: false, missingPage: false, missingPixelIds: ['px'], ok: false });
+    vi.mocked(fb.createFbCampaign).mockClear();
+    try {
+      const campaignId = await makeCampaign();
+      await expect(
+        launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
+      ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('pixel px') });
+      // Failed BEFORE building anything on Facebook → no orphan campaign.
+      expect(fb.createFbCampaign).not.toHaveBeenCalled();
+      const c = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { status: true } }));
+      expect(c?.status).toBe('PROCESSING');
     } finally {
       vi.mocked(fb.hasLaunchApp).mockReturnValue(false);
       await withSystem((tx) => tx.fbConnection.delete({ where: { id: launchConn.id } }));

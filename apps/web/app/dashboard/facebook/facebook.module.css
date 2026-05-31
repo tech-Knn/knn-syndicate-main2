@@ -12,6 +12,48 @@
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+.explainer {
+  margin-bottom: 1.5rem;
+  padding: 1.1rem 1.25rem;
+}
+.explainerTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--cream);
+  margin-bottom: 0.4rem;
+}
+.explainerLead {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  margin-bottom: 0.9rem;
+  max-width: 78ch;
+}
+.explainerGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+.explainerCol {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.8rem 0.9rem;
+  background: var(--surface-2, rgba(255, 255, 255, 0.02));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 10px;
+}
+.explainerCol p {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  margin: 0;
+}
+@media (max-width: 640px) {
+  .explainerGrid {
+    grid-template-columns: 1fr;
+  }
+}
 .title {
   font-size: 1.9rem;
   color: var(--cream);

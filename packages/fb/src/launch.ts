@@ -187,3 +187,53 @@ export function createFbAd(
     appKind,
   );
 }
+
+export interface AssetAccessCheck {
+  /** fbAccountId WITHOUT the `act_` prefix. */
+  accountId?: string;
+  fbPageId?: string;
+  fbPixelIds?: string[];
+}
+export interface AssetAccessResult {
+  missingAccount: boolean;
+  missingPage: boolean;
+  missingPixelIds: string[];
+  /** Convenience: any asset inaccessible to this token. */
+  ok: boolean;
+}
+
+/**
+ * Verify a token can actually SEE the given assets — each is a cheap id-only GET. Facebook
+ * grants asset access PER APP at consent, so a separate LAUNCH app can be missing an ad
+ * account / Page / pixel that the DATA app synced; referencing it in a create then fails
+ * with a confusing "the ad account and pixel don't match" error AFTER half the campaign is
+ * built. Run this with the LAUNCH token BEFORE creating anything to fail fast + clearly.
+ */
+export async function checkAssetAccess(
+  accessToken: string,
+  assets: AssetAccessCheck,
+  appKind: FbAppKind = 'DATA',
+): Promise<AssetAccessResult> {
+  const canSee = async (path: string, accountId?: string): Promise<boolean> => {
+    try {
+      await graphRequest({ path, params: { fields: 'id' }, accessToken, appKind, accountId });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const [account, page, pixelChecks] = await Promise.all([
+    assets.accountId ? canSee(`/act_${assets.accountId}`, assets.accountId) : Promise.resolve(true),
+    assets.fbPageId ? canSee(`/${assets.fbPageId}`) : Promise.resolve(true),
+    Promise.all((assets.fbPixelIds ?? []).map(async (px) => [px, await canSee(`/${px}`)] as const)),
+  ]);
+  const missingPixelIds = pixelChecks.filter(([, seen]) => !seen).map(([px]) => px);
+  const missingAccount = !account;
+  const missingPage = !page;
+  return {
+    missingAccount,
+    missingPage,
+    missingPixelIds,
+    ok: !missingAccount && !missingPage && missingPixelIds.length === 0,
+  };
+}

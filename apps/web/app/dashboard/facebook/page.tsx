@@ -17,33 +17,38 @@ function fmtDate(iso?: string): string {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-/** Whole days from now until `iso` (negative = already expired). null when unknown. */
-function daysToExpiry(iso?: string): number | null {
+/** Milliseconds from now until `iso` (negative = already expired). null when unknown. */
+function msToExpiry(iso?: string): number | null {
   if (!iso) return null;
-  return Math.round((new Date(iso).getTime() - Date.now()) / 86_400_000);
+  return new Date(iso).getTime() - Date.now();
 }
 
-function relExpiry(days: number): string {
-  if (days > 1) return `in ${days} days`;
-  if (days === 1) return 'in 1 day';
-  if (days === 0) return 'today';
-  if (days === -1) return '1 day ago';
-  return `${Math.abs(days)} days ago`;
+/** Adaptive relative time — minutes (<90m), hours (<48h), else days. Handles the
+ *  short-lived LAUNCH token (≈1–2h) AND the long-lived DATA token (≈60d). */
+function relExpiry(ms: number): string {
+  const abs = Math.abs(ms);
+  const unit =
+    abs < 90 * 60_000
+      ? `${Math.max(1, Math.round(abs / 60_000))} min`
+      : abs < 48 * 3_600_000
+        ? `${Math.round(abs / 3_600_000)} hr`
+        : `${Math.round(abs / 86_400_000)} days`;
+  return ms >= 0 ? `in ${unit}` : `${unit} ago`;
 }
 
 /** Token expiry rendered as a Badge: danger when expired, warning when ≤7 days out. */
 function TokenExpiry({ iso }: { iso?: string }): React.ReactNode {
-  const days = daysToExpiry(iso);
-  if (days === null) return <span className={styles.metaValue}>—</span>;
-  const rel = relExpiry(days);
-  if (days < 0) {
+  const ms = msToExpiry(iso);
+  if (ms === null) return <span className={styles.metaValue}>—</span>;
+  const rel = relExpiry(ms);
+  if (ms < 0) {
     return (
       <Badge tone="danger" dot>
         Expired {rel}
       </Badge>
     );
   }
-  if (days <= 7) {
+  if (ms <= 7 * 86_400_000) {
     return (
       <Badge tone="warning" dot>
         Expires {rel}
@@ -106,8 +111,9 @@ function ProfileBlock({
   const [syncing, setSyncing] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const broken = profile.status === 'CONNECTION_BROKEN';
-  const expiryDays = daysToExpiry(profile.tokenExpiresAt);
-  const expired = expiryDays !== null && expiryDays < 0;
+  const expiryMs = msToExpiry(profile.tokenExpiresAt);
+  const expired = expiryMs !== null && expiryMs < 0;
+  const isLaunch = profile.appKind === 'LAUNCH';
   // Super-admin oversight rows carry an `owner`; only the owner can re-authorize,
   // so the Reconnect control dead-ends here — surface guidance instead.
   const isOversight = !!owner;
@@ -206,10 +212,20 @@ function ProfileBlock({
           </div>
         </div>
         <div className={styles.actions}>
-          <Button variant="ghost" onClick={toggleOpen} aria-expanded={open}>
-            {open ? 'Hide assets' : `Assets (${profile.adAccountCount}/${profile.pageCount})`}
-          </Button>
-          {broken || expired ? (
+          {/* A LAUNCH connection owns no ad accounts/pages (the main connection does), so the
+              assets drill-down + re-sync don't apply — its only action is reconnecting the token. */}
+          {!isLaunch && (
+            <Button variant="ghost" onClick={toggleOpen} aria-expanded={open}>
+              {open ? 'Hide assets' : `Assets (${profile.adAccountCount}/${profile.pageCount})`}
+            </Button>
+          )}
+          {isLaunch ? (
+            isOversight ? (
+              <span className={styles.ownerNote}>Owner reconnects before launching</span>
+            ) : (
+              <Button onClick={onReconnect}>{expired ? 'Reconnect to publish' : 'Refresh token'}</Button>
+            )
+          ) : broken || expired ? (
             isOversight ? (
               <span className={styles.ownerNote}>Owner must reconnect</span>
             ) : (
@@ -525,6 +541,32 @@ export default function FacebookPage() {
           </Banner>
         </div>
       )}
+
+      {/* Two-connection explainer — buyers need to know WHY there are two + WHEN to use each. */}
+      <Card className={styles.explainer}>
+        <h3 className={styles.explainerTitle}>How connecting Facebook works here</h3>
+        <p className={styles.explainerLead}>
+          Facebook blocks ad publishing from our servers on a long-lived login token, so we split it into
+          two connections. Connect both once, then just <strong>refresh the launch app right before you launch</strong>.
+        </p>
+        <div className={styles.explainerGrid}>
+          <div className={styles.explainerCol}>
+            <Badge tone="success">Main connection</Badge>
+            <p>
+              Long-lived (~60 days). Syncs your ad accounts, Pages &amp; pixels and tracks results &amp; conversions.
+              Connect it once — we keep it refreshed for you.
+            </p>
+          </div>
+          <div className={styles.explainerCol}>
+            <Badge tone="warning">Launch app · short-lived</Badge>
+            <p>
+              Used <em>only</em> to publish ads (it clears Facebook&rsquo;s security check). Its token lasts ~1–2 hours,
+              so click <strong>Connect launch app</strong> just before launching — and grant it the <strong>same</strong>{' '}
+              ad accounts, Pages &amp; pixels as your main connection, or publishing will fail.
+            </p>
+          </div>
+        </div>
+      </Card>
 
       <section className={styles.section}>
         <div className={styles.sectionHead}>

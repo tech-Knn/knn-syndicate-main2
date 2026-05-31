@@ -9,6 +9,7 @@ import {
   FbConnectionBrokenError,
   FbRateLimitError,
   TokenDecryptError,
+  checkAssetAccess,
   createFbAd,
   createFbAdCreative,
   createFbAdSet,
@@ -278,9 +279,32 @@ async function resolveRedirectBase(): Promise<string> {
   return def?.host ? `https://${def.host}` : env.REDIRECT_DOMAIN;
 }
 
+/**
+ * When launching through a separate LAUNCH app, verify ITS token can see the ad account,
+ * Page and pixels first — Facebook grants assets per app, so a launch app that wasn't
+ * granted the same assets as the DATA app would fail mid-build with a confusing "the ad
+ * account and pixel don't match" error (and leave an orphan FB campaign). Fail fast + clear.
+ */
+async function assertLaunchAssetsAccessible(plan: LaunchPlan): Promise<void> {
+  if (plan.appKind !== 'LAUNCH') return;
+  const fbPixelIds = [...new Set(plan.adSets.map((s) => s.fbPixelId).filter((p): p is string => !!p))];
+  const res = await checkAssetAccess(plan.token, { accountId: plan.fbAccountId, fbPageId: plan.fbPageId, fbPixelIds }, 'LAUNCH');
+  if (res.ok) return;
+  const missing: string[] = [];
+  if (res.missingAccount) missing.push(`ad account act_${plan.fbAccountId}`);
+  if (res.missingPage) missing.push(`Page ${plan.fbPageId}`);
+  for (const px of res.missingPixelIds) missing.push(`pixel ${px}`);
+  throw new AppError(
+    409,
+    `Your Facebook launch app can't access ${missing.join(', ')}. These belong to your main connection but weren't granted to the launch app. Reconnect the launch app (Settings → Facebook → Connect launch app) and grant it the SAME ad accounts, Pages and pixels as your main profile, then relaunch.`,
+  );
+}
+
 async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'): Promise<FbStructureResult> {
   const { campaign, token, appKind, fbAccountId, fbPageId } = plan;
   const cbo = campaign.budgetMode === 'CAMPAIGN';
+  // Catch a launch-app asset-grant gap BEFORE creating any FB objects (no orphans).
+  await assertLaunchAssetsAccessible(plan);
   const redirectBase = await resolveRedirectBase();
 
   // Automatic bidding (no cap → no bid_amount needed). The bid strategy lives at the
