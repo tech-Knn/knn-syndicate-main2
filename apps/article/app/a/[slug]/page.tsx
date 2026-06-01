@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
-import { articleBlocks, articleTeaser } from '@knn/shared';
+import { articleBlocks, articleTeaser, classifyTerm, cleanTerms } from '@knn/shared';
 import { resolveSiteConfig } from '../../_afs/site-config';
 import { SiteFooter } from '../../_components/site-footer';
 import { LanderBeacon } from '../../funnel-beacons';
@@ -97,11 +97,22 @@ export default async function ArticlePage({
   const txid = str(sp.txid) || undefined;
   // The offer's AFS channel (per-offer attribution); forwarded to /search by the unit.
   const channel = str(sp.ch) || undefined;
-  // Publisher-provided related-search terms. Preference: explicit `terms` from the
-  // redirect → the article's AI-generated high-CPC related searches → campaign
-  // keywords. Only sent alongside referrerAdCreative, which Google requires.
-  const terms =
-    str(sp.terms) || article.relatedSearchTerms.join(',') || article.keywords.join(',') || undefined;
+  // Publisher-provided related-search terms. Preference: explicit `terms` from the redirect →
+  // the article's AI-generated high-CPC related searches → campaign keywords. The chosen source
+  // is run through the RSOC term-quality filter (rank-first, drop-rarely) so even legacy articles
+  // and keyword fallbacks serve clean, ranked, policy-safe terms — Google's new quality signal
+  // penalizes implausible/irrelevant terms, so we never forward junk. Only sent alongside
+  // referrerAdCreative, which Google requires.
+  const explicitTerms = str(sp.terms) ? str(sp.terms).split(',') : [];
+  const termSource = explicitTerms.length
+    ? explicitTerms
+    : article.relatedSearchTerms.length
+      ? article.relatedSearchTerms
+      : article.keywords;
+  const contextVertical =
+    [article.query, ...article.keywords].map((p) => (p ? classifyTerm(p).vertical : null)).find(Boolean) ?? null;
+  const cleaned = cleanTerms(termSource, { contextVertical, max: 6 });
+  const terms = cleaned.length ? cleaned.join(',') : undefined;
 
   return (
     <div className={styles.page}>

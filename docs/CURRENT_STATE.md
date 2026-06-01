@@ -497,3 +497,24 @@ via the worker's daily token-refresh job.
 - Bull-Board basic-auth creds are in `.env` (`BULL_BOARD_USER`/`PASSWORD`).
 - External dependencies not yet provisioned: real domains, Facebook App + business verification,
   AdSense AFS API access, AI keys (see `OPEN_QUESTIONS.md`).
+
+## RSOC quality-signal funnel work (2026-06-01) — D24
+
+Built end-to-end in response to Google's new RSOC quality signal (penalizes/discards weak related-search
+terms). All observe-only; no auto-action.
+
+- **Term-quality engine** `packages/shared/src/terms.ts` — `classifyTerm` (intent/vertical/cpc/plausibility/
+  blocklist) + `filterTerms` (rank-first, drop-rarely, never empties). 26 unit tests.
+- **Generation** tightened prompt + post-gen `filterTerms` + keyword fallback in `generateArticleOpenAI`.
+- **Serve-time** the article terms-precedence chain runs through `cleanTerms` (legacy articles + keyword
+  fallbacks get cleaned/ranked too).
+- **RPC** `rpc()/displayRpc()` (floor 5 clicks) on Channels-usage, Articles-usage, AdSense-preview (super-admin).
+- **Per-term telemetry** `term_stat_daily` (migration `20260601090000_term_stat_daily`) ← public beacon
+  `POST /api/telemetry/term` from `/search` (fill + click, self-dormant) → super-admin **Term performance** card
+  (`GET /api/admin/term-performance`). Client beacon URL derives from `NEXT_PUBLIC_EVENTS_URL` if
+  `NEXT_PUBLIC_TERM_TELEMETRY_URL` unset.
+- **Fill-rate de-risk (D22):** the 08:45 UTC staging attribution run confirmed v2 `reports:generate` accepts
+  `AD_REQUESTS`/`MATCHED_AD_REQUESTS`/`IMPRESSIONS` (no pull failure) — fill + revenue both flow.
+- Gate: typecheck 12/12, lint 12/12, tests serial 10/10 (api 179, worker 44, shared 101, ai 14), build 4/4.
+- **Not yet deployed** — awaiting deploy authorization. Deferred (post data-validation): auto term
+  pruning/regeneration, redirect curated-terms override, content-substance gate.

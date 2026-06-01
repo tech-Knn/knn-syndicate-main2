@@ -31,6 +31,43 @@ export function displayFillRate(matchedRequests: number, requests: number): numb
   return requests >= RSOC_FILL_DISPLAY_FLOOR ? coverage(matchedRequests, requests) : null;
 }
 
+/**
+ * RPC (revenue per click) = the average $ earned per AFS ad click — the headline RSOC money
+ * metric. High RPC means our terms drew high-CPC, relevant ads (exactly what Google's quality
+ * signal now rewards). Below this many clicks the average is too noisy to trust → display "—".
+ */
+export const RSOC_RPC_DISPLAY_FLOOR = 5;
+
+/** Raw revenue-per-click in the same unit as `revenue` (dollars in / dollars out); 0 when no clicks. */
+export function rpc(revenue: number, clicks: number): number {
+  return clicks > 0 ? revenue / clicks : 0;
+}
+
+/** Display RPC: the per-click average, or `null` when there are too few clicks to be meaningful. */
+export function displayRpc(revenue: number, clicks: number): number | null {
+  return clicks >= RSOC_RPC_DISPLAY_FLOOR ? rpc(revenue, clicks) : null;
+}
+
+/** Min term searches before a term's fill-rate / CTR is shown (smaller samples than channel fill). */
+export const RSOC_TERM_DISPLAY_FLOOR = 20;
+
+/**
+ * Per-term RSOC telemetry rollup (observe-only, super-admin). `searches` = chip clicks that landed
+ * on /search for this term; `fills` = how often Google actually served ads for it; `clicks` = ad
+ * clicks. A term whose searches climb while `fillRate` stays low has no good ad inventory — the
+ * "monitor partner terms" signal Google's RSOC quality guidance flags for dropping.
+ */
+export interface TermPerf {
+  term: string;
+  searches: number;
+  fills: number;
+  clicks: number;
+  /** fills / searches (term-grain coverage); null below the term display floor. */
+  fillRate: number | null;
+  /** clicks / fills (how well filled ads convert to clicks); null below the floor. */
+  ctr: number | null;
+}
+
 export interface MetricTotals {
   spendUsd: number;
   revenueUsd: number; // buyer-visible revenue (post revenue-cut)
@@ -222,6 +259,8 @@ export interface ChannelAssignmentSpan {
   afsRequests: number;
   afsMatchedRequests: number;
   fillRate: number | null;
+  // Revenue per AFS click over the span (USD), or null below the click floor.
+  rpc: number | null;
 }
 
 /** Full usage lineage for ONE channel id (super-admin Channels page). */
@@ -253,6 +292,7 @@ export interface ArticleUsageCampaign {
     afsRequests: number;
     afsMatchedRequests: number;
     fillRate: number | null;
+    rpc: number | null;
   }[];
 }
 

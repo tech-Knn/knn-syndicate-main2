@@ -141,6 +141,8 @@ export default function ArticlesPage() {
                                         <th className={styles.thLeft}>Website</th>
                                         <th className={styles.thLeft}>Period</th>
                                         <th>Revenue</th>
+                                        <th>RPC</th>
+                                        <th>Fill rate</th>
                                       </tr>
                                     </thead>
                                     <tbody>
@@ -158,6 +160,8 @@ export default function ArticlesPage() {
                                               {ch?.active && <Badge tone="success">now</Badge>}
                                             </td>
                                             <td className={styles.num}>{ch ? `$${ch.revenueUsd.toFixed(2)}` : '—'}</td>
+                                            <td className={styles.num}>{ch && ch.rpc !== null ? `$${ch.rpc.toFixed(2)}` : '—'}</td>
+                                            <td className={styles.num}>{ch && ch.fillRate !== null ? `${Math.round(ch.fillRate * 100)}%` : '—'}</td>
                                           </tr>
                                         )),
                                       )}

@@ -40,6 +40,7 @@ import {
   type OfferStat,
   type PlatformSettings,
   type StatsSummary,
+  type TermPerf,
 } from '@knn/shared';
 
 type RangeArg = { from?: string; to?: string } | undefined;
@@ -439,6 +440,8 @@ export const admin = {
   channels: async (): Promise<ChannelRow[]> =>
     (await parse<{ channels: ChannelRow[] }>(await authedFetch('/api/admin/channels'))).channels,
   channelSummary: async (): Promise<ChannelSummary> => parse(await authedFetch('/api/admin/channel-summary')),
+  termPerformance: async (): Promise<{ range: { from: string; to: string }; terms: TermPerf[] }> =>
+    parse(await authedFetch('/api/admin/term-performance')),
   channelUsage: async (idOrChannelId: string): Promise<ChannelUsage> =>
     (await parse<{ usage: ChannelUsage }>(await authedFetch(`/api/admin/channels/${encodeURIComponent(idOrChannelId)}/usage`))).usage,
   articles: async (): Promise<ArticleRow[]> =>

@@ -74,9 +74,11 @@ describe('getChannelUsage', () => {
     expect(active.liveUrl).toBe(`https://${host}/a/usage-article-${suffix}`);
     expect(active.revenueUsd).toBe(12.34); // 1234 minor on the 29th, inside [28,29]
     expect(active.afsClicks).toBe(5);
+    expect(active.rpc).toBeCloseTo(2.468, 3); // 12.34 / 5 clicks (≥ floor)
     const gap = u!.spans.find((s) => !s.active)!;
     expect(gap.firstDay).toBe('2026-05-31');
     expect(gap.revenueUsd).toBe(0); // no revenue on the 31st
+    expect(gap.rpc).toBeNull(); // 0 clicks → below the RPC floor → "—"
   });
 
   it('also resolves by the channels.id uuid', async () => {
@@ -107,6 +109,7 @@ describe('getArticleUsage', () => {
     expect(ch.firstDay).toBe('2026-05-28');
     expect(ch.lastDay).toBe('2026-05-31'); // overall window across spans
     expect(ch.revenueUsd).toBe(12.34);
+    expect(ch.rpc).toBeCloseTo(2.468, 3); // 12.34 / 5 clicks
   });
 
   it('returns null for an unknown article', async () => {

@@ -14,6 +14,14 @@ import styles from './search.module.css';
  * not on the critical path at all.
  */
 
+// Per-term RSOC telemetry endpoint (observe-only). Prefer an explicit URL; otherwise derive it
+// from the conversion-beacon URL (same API host). Empty → telemetry is inert (self-dormant).
+const TERM_TELEMETRY_URL =
+  process.env.NEXT_PUBLIC_TERM_TELEMETRY_URL ||
+  (process.env.NEXT_PUBLIC_EVENTS_URL
+    ? process.env.NEXT_PUBLIC_EVENTS_URL.replace(/\/api\/events\/?$/, '/api/telemetry/term')
+    : '');
+
 // Chars that must be escaped before embedding JSON in an inline <script>: `<`, `>`, `&`
 // could break out of the script element / be reinterpreted by the HTML parser, and the
 // U+2028 / U+2029 line separators are valid JSON but illegal raw in a JS string literal.
@@ -88,10 +96,16 @@ export function SearchAds({
   const bootstrap =
     `(function(g,o){g[o]=g[o]||function(){(g[o].q=g[o].q||[]).push(arguments)};g[o].t=1*new Date})(window,'_googCsa');` +
     `var po=${safeJson(pageOptions)};po.resultsPageBaseUrl=window.location.origin+'/search';` +
+    // Per-term RSOC telemetry (observe-only): when Google's ad unit resolves for THIS term, beacon
+    // whether it filled. The only place term-grain fill is observable (AdSense has no term dimension).
+    // Inert if no telemetry URL is configured. Runs in the adLoadedCallback (after the ad request, so
+    // it never delays it). The click signal is fired separately from the funnel adclick listener.
+    `var TT=${safeJson(TERM_TELEMETRY_URL)},TQ=${safeJson(query)};` +
+    `function ttSend(ev,f){if(!TT||!TQ)return;try{var u=TT+(TT.indexOf('?')<0?'?':'&')+'term='+encodeURIComponent(TQ)+'&event='+ev+(f!=null?'&filled='+f:'');navigator.sendBeacon?navigator.sendBeacon(u):fetch(u,{method:'POST',keepalive:!0,mode:'no-cors'})}catch(e){}}` +
     // Ads only (no relatedSearchBlock — the organic <WebResults> below ARE the results the ads
     // supplement). `number` is capped to the ACTUAL organic Web-result count (≤5), so ads ≤
     // results (Google policy: number of ads ≤ number of search results). Google may serve fewer.
-    `_googCsa('ads',po,{container:'afscontainer1',number:${number}});` +
+    `_googCsa('ads',po,{container:'afscontainer1',number:${number},adLoadedCallback:function(c,loaded){ttSend('render',loaded?1:0)}});` +
     `var s=document.createElement('script');s.async=!0;s.src='https://www.google.com/adsense/search/ads.js';document.head.appendChild(s);`;
 
   return (

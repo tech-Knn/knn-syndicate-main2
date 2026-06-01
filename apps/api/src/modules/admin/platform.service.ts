@@ -11,6 +11,7 @@ import {
   ROLES,
   centsToDollars,
   displayFillRate,
+  displayRpc,
 } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
@@ -231,6 +232,7 @@ export async function getChannelUsage(idOrChannelId: string): Promise<ChannelUsa
           afsRequests: agg.afsRequests,
           afsMatchedRequests: agg.afsMatchedRequests,
           fillRate: displayFillRate(agg.afsMatchedRequests, agg.afsRequests),
+          rpc: displayRpc(agg.revenueUsd, agg.afsClicks),
         });
       }
     }
@@ -288,6 +290,7 @@ export async function getArticleUsage(auth: AuthContext, articleId: string): Pro
           totalRevenueUsd += revenueUsd;
           const afsRequests = rRows.reduce((s, r) => s + r.afsRequests, 0);
           const afsMatchedRequests = rRows.reduce((s, r) => s + r.afsMatchedRequests, 0);
+          const afsClicks = rRows.reduce((s, r) => s + r.afsClicks, 0);
           return {
             channelDbId: channelRef,
             channelId: chById.get(channelRef) ?? '(unknown)',
@@ -297,10 +300,11 @@ export async function getArticleUsage(auth: AuthContext, articleId: string): Pro
             lastDay: sp.length ? sp[sp.length - 1]!.lastDay : null,
             active: sp.some((s) => s.active),
             revenueUsd,
-            afsClicks: rRows.reduce((s, r) => s + r.afsClicks, 0),
+            afsClicks,
             afsRequests,
             afsMatchedRequests,
             fillRate: displayFillRate(afsMatchedRequests, afsRequests),
+            rpc: displayRpc(revenueUsd, afsClicks),
           };
         });
       return { campaignId: c.id, campaignName: c.name, companyName: orgName.get(c.orgId) ?? null, status: c.status, channels: channelsOut };

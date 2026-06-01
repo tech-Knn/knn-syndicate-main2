@@ -41,6 +41,7 @@ import {
   setOrgRevenueCut,
   updatePlatformSettings,
 } from './platform.service.js';
+import { getTermPerformance } from '../telemetry/term-telemetry.service.js';
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
   app.post(
@@ -225,6 +226,22 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         const usage = await getChannelUsage(req.params.id);
         if (!usage) return reply.code(404).send({ error: 'Channel not found' });
         return reply.send({ usage });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Term performance (super-admin, observe-only): per-related-search-term searches/fills/clicks
+  // over an IST-day range — the term-grain "monitor partner terms" RSOC signal.
+  app.get<{ Querystring: { from?: string; to?: string; limit?: string } }>(
+    '/term-performance',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const limit = req.query.limit ? Number(req.query.limit) : undefined;
+        return reply.send(await getTermPerformance({ from: req.query.from, to: req.query.to, limit }));
       } catch (err) {
         return handleRouteError(err, reply);
       }

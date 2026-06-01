@@ -73,7 +73,7 @@ export default async function SearchPage({
           maxAds={articles.length}
         />
         <WebResults host={host} articles={articles} />
-        <ConversionTracker clickId={clickId} value={value} currency={currency} />
+        <ConversionTracker clickId={clickId} value={value} currency={currency} term={query || undefined} />
       </main>
     </>
   );

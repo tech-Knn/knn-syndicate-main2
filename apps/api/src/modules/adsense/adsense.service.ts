@@ -15,7 +15,7 @@ import {
 } from '@knn/adsense';
 import { QUEUES, getQueue } from '@knn/queue';
 import { decryptToken, encryptToken } from '@knn/fb';
-import { displayFillRate } from '@knn/shared';
+import { displayFillRate, displayRpc } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
@@ -369,6 +369,8 @@ export interface AdsenseRevenuePreviewRow {
   matchedRequests: number;
   impressions: number;
   fillRate: number | null;
+  /** Revenue per AFS click in the account currency (major units), or null below the click floor. */
+  rpc: number | null;
 }
 
 export interface AdsenseRevenuePreview {
@@ -425,6 +427,7 @@ export async function previewAccountRevenue(
       matchedRequests,
       impressions: r.impressions ?? 0,
       fillRate: displayFillRate(matchedRequests, requests),
+      rpc: displayRpc(r.revenueMinor / 100, r.afsClicks),
     };
   });
 

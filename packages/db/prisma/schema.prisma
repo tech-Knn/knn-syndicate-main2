@@ -746,6 +746,29 @@ model OfferRevenueDaily {
   @@map("offer_revenue_daily")
 }
 
+/// Per-term RSOC telemetry (observe-only). AdSense reports have NO per-query/term dimension, so
+/// the only place term-level performance is observable is the client: when a visitor clicks a
+/// related-search chip and lands on /search?q=<term>, the page beacons whether Google served ads
+/// for that term (fill) and whether an ad was clicked. Aggregated per term per IST business day.
+/// This is the term-grain "monitor partner terms" signal Google's RSOC quality guidance recommends
+/// (a term whose searches climb while fills stay flat = no good ad inventory → a candidate to drop).
+/// Platform-wide (no org scope — terms recur across articles); super-admin visibility only.
+/// Self-dormant: with no client telemetry URL configured, nothing is ever written.
+model TermStatDaily {
+  id        String   @id @default(uuid()) @db.Uuid
+  term      String
+  day       String
+  searches  Int      @default(0)
+  fills     Int      @default(0)
+  clicks    Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([term, day])
+  @@index([day])
+  @@map("term_stat_daily")
+}
+
 // ---------------------------------------------------------------------------
 // Conversion tracking (RSOC final ad-click → Facebook Conversions API, S2S).
 // The AFS ad lives in a cross-origin Google iframe, so the client can't see the

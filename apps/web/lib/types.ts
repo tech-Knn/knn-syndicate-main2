@@ -323,6 +323,8 @@ export interface AdsenseRevenuePreviewRow {
   matchedRequests: number;
   impressions: number;
   fillRate: number | null;
+  /** Revenue per AFS click (account currency, major units); null below the click floor. */
+  rpc: number | null;
 }
 
 export interface AdsenseRevenuePreview {

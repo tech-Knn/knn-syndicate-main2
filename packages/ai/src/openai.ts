@@ -1,4 +1,5 @@
 import { env } from '@knn/config';
+import { classifyTerm, cleanTerms, filterTerms } from '@knn/shared';
 import { AiNotConfiguredError, AiRequestError } from './errors.js';
 
 /**
@@ -73,8 +74,13 @@ const ARTICLE_SYSTEM =
   '"teaser" (string, a short 35-55 word opening hook, plain text — a few lines that set up the ' +
   'topic so the related-search unit sits high on the page), ' +
   '"body_markdown" (string, the full article in markdown starting with the opening paragraph), ' +
-  '"related_search_terms" (array of 6 short, high-commercial-intent search queries a buyer in this ' +
-  'vertical would type — the kind that carry high ad CPC).';
+  '"related_search_terms" (array of exactly 6 short related-search queries, 2-5 words each, plain ' +
+  'lowercase). They MUST be high-commercial / transactional intent that real US buyers type and that ' +
+  'have strong ad inventory — e.g. "best medicare advantage plans", "affordable car insurance quotes", ' +
+  '"solar panel installation cost". Stay tightly on the article TOPIC and its vertical; do NOT drift to ' +
+  'unrelated verticals. Do NOT include questions ("how/what/why..."), brand or navigational queries, ' +
+  'anything explicit/adult/sensitive, or implausible/clickbait phrasing ("free money", "one weird trick"). ' +
+  'Each query should plausibly trigger relevant high-CPC ads.';
 
 interface ArticleJson {
   title?: string;
@@ -86,6 +92,16 @@ interface ArticleJson {
 function asStringArray(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map((x) => x.trim());
+}
+
+/** Infer the article's high-CPC vertical from its topic/keywords (for term-coherence ranking). */
+function deriveContextVertical(parts: (string | undefined)[]): string | null {
+  for (const p of parts) {
+    if (!p) continue;
+    const v = classifyTerm(p).vertical;
+    if (v) return v;
+  }
+  return null;
 }
 
 /** Generate a monetizable article + high-CPC related-search terms for a topic (OpenAI). */
@@ -107,11 +123,20 @@ export async function generateArticleOpenAI(input: {
   }
   const content = parsed.body_markdown?.trim();
   if (!content) throw new AiRequestError('OpenAI article output missing body');
+
+  // Quality gate (Google RSOC quality signal): run the model's terms through the deterministic
+  // filter so junk/implausible/sensitive/off-vertical terms never reach the AFS unit (where Google
+  // now penalizes them). Rank-first/drop-rarely. If the model returned nothing usable, derive clean
+  // terms from the campaign keywords so the unit is never left empty.
+  const contextVertical = deriveContextVertical([input.query, ...input.keywords]);
+  const filtered = filterTerms(asStringArray(parsed.related_search_terms), { contextVertical, min: 3, max: 6 });
+  const relatedSearchTerms = filtered.kept.length > 0 ? filtered.kept : cleanTerms(input.keywords, { contextVertical, max: 6 });
+
   return {
     title: parsed.title?.trim() || topic,
     teaser: parsed.teaser?.trim() || '',
     content,
-    relatedSearchTerms: asStringArray(parsed.related_search_terms),
+    relatedSearchTerms,
   };
 }
 

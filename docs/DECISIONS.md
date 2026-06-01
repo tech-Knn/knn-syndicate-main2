@@ -390,3 +390,36 @@ the approved plan.
   turn `FB_SKIP_LONGLIVED` **off** (DATA should be long-lived again now that LAUNCH carries the short
   token), connect both apps. Remove the whole split once the checkpoint is solved (drop `FB_LAUNCH_*`,
   the `app_kind` column, and the LAUNCH branches).
+
+### 2026-06-01 — D24: RSOC term-quality engine + RPC visibility + per-term telemetry (for Google's new RSOC quality signal)
+
+Google's mid-2026 RSOC quality signal **penalizes** related-search terms that lead to irrelevant/low-quality
+ads and **discards** weak partner terms — and the penalty drags coverage across the whole page/account. So
+term quality is now a multiplier on the entire funnel's RPC, not a per-term yield. Our response, by funnel stage:
+
+- **Preventive (the lever): a deterministic term-quality engine** (`packages/shared/src/terms.ts`, pure +
+  unit-tested). `classifyTerm` scores intent (transactional/commercial/informational/navigational),
+  high-CPC vertical (insurance/finance/legal/health/home-services/auto/education/B2B/…), plausibility, and a
+  conservative sensitive blocklist. `filterTerms` is **rank-first, drop-rarely** — it hard-drops ONLY clearly
+  bad terms (sensitive / gibberish / implausible / duplicate), ranks the rest by score (+ optional
+  vertical-coherence nudge), caps to N, and **never empties** a non-bad input. _Why rank-first:_ over-dropping
+  would shrink the unit → lower fill → lower RPC, inverting the goal.
+- **Generation** (`packages/ai/src/openai.ts`): tightened the term prompt (transactional, vertical-anchored,
+  plausible, no questions/sensitive/clickbait) AND run the model's output through `filterTerms` (belt +
+  suspenders); fall back to cleaned keyword-derived terms so the unit is never empty.
+- **Serve-time hygiene** (`apps/article/.../a/[slug]/page.tsx`): the terms-precedence chain (explicit redirect
+  terms → article terms → keywords) is run through `cleanTerms`, so even legacy articles + keyword fallbacks
+  serve clean, ranked, policy-safe terms.
+- **RPC visibility** (`stats.ts` `rpc()`/`displayRpc()` + `RSOC_RPC_DISPLAY_FLOOR`): revenue-per-click surfaced
+  on the super-admin Channels-usage, Articles-usage, and AdSense-preview tables. The real money metric (we
+  have revenue + clicks at channel grain). AdSense v2 has **no per-term dimension**, so term-grain RPC is not
+  possible from reports.
+- **Detective — per-term telemetry** (observe-only): AdSense can't see terms, so the **client** is the only
+  place term performance is observable. `/search?q=<term>` beacons whether Google served ads (fill) +
+  whether an ad was clicked → `term_stat_daily` (term/IST-day: searches/fills/clicks, platform-wide) →
+  super-admin **Term performance** card. This is the term-grain "monitor partner terms" signal Google's
+  best-practices doc recommends. **Self-dormant** (no client telemetry URL → no rows). Endpoint
+  `POST /api/telemetry/term`; read `GET /api/admin/term-performance` (SUPER_ADMIN).
+- **Observe-first** (consistent with D22 fill-rate): no auto-pruning / auto-regeneration of dead terms yet —
+  surface the data, validate it, then act. Deferred: redirect-level curated-terms override (capability wired
+  via the article precedence chain), content-substance hard gate, auto term pruning/regeneration.

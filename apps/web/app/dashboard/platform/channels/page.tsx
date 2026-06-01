@@ -1,7 +1,7 @@
 'use client';
 
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
-import { type ChannelSummary, type ChannelUsage } from '@knn/shared';
+import { type ChannelSummary, type ChannelUsage, type TermPerf } from '@knn/shared';
 import { Badge, Banner, Button, Card, EmptyState, Skeleton, useConfirm } from '@/components/ui';
 import { ApiError, admin, adsense, domains } from '@/lib/api';
 import { type AfsChannelRow, type DomainRow } from '@/lib/types';
@@ -27,6 +27,19 @@ export default function ChannelsPage() {
     void admin.channelSummary().then(setSummary).catch(() => setSummary(null));
   }, []);
   useEffect(() => loadSummary(), [loadSummary]);
+
+  // Term performance (observe-only): which related-search terms draw ads vs go dark (last 7 IST days).
+  const [terms, setTerms] = useState<TermPerf[] | null>(null);
+  const [termRange, setTermRange] = useState<{ from: string; to: string } | null>(null);
+  useEffect(() => {
+    void admin
+      .termPerformance()
+      .then((r) => {
+        setTerms(r.terms);
+        setTermRange(r.range);
+      })
+      .catch(() => setTerms([]));
+  }, []);
   useEffect(() => {
     void domains.list().then((r) => setDomainList(r.domains)).catch(() => setDomainList([]));
   }, []);
@@ -225,6 +238,7 @@ export default function ChannelsPage() {
                       <th className={styles.thLeft}>Period</th>
                       <th>Revenue</th>
                       <th>AFS clicks</th>
+                      <th>RPC</th>
                       <th>Requests</th>
                       <th>Fill rate</th>
                     </tr>
@@ -244,6 +258,7 @@ export default function ChannelsPage() {
                         </td>
                         <td className={styles.num}>${s.revenueUsd.toFixed(2)}</td>
                         <td className={styles.num}>{s.afsClicks.toLocaleString()}</td>
+                        <td className={styles.num}>{s.rpc === null ? <span className={styles.subtle}>—</span> : `$${s.rpc.toFixed(2)}`}</td>
                         <td className={styles.num}>{s.afsRequests.toLocaleString()}</td>
                         <td className={styles.num}>
                           {s.fillRate === null ? (
@@ -262,6 +277,62 @@ export default function ChannelsPage() {
             )}
           </>
         ) : null}
+      </Card>
+
+      {/* Term performance (observe-only): the term-grain "monitor partner terms" RSOC signal. */}
+      <Card className={styles.section}>
+        <div className={styles.sectionHead}>
+          <span className={styles.sectionTitle}>Term performance</span>
+          {termRange && (
+            <span className={styles.subtle}>
+              {termRange.from} → {termRange.to}
+            </span>
+          )}
+        </div>
+        <p className={styles.subtle}>
+          Which related-search terms draw ads vs go dark. A term whose searches climb while fill stays low has no good
+          ad inventory — a candidate to drop or replace. Observe-only.
+        </p>
+        {terms === null ? (
+          <Skeleton />
+        ) : terms.length === 0 ? (
+          <EmptyState title="No term telemetry yet" description="Per-term fill/click data appears once live /search traffic flows." />
+        ) : (
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th className={styles.thLeft}>Term</th>
+                  <th>Searches</th>
+                  <th>Fills</th>
+                  <th>Fill rate</th>
+                  <th>Ad clicks</th>
+                  <th>CTR</th>
+                </tr>
+              </thead>
+              <tbody>
+                {terms.slice(0, 50).map((t) => (
+                  <tr key={t.term}>
+                    <td className={styles.name}>{t.term}</td>
+                    <td className={styles.num}>{t.searches.toLocaleString()}</td>
+                    <td className={styles.num}>{t.fills.toLocaleString()}</td>
+                    <td className={styles.num}>
+                      {t.fillRate === null ? (
+                        <span className={styles.subtle}>—</span>
+                      ) : t.fillRate < 0.05 ? (
+                        <Badge tone="danger">{Math.round(t.fillRate * 100)}%</Badge>
+                      ) : (
+                        `${Math.round(t.fillRate * 100)}%`
+                      )}
+                    </td>
+                    <td className={styles.num}>{t.clicks.toLocaleString()}</td>
+                    <td className={styles.num}>{t.ctr === null ? <span className={styles.subtle}>—</span> : `${Math.round(t.ctr * 100)}%`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       {/* 2. Pool summary */}

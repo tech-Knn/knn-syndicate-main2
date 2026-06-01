@@ -245,6 +245,7 @@ export default function PlatformPage() {
                                           <th className={styles.thLeft}>Pool</th>
                                           <th>Revenue</th>
                                           <th>AFS clicks</th>
+                                          <th>RPC</th>
                                           <th>Requests</th>
                                           <th>Fill rate</th>
                                         </tr>
@@ -256,6 +257,7 @@ export default function PlatformPage() {
                                             <td className={styles.subtle}>{r.inPool ? (r.label ?? 'imported') : '—'}</td>
                                             <td className={styles.num}>{rev.currency} {(r.revenueMinor / 100).toFixed(2)}</td>
                                             <td className={styles.num}>{r.afsClicks.toLocaleString()}</td>
+                                            <td className={styles.num}>{r.rpc === null ? '—' : `${rev.currency} ${r.rpc.toFixed(2)}`}</td>
                                             <td className={styles.num}>{r.requests.toLocaleString()}</td>
                                             <td className={styles.num}>{r.fillRate === null ? '—' : `${Math.round(r.fillRate * 100)}%`}</td>
                                           </tr>

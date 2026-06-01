@@ -134,6 +134,58 @@ describe('generateArticleOpenAI', () => {
     expect(body.response_format?.type).toBe('json_object');
   });
 
+  it('drops sensitive/implausible/gibberish/duplicate terms and ranks high-intent ones first (RSOC quality gate)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        chatResponse(
+          JSON.stringify({
+            title: 'Medicare Plans 2026',
+            teaser: 'A short teaser about medicare plans for seniors today and how to compare them.',
+            body_markdown: '## Understanding Medicare\n\nMedicare is health coverage for seniors.',
+            related_search_terms: [
+              'best medicare advantage plans', // strong: transactional + insurance
+              'free money guaranteed', // implausible → drop
+              'asdfghjkl', // gibberish → drop
+              'how does medicare work', // informational → kept but ranked last
+              'medicare supplement quotes', // strong: transactional + insurance
+              'BEST MEDICARE ADVANTAGE PLANS', // duplicate (case) → drop
+            ],
+          }),
+        ),
+      ),
+    );
+    const out = await generateArticleOpenAI({ keywords: ['medicare'], query: 'medicare plans 2026' });
+    expect(out.relatedSearchTerms).not.toContain('free money guaranteed');
+    expect(out.relatedSearchTerms).not.toContain('asdfghjkl');
+    // No duplicates survive.
+    const lower = out.relatedSearchTerms.map((t) => t.toLowerCase());
+    expect(new Set(lower).size).toBe(lower.length);
+    // Strong transactional terms lead; the informational one is ranked last.
+    expect(out.relatedSearchTerms[0]).toBe('best medicare advantage plans');
+    expect(out.relatedSearchTerms).toContain('medicare supplement quotes');
+    expect(out.relatedSearchTerms[out.relatedSearchTerms.length - 1]).toBe('how does medicare work');
+  });
+
+  it('falls back to cleaned keyword-derived terms when the model returns only junk', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        chatResponse(
+          JSON.stringify({
+            title: 'Solar Guide',
+            teaser: 'A teaser about solar panels and the savings they bring to homeowners this year.',
+            body_markdown: '## Solar\n\nSolar panels lower your electric bill.',
+            related_search_terms: ['free money', 'asdfghjkl', '$$$ ###'],
+          }),
+        ),
+      ),
+    );
+    const out = await generateArticleOpenAI({ keywords: ['solar panel installation', 'solar incentives'] });
+    expect(out.relatedSearchTerms.length).toBeGreaterThan(0);
+    expect(out.relatedSearchTerms).toContain('solar panel installation');
+  });
+
   it('throws AiRequestError on non-JSON output', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(chatResponse('not json at all')));
     await expect(generateArticleOpenAI({ keywords: ['x'] })).rejects.toBeInstanceOf(AiRequestError);
