@@ -2,6 +2,7 @@ import { withSystem } from '@knn/db';
 import { type AdStatusDTO, decryptToken, fetchCampaignAdStatuses } from '@knn/fb';
 import { CAMPAIGN_STATUS, canTransitionCampaign } from '@knn/shared';
 import { releaseChannelForCampaign } from '../channel-pool/channel.service.js';
+import { sendNotification } from '../lib/notify.js';
 import { resyncOffersToKv } from '../launch-trigger.js';
 
 /**
@@ -51,9 +52,7 @@ async function defaultFetchStatuses(c: CampaignRow): Promise<AdStatusDTO[]> {
   return fetchCampaignAdStatuses(acc.fbAccountId, decryptToken(acc.connection.accessTokenEnc), c.fbCampaignId);
 }
 
-const defaultNotify = (n: Notification): void => {
-  console.log(`[notify:${n.type}] org=${n.orgId} user=${n.userId} :: ${n.title} — ${n.body}`);
-};
+const defaultNotify = (n: Notification): void => sendNotification(n);
 
 export async function checkMetaRejections(
   deps: MetaRejectionDeps = {},

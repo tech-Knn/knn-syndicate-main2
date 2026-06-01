@@ -53,6 +53,11 @@ const EnvSchema = z.object({
   ARTICLE_DOMAIN: z.string().url().default('http://localhost:3001'),
   REDIRECT_DOMAIN: z.string().url().default('http://localhost:3002'),
 
+  // Ops alerting (Week-1 monitoring). A Slack-compatible incoming-webhook URL that platform
+  // notifications (CONNECTION_BROKEN, launch failure, meta-rejection, etc.) POST to so a human is
+  // actually paged. Self-dormant: unset → notifications log to the console only (prior behavior).
+  NOTIFY_WEBHOOK_URL: optionalString,
+
   // Data stores
   // Owner/superuser connection — used for migrations and the role bootstrap.
   DATABASE_URL: z.string().min(1),

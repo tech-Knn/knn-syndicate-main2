@@ -5,6 +5,7 @@ import {
   encryptToken,
   exchangeForLongLivedToken,
 } from '@knn/fb';
+import { sendNotification } from '../lib/notify.js';
 
 /**
  * Facebook long-lived user tokens last ~60 days (DECISION D13). This job runs
@@ -39,7 +40,7 @@ export interface TokenRefreshSummary {
 }
 
 function defaultNotify(n: Notification): void {
-  console.log(`[notify:${n.type}] org=${n.orgId} user=${n.userId} :: ${n.title} — ${n.body}`);
+  sendNotification(n);
 }
 
 async function degrade(
