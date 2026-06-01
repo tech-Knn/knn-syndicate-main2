@@ -309,6 +309,9 @@ async function assertLaunchAssetsAccessible(plan: LaunchPlan): Promise<void> {
 async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'): Promise<FbStructureResult> {
   const { campaign, token, appKind, fbAccountId, fbPageId } = plan;
   const cbo = campaign.budgetMode === 'CAMPAIGN';
+  // Audit which FB app published this campaign (DATA vs the LAUNCH app) — so every launch
+  // is verifiable from the logs without inspecting tokens.
+  console.log(`[launch] building FB structure for campaign ${campaign.id} via the ${appKind} app (act_${fbAccountId})`);
   // Catch a launch-app asset-grant gap BEFORE creating any FB objects (no orphans).
   await assertLaunchAssetsAccessible(plan);
   const redirectBase = await resolveRedirectBase();
