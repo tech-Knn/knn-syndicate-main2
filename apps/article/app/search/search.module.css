@@ -40,48 +40,52 @@
   min-height: 120px;
 }
 
-/* Organic "Web results" — the host's own articles, rendered as a real SERP listing so the
-   AFS ads above supplement genuine search results (Google policy). Plain, search-engine look. */
+/* Organic "Web results" — the host's own articles, present so the AFS ads SUPPLEMENT real
+   search results (Google policy: ads ≤ results). DELIBERATELY de-emphasized: the live RSOC
+   funnels (creatorrule/rvguide/etc.) render these as low-contrast, blended-into-the-page text
+   so the visitor's attention stays on the ad unit above. Pushed well below the ad and styled
+   muted-grey on white — present + legible, but recessive (a monetization tradeoff: this is
+   intentionally below AA contrast, matching the proven competitor layout). */
 .web {
   max-width: 720px;
-  margin: 2rem auto 0;
-  padding-top: 1.25rem;
-  border-top: 1px solid #ececec;
+  margin: 2.75rem auto 0;
+  padding-top: 1.1rem;
+  border-top: 1px solid #f1f1f1;
 }
 .webHead {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: #555;
-  margin: 0 0 1.1rem;
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: #b6b6b6;
+  margin: 0 0 0.9rem;
 }
 .webItem {
-  margin: 0 0 1.4rem;
+  margin: 0 0 1.1rem;
 }
 .webTitle {
   display: inline-block;
-  font-size: 1.2rem;
+  font-size: 1.05rem;
   line-height: 1.3;
-  color: #1a0dab;
+  color: #a7a7a7;
   text-decoration: none;
 }
 .webTitle:hover {
   text-decoration: underline;
 }
 .webTitle:focus-visible {
-  outline: 2px solid #1a0dab;
+  outline: 2px solid #c4c4c4;
   outline-offset: 2px;
   border-radius: 2px;
   text-decoration: underline;
 }
 .webCite {
-  font-size: 0.82rem;
-  color: #0a7d33;
-  margin: 0.15rem 0 0.25rem;
+  font-size: 0.8rem;
+  color: #bcbcbc;
+  margin: 0.1rem 0 0.2rem;
   word-break: break-all;
 }
 .webSnippet {
-  font-size: 0.92rem;
+  font-size: 0.9rem;
   line-height: 1.5;
-  color: #4d5156;
+  color: #b6b6b6;
   margin: 0;
 }

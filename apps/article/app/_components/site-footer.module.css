@@ -1,0 +1,31 @@
+.footer {
+  border-top: 1px solid #e4e4e0;
+  background: #f6f6f4;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+.inner {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  font-size: 0.85rem;
+  color: #6a6a6a;
+}
+.copyright {
+  color: #6a6a6a;
+}
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+.link {
+  color: #4a4a4a;
+  text-decoration: none;
+}
+.link:hover {
+  text-decoration: underline;
+}

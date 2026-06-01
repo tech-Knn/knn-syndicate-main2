@@ -2,17 +2,11 @@ import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { articleBlocks, articleTeaser } from '@knn/shared';
-import { resolveSiteConfig, resolveSiteName } from '../../_afs/site-config';
+import { resolveSiteConfig } from '../../_afs/site-config';
+import { SiteFooter } from '../../_components/site-footer';
 import { LanderBeacon } from '../../funnel-beacons';
 import { RelatedSearchUnit } from './related-search-unit';
 import styles from './article.module.css';
-
-/** Long-form date for the article byline (e.g. "May 30, 2026"). */
-const PUBLISH_DATE_FMT = new Intl.DateTimeFormat('en-US', {
-  year: 'numeric',
-  month: 'long',
-  day: 'numeric',
-});
 
 // Server-side base for the public article API. articles.<domain> is a different
 // origin than the API (app.<domain>), so this is an absolute URL.
@@ -86,15 +80,8 @@ export default async function ArticlePage({
 }) {
   const { slug } = await params;
   const sp = await searchParams;
-  const [article, site, siteName] = await Promise.all([
-    fetchArticle(slug),
-    resolveSiteConfig(),
-    resolveSiteName(),
-  ]);
+  const [article, site] = await Promise.all([fetchArticle(slug), resolveSiteConfig()]);
   if (!article) notFound();
-
-  const updated = PUBLISH_DATE_FMT.format(new Date());
-  const year = new Date().getFullYear();
 
   const blocks = articleBlocks(article.compliantContent);
   // Deterministic lead/body de-dup: the FULL first paragraph is the lead (above the AFS
@@ -121,29 +108,15 @@ export default async function ArticlePage({
       <a className="skipLink" href="#main-content">
         Skip to content
       </a>
-      <header className={styles.siteHeader}>
-        <div className={styles.siteHeaderInner}>
-          <a className={styles.brandLink} href="/">
-            {siteName}
-          </a>
-          <span className={styles.siteTagline}>News &amp; Guides</span>
-        </div>
-      </header>
 
+      {/* No top masthead/brand/byline on the money-page: open straight into the headline →
+          lead → RSOC unit so the visitor's focus lands on the unit (matches the live RSOC
+          funnels; reduces bounce). Legitimacy chrome lives in the footer + legal pages. */}
       <main id="main-content" className={styles.main}>
         {/* Paid visitors fire the `lander` (ViewContent) funnel event on view. */}
         <LanderBeacon clickId={txid} />
         <article className={styles.article}>
           <h1 className={styles.title}>{article.title}</h1>
-          <div className={styles.meta}>
-            <span className={styles.byline}>{siteName} Editorial Team</span>
-            <span className={styles.metaDot} aria-hidden="true">
-              ·
-            </span>
-            <span>
-              Updated <time dateTime={new Date().toISOString().slice(0, 10)}>{updated}</time>
-            </span>
-          </div>
           {lead && <p className={styles.lead}>{lead}</p>}
 
           {/* RSOC related-search unit (content-targeted). Clicks → /search results page. */}
@@ -175,24 +148,7 @@ export default async function ArticlePage({
         </article>
       </main>
 
-      <footer className={styles.siteFooter}>
-        <div className={styles.siteFooterInner}>
-          <nav className={styles.footerNav} aria-label="Footer">
-            <a className={styles.footerLink} href="/about">
-              About
-            </a>
-            <a className={styles.footerLink} href="/privacy">
-              Privacy
-            </a>
-            <a className={styles.footerLink} href="/contact">
-              Contact
-            </a>
-          </nav>
-          <span className={styles.copyright}>
-            © {year} {siteName}
-          </span>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }
