@@ -59,16 +59,24 @@ interface PagedInsights {
 const toInt = (s: string | undefined): number => Math.round(Number(s) || 0);
 
 /**
- * Pixel conversions for the D8 weight: sum FB `actions` whose type is an offsite
- * pixel conversion (`offsite_conversion.fb_pixel_*`, e.g. `…_search`, `…_purchase`,
- * `…_custom`). This is the per-ad signal the AFS `pxe` fires. Unknown/engagement
- * action types (link_click, landing_page_view, …) are intentionally excluded.
+ * The action_type of the MAIN (optimized) conversion — the ad click → FB `Search` event, where AFS
+ * revenue is earned. The funnel ALSO fires `ViewContent` (lander page view) and `AddToCart` (/search
+ * visit) via CAPI as optimization signal, but those are NOT the conversion: counting them inflates
+ * "conversions" with page views. So `conversions` = the final ad-click only.
  */
-export function extractConversions(actions: FbAction[] | undefined): number {
+export const MAIN_CONVERSION_ACTION_TYPE = 'offsite_conversion.fb_pixel_search';
+
+/**
+ * The per-ad conversion count = the **final / main conversion only** (the ad click = `Search` pixel
+ * event). We deliberately count ONLY this action_type — NOT the sum of every `offsite_conversion.
+ * fb_pixel_*` event — so the dashboard "conversions" matches the conversion the ad set optimizes
+ * toward and the event that monetizes, and so the D8 revenue split weights by ad clicks (not by
+ * landing-page views). Engagement actions (link_click, landing_page_view, …) are excluded too.
+ * Pass a different `actionType` to count another standard event.
+ */
+export function extractConversions(actions: FbAction[] | undefined, actionType: string = MAIN_CONVERSION_ACTION_TYPE): number {
   if (!actions) return 0;
-  return actions
-    .filter((a) => a.action_type.startsWith('offsite_conversion.fb_pixel'))
-    .reduce((sum, a) => sum + toInt(a.value), 0);
+  return actions.filter((a) => a.action_type === actionType).reduce((sum, a) => sum + toInt(a.value), 0);
 }
 
 export interface FetchAdInsightsParams {

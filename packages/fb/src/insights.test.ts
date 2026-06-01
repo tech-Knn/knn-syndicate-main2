@@ -10,19 +10,32 @@ afterEach(() => {
 });
 
 describe('extractConversions', () => {
-  it('sums offsite pixel conversions and ignores engagement actions', () => {
+  it('counts ONLY the main ad-click (Search) conversion — not upstream funnel events or engagement', () => {
+    // Mirrors a real RSOC funnel: 76 lander views + 9 /search visits + 2 ad clicks. The conversion
+    // is the 2 ad clicks (the monetizing event), NOT the 76+9+2 sum.
     const actions = [
       { action_type: 'link_click', value: '40' },
       { action_type: 'landing_page_view', value: '20' },
-      { action_type: 'offsite_conversion.fb_pixel_search', value: '3' },
-      { action_type: 'offsite_conversion.fb_pixel_custom', value: '2' },
+      { action_type: 'offsite_conversion.fb_pixel_view_content', value: '76' }, // lander page views
+      { action_type: 'offsite_conversion.fb_pixel_add_to_cart', value: '9' }, // /search visits
+      { action_type: 'offsite_conversion.fb_pixel_search', value: '2' }, // THE ad clicks (final conversion)
     ];
-    expect(extractConversions(actions)).toBe(5);
+    expect(extractConversions(actions)).toBe(2);
   });
 
-  it('is 0 when there are no actions or no pixel conversions', () => {
+  it('can count a specific event when asked (e.g. AddToCart / the /search step)', () => {
+    const actions = [
+      { action_type: 'offsite_conversion.fb_pixel_add_to_cart', value: '9' },
+      { action_type: 'offsite_conversion.fb_pixel_search', value: '2' },
+    ];
+    expect(extractConversions(actions, 'offsite_conversion.fb_pixel_add_to_cart')).toBe(9);
+  });
+
+  it('is 0 when there are no actions or no ad-click conversion', () => {
     expect(extractConversions(undefined)).toBe(0);
     expect(extractConversions([{ action_type: 'link_click', value: '99' }])).toBe(0);
+    // Upstream-only funnel (views/searches but no ad click) → 0 conversions.
+    expect(extractConversions([{ action_type: 'offsite_conversion.fb_pixel_view_content', value: '76' }])).toBe(0);
   });
 });
 
