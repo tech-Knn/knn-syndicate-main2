@@ -172,6 +172,19 @@ describe('launchCampaign (Phase 8)', () => {
     expect(spec.link_data.link).toContain(`/go/`); // destination is still the cloaked redirect, untouched
   });
 
+  it('omits empty headline/primary text from the FB creative (both optional on Facebook)', async () => {
+    const campaignId = await makeCampaign();
+    await withSystem((tx) => tx.ad.updateMany({ where: { adSet: { campaignId } }, data: { headline: '', primaryText: '' } }));
+    await launchCampaign(auth(), campaignId, {
+      generateArticle: vi.fn(async () => ({ slug: 's' })),
+      writeRedirectConfigs: vi.fn(async () => undefined),
+    });
+    const spec = vi.mocked(fb.createFbAdCreative).mock.calls.at(-1)![2].objectStorySpec as { link_data: Record<string, unknown> };
+    expect('name' in spec.link_data).toBe(false); // headline omitted
+    expect('message' in spec.link_data).toBe(false); // primary text omitted
+    expect(spec.link_data.link).toContain('/go/'); // destination still present
+  });
+
   it('two-app: writes use the same person\'s LAUNCH connection (short-lived token) when configured', async () => {
     // A separate LAUNCH app is configured, and this person has a usable LAUNCH connection
     // for the SAME FB profile (fbUserId "fb") that owns the ad account → ad writes must go

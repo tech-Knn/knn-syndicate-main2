@@ -102,8 +102,9 @@ function adSetCreateInputs(orgId: string, input: CampaignDraft): Prisma.AdSetCre
       create: set.ads.map((ad) => ({
         orgId,
         name: ad.name,
-        headline: ad.headline,
-        primaryText: ad.primaryText,
+        // Headline/primary text are optional (FB doesn't require them); columns are non-null → store ''.
+        headline: ad.headline ?? '',
+        primaryText: ad.primaryText ?? '',
         description: ad.description,
         cta: ad.cta,
         displayLink: ad.displayLink,

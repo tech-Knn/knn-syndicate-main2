@@ -29,6 +29,14 @@ export const CAMPAIGN_OBJECTIVES = [
 export type CampaignObjective = (typeof CAMPAIGN_OBJECTIVES)[number];
 
 /**
+ * Objectives the launcher actually OFFERS. We restrict to Sales / Leads / Engagement — the three
+ * with a supported RSOC conversion-optimization path. Awareness / Traffic / App-promotion stay
+ * valid in `CAMPAIGN_OBJECTIVES` (so existing campaigns + the schema still accept them) but are not
+ * selectable in the wizard, because their performance goals don't fit the arbitrage funnel.
+ */
+export const SELECTABLE_OBJECTIVES = ['OUTCOME_SALES', 'OUTCOME_LEADS', 'OUTCOME_ENGAGEMENT'] as const;
+
+/**
  * Performance goals (Facebook `optimization_goal`) offered per campaign objective for a
  * WEBSITE conversion location — our funnel always drives traffic to the article site.
  * Encoded from Meta's Outcome-Driven Ads (ODAX) model; Facebook does the final
@@ -123,8 +131,10 @@ const optionalUrl = z.string().url().optional();
 /** One ad — a creative variation. Pixel/conversion event live on the ad set, not here. */
 export const adInputSchema = z.object({
   name: z.string().trim().min(1, 'Ad name is required').max(120),
-  headline: z.string().trim().min(1, 'Headline is required').max(120),
-  primaryText: z.string().trim().min(1, 'Primary text is required').max(2000),
+  // Headline + primary text are OPTIONAL — Facebook doesn't require them on a link ad, so neither do
+  // we (the launcher omits empty ones from the creative). Only `name` (internal) stays required.
+  headline: z.string().trim().max(120).optional(),
+  primaryText: z.string().trim().max(2000).optional(),
   description: z.string().trim().max(500).optional(),
   cta: z.enum(CTA_OPTIONS).default('LEARN_MORE'),
   creativeType: z.enum(CREATIVE_TYPES).default('IMAGE'),

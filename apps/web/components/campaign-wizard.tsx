@@ -9,17 +9,18 @@ import {
   ATTRIBUTION_WINDOWS,
   BID_STRATEGIES,
   ALL_COUNTRY_CODES,
-  CAMPAIGN_OBJECTIVES,
   COUNTRIES,
   CTA_OPTIONS,
   DEVICE_PLATFORMS,
   GENDERS,
   MOBILE_OS,
   PLACEMENT_OPTIONS,
+  SELECTABLE_OBJECTIVES,
   SPECIAL_AD_CATEGORIES,
   type AttributionWindow,
   type BidStrategy,
   type CampaignDraftInput,
+  type CampaignObjective,
   type ConversionType,
   type CreativeType,
   type CtaOption,
@@ -85,7 +86,7 @@ interface AdSetForm {
 
 interface CampaignForm {
   name: string;
-  objective: (typeof CAMPAIGN_OBJECTIVES)[number];
+  objective: CampaignObjective;
   specialAdCategories: SpecialAdCategory[];
   nameTemplate: string;
   adsetNameTemplate: string;
@@ -278,6 +279,35 @@ function toDraft(form: CampaignForm): CampaignDraftInput {
   };
 }
 
+/**
+ * Mandatory-field errors for ONE wizard step. Surfaced inline (banner) when the buyer clicks Next,
+ * so a skipped required field is caught ON that step in context — not only at the final Review step.
+ */
+function stepErrorsFor(step: number, form: CampaignForm, offers: OfferDraft[]): string[] {
+  const e: string[] = [];
+  if (step === 0) {
+    if (!form.name.trim()) e.push('Campaign name is required.');
+    if (form.budgetMode === 'CAMPAIGN') {
+      const c = centsOrUndef(form.dailyBudget);
+      if (c === undefined || c < 200) e.push('Campaign daily budget must be at least $2.00.');
+    }
+    if (!form.adAccountId) e.push('Select a Facebook ad account.');
+    if (!form.pageId) e.push('Select a Facebook page.');
+    if (offers.filter((o) => o.kind === 'PAID' && o.domainId).length === 0) e.push('Add at least one destination website.');
+  } else if (step === 1) {
+    form.adSets.forEach((s, i) => {
+      if (!s.name.trim()) e.push(`Ad set ${i + 1}: name is required.`);
+      if (form.budgetMode === 'AD_SET') {
+        const c = centsOrUndef(s.dailyBudget);
+        if (c === undefined || c < 200) e.push(`Ad set ${i + 1}: daily budget must be at least $2.00.`);
+      }
+      if (s.ageMax < s.ageMin) e.push(`Ad set ${i + 1}: max age must be ≥ min age.`);
+      if (s.countries.length === 0) e.push(`Ad set ${i + 1}: select at least one target country.`);
+    });
+  }
+  return e;
+}
+
 /** Hard fields the API's draft schema requires on present entities (blocks Save draft). */
 function hardErrors(form: CampaignForm): string[] {
   const errs: string[] = [];
@@ -293,10 +323,7 @@ function hardErrors(form: CampaignForm): string[] {
       if (c !== undefined && c < 200) errs.push(`Ad set ${i + 1}: daily budget must be at least $2.00 (Facebook minimum).`);
     }
     if (s.ageMax < s.ageMin) errs.push(`Ad set ${i + 1}: max age must be ≥ min age.`);
-    s.ads.forEach((a, j) => {
-      if (!a.headline.trim()) errs.push(`Ad ${i + 1}.${j + 1}: headline is required.`);
-      if (!a.primaryText.trim()) errs.push(`Ad ${i + 1}.${j + 1}: primary text is required.`);
-    });
+    // Headline + primary text are optional (FB doesn't require them) — no longer blocked here.
   });
   return errs;
 }
@@ -608,7 +635,19 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
                 <Button variant="ghost" onClick={() => void onSaveDraft()} loading={saving}>
                   Save draft
                 </Button>
-                <Button onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}>Next</Button>
+                <Button
+                  onClick={() => {
+                    const stepErrs = stepErrorsFor(step, form, offers);
+                    if (stepErrs.length > 0) {
+                      setBannerError(stepErrs.join(' '));
+                      return; // block advancing — show the missing fields on THIS step
+                    }
+                    setBannerError(null);
+                    setStep((s) => Math.min(STEPS.length - 1, s + 1));
+                  }}
+                >
+                  Next
+                </Button>
               </>
             ) : (
               <>
@@ -823,7 +862,7 @@ function OfferStep({
         <div className={styles.field}>
           <label className={styles.label} htmlFor={fid('objective')}>Objective</label>
           <select id={fid('objective')} className={styles.select} value={form.objective} onChange={(e) => onObjectiveChange(e.target.value as CampaignForm['objective'])}>
-            {CAMPAIGN_OBJECTIVES.map((o) => (
+            {SELECTABLE_OBJECTIVES.map((o) => (
               <option key={o} value={o}>
                 {o.replace('OUTCOME_', '')}
               </option>
@@ -1133,10 +1172,16 @@ function AdSetsStep({
               <span className={styles.label}>Countries<Req /></span>
               <CountryPicker ariaLabel="Target countries" worldwide selected={set.countries} onChange={(codes) => patchAdSet(set.key, { countries: codes })} />
             </div>
-            <div className={styles.field} style={{ marginTop: '1rem' }}>
-              <span className={styles.label}>Exclude countries</span>
-              <CountryPicker ariaLabel="Exclude countries" selected={set.excludeCountries} onChange={(codes) => patchAdSet(set.key, { excludeCountries: codes })} placeholder="Search countries to exclude…" />
-            </div>
+            {/* Collapsed by default — most campaigns don't exclude countries. Expandable on click;
+                auto-opens when exclusions already exist (e.g. editing a campaign that had some). */}
+            <details className={styles.field} style={{ marginTop: '1rem' }} open={set.excludeCountries.length > 0}>
+              <summary className={styles.label} style={{ cursor: 'pointer' }}>
+                Exclude countries{set.excludeCountries.length > 0 ? ` (${set.excludeCountries.length})` : ''}
+              </summary>
+              <div style={{ marginTop: '0.5rem' }}>
+                <CountryPicker ariaLabel="Exclude countries" selected={set.excludeCountries} onChange={(codes) => patchAdSet(set.key, { excludeCountries: codes })} placeholder="Search countries to exclude…" />
+              </div>
+            </details>
             <div className={styles.grid} style={{ marginTop: '1rem' }}>
               <div className={styles.field}>
                 <label className={styles.label} htmlFor={`${set.key}-agemin`}>Age min</label>
@@ -1327,11 +1372,11 @@ function AdSetsStep({
                     <input id={`${ad.key}-name`} className={styles.input} value={ad.name} onChange={(e) => patchAd(set.key, ad.key, { name: e.target.value })} />
                   </div>
                   <div className={styles.field}>
-                    <label className={styles.label} htmlFor={`${ad.key}-headline`}>Headline<Req /></label>
+                    <label className={styles.label} htmlFor={`${ad.key}-headline`}>Headline</label>
                     <input id={`${ad.key}-headline`} className={styles.input} value={ad.headline} onChange={(e) => patchAd(set.key, ad.key, { headline: e.target.value })} />
                   </div>
                   <div className={`${styles.field} ${styles.full}`}>
-                    <label className={styles.label} htmlFor={`${ad.key}-primary`}>Primary text<Req /></label>
+                    <label className={styles.label} htmlFor={`${ad.key}-primary`}>Primary text</label>
                     <textarea id={`${ad.key}-primary`} className={styles.textarea} value={ad.primaryText} onChange={(e) => patchAd(set.key, ad.key, { primaryText: e.target.value })} />
                   </div>
                   <div className={styles.field}>

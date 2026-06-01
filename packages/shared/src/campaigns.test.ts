@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CAMPAIGN_OBJECTIVES,
+  SELECTABLE_OBJECTIVES,
   adInputSchema,
   adSetInputSchema,
   campaignDraftSchema,
@@ -33,6 +35,24 @@ describe('campaign draft schema', () => {
     expect(ad.cta).toBe('LEARN_MORE');
     expect(ad.creativeType).toBe('IMAGE');
     expect('pixelId' in ad).toBe(false);
+  });
+
+  it('accepts an ad with NO headline or primary text (both optional, like Facebook)', () => {
+    const res = adInputSchema.safeParse({ name: 'A' });
+    expect(res.success).toBe(true);
+    if (res.success) {
+      expect(res.data.headline).toBeUndefined();
+      expect(res.data.primaryText).toBeUndefined();
+    }
+  });
+
+  it('SELECTABLE_OBJECTIVES is the launcher subset (Sales/Leads/Engagement), all valid objectives', () => {
+    expect(SELECTABLE_OBJECTIVES).toEqual(['OUTCOME_SALES', 'OUTCOME_LEADS', 'OUTCOME_ENGAGEMENT']);
+    for (const o of SELECTABLE_OBJECTIVES) expect(CAMPAIGN_OBJECTIVES).toContain(o);
+    // The excluded ones remain valid in the schema (back-compat) but aren't offered.
+    expect(SELECTABLE_OBJECTIVES).not.toContain('OUTCOME_TRAFFIC');
+    expect(SELECTABLE_OBJECTIVES).not.toContain('OUTCOME_AWARENESS');
+    expect(SELECTABLE_OBJECTIVES).not.toContain('OUTCOME_APP_PROMOTION');
   });
 
   it('ad sets default audience + conversion fields', () => {

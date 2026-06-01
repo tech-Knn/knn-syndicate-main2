@@ -391,8 +391,9 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
           page_id: fbPageId,
           link_data: {
             link: destination,
-            message: ad.primaryText,
-            name: ad.headline,
+            // Headline (name) + primary text (message) are optional on FB — omit when empty.
+            ...(ad.primaryText ? { message: ad.primaryText } : {}),
+            ...(ad.headline ? { name: ad.headline } : {}),
             ...(ad.description ? { description: ad.description } : {}),
             ...(displayCaption ? { caption: displayCaption } : {}),
             image_hash: imageHash,
