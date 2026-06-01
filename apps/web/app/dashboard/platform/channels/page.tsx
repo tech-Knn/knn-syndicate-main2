@@ -225,6 +225,8 @@ export default function ChannelsPage() {
                       <th className={styles.thLeft}>Period</th>
                       <th>Revenue</th>
                       <th>AFS clicks</th>
+                      <th>Requests</th>
+                      <th>Fill rate</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -242,6 +244,16 @@ export default function ChannelsPage() {
                         </td>
                         <td className={styles.num}>${s.revenueUsd.toFixed(2)}</td>
                         <td className={styles.num}>{s.afsClicks.toLocaleString()}</td>
+                        <td className={styles.num}>{s.afsRequests.toLocaleString()}</td>
+                        <td className={styles.num}>
+                          {s.fillRate === null ? (
+                            <span className={styles.subtle}>—</span>
+                          ) : s.fillRate < 0.05 ? (
+                            <Badge tone="danger">{Math.round(s.fillRate * 100)}%</Badge>
+                          ) : (
+                            `${Math.round(s.fillRate * 100)}%`
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

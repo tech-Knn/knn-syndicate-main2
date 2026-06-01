@@ -14,6 +14,23 @@ export interface DateRange {
   to: string; // inclusive
 }
 
+/**
+ * RSOC fill-rate (observe-only). fill rate = coverage = matched ad requests / ad requests —
+ * how often the related-search unit actually filled with ads. Below this many requests a fill
+ * rate isn't statistically meaningful (Predicto: wait for 50–100), so the display shows "—".
+ */
+export const RSOC_FILL_DISPLAY_FLOOR = 50;
+
+/** Raw coverage ratio (0..1); 0 when there were no requests. */
+export function coverage(matchedRequests: number, requests: number): number {
+  return requests > 0 ? matchedRequests / requests : 0;
+}
+
+/** Display fill rate: the coverage ratio, or `null` when the sample is too small to trust. */
+export function displayFillRate(matchedRequests: number, requests: number): number | null {
+  return requests >= RSOC_FILL_DISPLAY_FLOOR ? coverage(matchedRequests, requests) : null;
+}
+
 export interface MetricTotals {
   spendUsd: number;
   revenueUsd: number; // buyer-visible revenue (post revenue-cut)
@@ -201,6 +218,10 @@ export interface ChannelAssignmentSpan {
   active: boolean; // still currently assigned (a row has releasedAt == null)
   revenueUsd: number; // gross platform revenue over the span
   afsClicks: number;
+  // AFS fill-rate over the span (observe-only). fillRate = matched/requests, or null below the floor.
+  afsRequests: number;
+  afsMatchedRequests: number;
+  fillRate: number | null;
 }
 
 /** Full usage lineage for ONE channel id (super-admin Channels page). */
@@ -229,6 +250,9 @@ export interface ArticleUsageCampaign {
     active: boolean;
     revenueUsd: number;
     afsClicks: number;
+    afsRequests: number;
+    afsMatchedRequests: number;
+    fillRate: number | null;
   }[];
 }
 

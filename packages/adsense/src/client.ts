@@ -25,6 +25,13 @@ export interface ChannelDayRevenue {
   currency: string;
   /** AFS ad clicks for the day (drives the <10 suppression rule, §5.8.2). */
   afsClicks: number;
+  /** AFS ad requests — the unit asked Google for ads. Fill-rate DENOMINATOR. */
+  requests?: number;
+  /** AFS matched ad requests — requests Google returned ads for. Fill-rate NUMERATOR
+   *  (fill rate = matchedRequests / requests = AdSense "coverage"). */
+  matchedRequests?: number;
+  /** AFS ad impressions (ads rendered) — secondary signal, not the fill trigger. */
+  impressions?: number;
 }
 
 /** Shape of the AdSense Management API v2 report response (the bits we read). */
@@ -37,6 +44,13 @@ const DIM_DATE = 'DATE';
 const DIM_CHANNEL = 'CUSTOM_CHANNEL_ID';
 const MET_EARNINGS = 'ESTIMATED_EARNINGS';
 const MET_CLICKS = 'CLICKS';
+// Fill-rate metrics (RSOC observe-only). fill rate = MATCHED_AD_REQUESTS / AD_REQUESTS
+// ("coverage"). All are parsed absence-tolerantly (missing header → 0), so if a live AFS
+// account doesn't return one the feature simply self-dorments rather than breaking.
+const MET_REQUESTS = 'AD_REQUESTS';
+const MET_MATCHED = 'MATCHED_AD_REQUESTS';
+const MET_IMPRESSIONS = 'IMPRESSIONS';
+const FILL_METRICS = [MET_REQUESTS, MET_MATCHED, MET_IMPRESSIONS] as const;
 
 /**
  * Channel-id form mapping (confirmed against a live AFS account, OPEN_QUESTIONS #4):
@@ -66,6 +80,9 @@ export function parseChannelReport(report: AdsenseReportResponse): ChannelDayRev
   const ci = idx(DIM_CHANNEL);
   const ei = idx(MET_EARNINGS);
   const ki = idx(MET_CLICKS);
+  const ri = idx(MET_REQUESTS);
+  const mi = idx(MET_MATCHED);
+  const ii = idx(MET_IMPRESSIONS);
   const currency = (ei >= 0 ? headers[ei]?.currencyCode : undefined) ?? 'USD';
 
   const out: ChannelDayRevenue[] = [];
@@ -80,6 +97,9 @@ export function parseChannelReport(report: AdsenseReportResponse): ChannelDayRev
       revenueMinor: Math.round((Number(cell(ei)) || 0) * 100),
       currency,
       afsClicks: Math.round(Number(cell(ki)) || 0),
+      requests: Math.round(Number(cell(ri)) || 0),
+      matchedRequests: Math.round(Number(cell(mi)) || 0),
+      impressions: Math.round(Number(cell(ii)) || 0),
     });
   }
   return out;
@@ -91,6 +111,10 @@ export interface ChannelRevenueTotal {
   revenueMinor: number;
   currency: string;
   afsClicks: number;
+  /** AFS fill-rate metrics over the range (observe-only). Absent → 0. */
+  requests?: number;
+  matchedRequests?: number;
+  impressions?: number;
 }
 
 export interface FetchChannelReportParams {
@@ -126,6 +150,7 @@ export function buildReportQuery(p: FetchChannelReportParams): string {
   q.append('dimensions', DIM_CHANNEL);
   q.append('metrics', MET_EARNINGS);
   q.append('metrics', MET_CLICKS);
+  for (const m of FILL_METRICS) q.append('metrics', m);
   for (const id of p.channelIds ?? []) q.append('filters', `${DIM_CHANNEL}==${id}`);
   return q.toString();
 }
@@ -179,6 +204,7 @@ export function buildTotalsQuery(p: FetchChannelTotalsParams): string {
   q.append('dimensions', DIM_CHANNEL);
   q.append('metrics', MET_EARNINGS);
   q.append('metrics', MET_CLICKS);
+  for (const m of FILL_METRICS) q.append('metrics', m);
   q.append('orderBy', `-${MET_EARNINGS}`);
   q.set('limit', String(p.limit ?? 50));
   return q.toString();
@@ -191,6 +217,9 @@ export function parseChannelTotals(report: AdsenseReportResponse): { rows: Chann
   const ci = idx(DIM_CHANNEL);
   const ei = idx(MET_EARNINGS);
   const ki = idx(MET_CLICKS);
+  const ri = idx(MET_REQUESTS);
+  const mi = idx(MET_MATCHED);
+  const ii = idx(MET_IMPRESSIONS);
   const currency = (ei >= 0 ? headers[ei]?.currencyCode : undefined) ?? 'USD';
   const rows: ChannelRevenueTotal[] = [];
   for (const row of report.rows ?? []) {
@@ -202,6 +231,9 @@ export function parseChannelTotals(report: AdsenseReportResponse): { rows: Chann
       revenueMinor: Math.round((Number(cell(ei)) || 0) * 100),
       currency,
       afsClicks: Math.round(Number(cell(ki)) || 0),
+      requests: Math.round(Number(cell(ri)) || 0),
+      matchedRequests: Math.round(Number(cell(mi)) || 0),
+      impressions: Math.round(Number(cell(ii)) || 0),
     });
   }
   return { rows, currency };

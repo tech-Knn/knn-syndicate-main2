@@ -26,9 +26,34 @@ describe('parseChannelReport', () => {
       ],
     });
     expect(rows).toEqual([
-      { channelId: 'ch-A', day: '2026-05-27', revenueMinor: 1234, currency: 'USD', afsClicks: 57 },
-      { channelId: 'ch-B', day: '2026-05-27', revenueMinor: 0, currency: 'USD', afsClicks: 3 },
+      { channelId: 'ch-A', day: '2026-05-27', revenueMinor: 1234, currency: 'USD', afsClicks: 57, requests: 0, matchedRequests: 0, impressions: 0 },
+      { channelId: 'ch-B', day: '2026-05-27', revenueMinor: 0, currency: 'USD', afsClicks: 3, requests: 0, matchedRequests: 0, impressions: 0 },
     ]);
+  });
+
+  it('parses the AFS fill-rate metrics when present (requests / matched / impressions)', () => {
+    const rows = parseChannelReport({
+      headers: [
+        { name: 'DATE' },
+        { name: 'CUSTOM_CHANNEL_ID' },
+        { name: 'ESTIMATED_EARNINGS', currencyCode: 'USD' },
+        { name: 'CLICKS' },
+        { name: 'AD_REQUESTS' },
+        { name: 'MATCHED_AD_REQUESTS' },
+        { name: 'IMPRESSIONS' },
+      ],
+      rows: [{ cells: [{ value: '2026-06-01' }, { value: 'ch-A' }, { value: '5.00' }, { value: '4' }, { value: '900' }, { value: '720' }, { value: '700' }] }],
+    });
+    expect(rows[0]).toMatchObject({ channelId: 'ch-A', requests: 900, matchedRequests: 720, impressions: 700 });
+    // fill rate (coverage) = 720/900 = 0.8 — computed downstream, not stored.
+  });
+
+  it('defaults the fill metrics to 0 when their headers are absent (self-dormant)', () => {
+    const rows = parseChannelReport({
+      headers: [{ name: 'DATE' }, { name: 'CUSTOM_CHANNEL_ID' }, { name: 'ESTIMATED_EARNINGS' }, { name: 'CLICKS' }],
+      rows: [{ cells: [{ value: '2026-06-01' }, { value: 'ch-Z' }, { value: '1.00' }, { value: '1' }] }],
+    });
+    expect(rows[0]).toMatchObject({ requests: 0, matchedRequests: 0, impressions: 0 });
   });
 
   it('resolves columns by header name regardless of order, defaults currency to USD', () => {
@@ -42,7 +67,7 @@ describe('parseChannelReport', () => {
       rows: [{ cells: [{ value: '9' }, { value: 'ch-X' }, { value: '5.00' }, { value: '2026-01-02' }] }],
     });
     expect(rows).toEqual([
-      { channelId: 'ch-X', day: '2026-01-02', revenueMinor: 500, currency: 'USD', afsClicks: 9 },
+      { channelId: 'ch-X', day: '2026-01-02', revenueMinor: 500, currency: 'USD', afsClicks: 9, requests: 0, matchedRequests: 0, impressions: 0 },
     ]);
   });
 
@@ -90,6 +115,9 @@ describe('buildReportQuery', () => {
     expect(q).toContain('dimensions=DATE');
     expect(q).toContain('dimensions=CUSTOM_CHANNEL_ID');
     expect(q).toContain('metrics=ESTIMATED_EARNINGS');
+    expect(q).toContain('metrics=AD_REQUESTS');
+    expect(q).toContain('metrics=MATCHED_AD_REQUESTS');
+    expect(q).toContain('metrics=IMPRESSIONS');
     expect(q).toContain('filters=CUSTOM_CHANNEL_ID%3D%3Dch-A');
   });
 });
@@ -115,7 +143,7 @@ describe('fetchChannelReport', () => {
       { accessToken: 'tok', account: 'accounts/pub-1', since: '2026-05-27', until: '2026-05-27' },
       { fetch: fetchMock as unknown as typeof fetch, baseUrl: 'https://adsense.googleapis.com/v2' },
     );
-    expect(rows).toEqual([{ channelId: 'ch-A', day: '2026-05-27', revenueMinor: 350, currency: 'USD', afsClicks: 12 }]);
+    expect(rows).toEqual([{ channelId: 'ch-A', day: '2026-05-27', revenueMinor: 350, currency: 'USD', afsClicks: 12, requests: 0, matchedRequests: 0, impressions: 0 }]);
     const url = String(fetchMock.mock.calls[0]?.[0]);
     const init = fetchMock.mock.calls[0]?.[1];
     expect(url).toContain('/accounts/pub-1/reports:generate?');
@@ -146,8 +174,8 @@ describe('parseChannelTotals', () => {
     });
     expect(currency).toBe('INR');
     expect(rows).toEqual([
-      { channelId: '05219', revenueMinor: 1234, currency: 'INR', afsClicks: 57 },
-      { channelId: '00500', revenueMinor: 0, currency: 'INR', afsClicks: 2 },
+      { channelId: '05219', revenueMinor: 1234, currency: 'INR', afsClicks: 57, requests: 0, matchedRequests: 0, impressions: 0 },
+      { channelId: '00500', revenueMinor: 0, currency: 'INR', afsClicks: 2, requests: 0, matchedRequests: 0, impressions: 0 },
     ]);
   });
 });
@@ -173,7 +201,7 @@ describe('fetchChannelTotals', () => {
       { accessToken: 'tok', account: 'accounts/pub-1', since: '2026-05-27', until: '2026-05-27', limit: 10 },
       { fetch: fetchMock as unknown as typeof fetch, baseUrl: 'https://adsense.googleapis.com/v2' },
     );
-    expect(rows).toEqual([{ channelId: 'ch-A', revenueMinor: 350, currency: 'USD', afsClicks: 12 }]);
+    expect(rows).toEqual([{ channelId: 'ch-A', revenueMinor: 350, currency: 'USD', afsClicks: 12, requests: 0, matchedRequests: 0, impressions: 0 }]);
     const url = String(fetchMock.mock.calls[0]?.[0]);
     expect(url).toContain('/accounts/pub-1/reports:generate?');
     expect(url).toContain('orderBy=-ESTIMATED_EARNINGS');

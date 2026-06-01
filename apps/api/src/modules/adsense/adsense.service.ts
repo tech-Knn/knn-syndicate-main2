@@ -15,6 +15,7 @@ import {
 } from '@knn/adsense';
 import { QUEUES, getQueue } from '@knn/queue';
 import { decryptToken, encryptToken } from '@knn/fb';
+import { displayFillRate } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
@@ -362,6 +363,12 @@ export interface AdsenseRevenuePreviewRow {
   inPool: boolean;
   revenueMinor: number;
   afsClicks: number;
+  /** AFS fill-rate metrics (observe-only): fill rate = matchedRequests / requests. The live
+   *  cross-check that the v2 report actually returns these for our AFS custom channels. */
+  requests: number;
+  matchedRequests: number;
+  impressions: number;
+  fillRate: number | null;
 }
 
 export interface AdsenseRevenuePreview {
@@ -406,12 +413,18 @@ export async function previewAccountRevenue(
 
   const out: AdsenseRevenuePreviewRow[] = rows.map((r) => {
     const bare = bareChannelId(r.channelId);
+    const requests = r.requests ?? 0;
+    const matchedRequests = r.matchedRequests ?? 0;
     return {
       channelId: bare,
       label: poolMap.get(bare) ?? null,
       inPool: poolMap.has(bare),
       revenueMinor: r.revenueMinor,
       afsClicks: r.afsClicks,
+      requests,
+      matchedRequests,
+      impressions: r.impressions ?? 0,
+      fillRate: displayFillRate(matchedRequests, requests),
     };
   });
 

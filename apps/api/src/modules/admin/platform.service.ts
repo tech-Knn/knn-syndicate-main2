@@ -10,6 +10,7 @@ import {
   type PlatformSettings,
   ROLES,
   centsToDollars,
+  displayFillRate,
 } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
@@ -57,21 +58,25 @@ function collapseDays(
   return out;
 }
 
-/** Sum gross-USD revenue + AFS clicks from per-day rows whose day ∈ [firstDay, lastDay]. */
+/** Sum gross-USD revenue + AFS clicks + fill-rate counts from per-day rows in [firstDay, lastDay]. */
 function sumRange(
-  rows: { day: string; revenueUsdMinor: number; afsClicks: number }[],
+  rows: { day: string; revenueUsdMinor: number; afsClicks: number; afsRequests: number; afsMatchedRequests: number }[],
   firstDay: string,
   lastDay: string,
-): { revenueUsd: number; afsClicks: number } {
+): { revenueUsd: number; afsClicks: number; afsRequests: number; afsMatchedRequests: number } {
   let minor = 0;
   let clicks = 0;
+  let requests = 0;
+  let matched = 0;
   for (const r of rows) {
     if (r.day >= firstDay && r.day <= lastDay) {
       minor += r.revenueUsdMinor;
       clicks += r.afsClicks;
+      requests += r.afsRequests;
+      matched += r.afsMatchedRequests;
     }
   }
-  return { revenueUsd: usd(minor), afsClicks: clicks };
+  return { revenueUsd: usd(minor), afsClicks: clicks, afsRequests: requests, afsMatchedRequests: matched };
 }
 
 /**
@@ -185,7 +190,7 @@ export async function getChannelUsage(idOrChannelId: string): Promise<ChannelUsa
     const [camps, offers, revRows] = await Promise.all([
       tx.campaign.findMany({ where: { id: { in: campaignIds } }, select: { id: true, name: true, orgId: true, articleId: true } }),
       tx.offer.findMany({ where: { channelRef: ch.id, campaignId: { in: campaignIds } }, select: { campaignId: true, domain: { select: { host: true } } } }),
-      tx.offerRevenueDaily.findMany({ where: { channelRef: ch.id, campaignId: { in: campaignIds } }, select: { campaignId: true, day: true, revenueUsdMinor: true, afsClicks: true } }),
+      tx.offerRevenueDaily.findMany({ where: { channelRef: ch.id, campaignId: { in: campaignIds } }, select: { campaignId: true, day: true, revenueUsdMinor: true, afsClicks: true, afsRequests: true, afsMatchedRequests: true } }),
     ]);
     const campById = new Map(camps.map((c) => [c.id, c]));
     const orgs = await tx.organization.findMany({ where: { id: { in: [...new Set(camps.map((c) => c.orgId))] } }, select: { id: true, name: true } });
@@ -196,7 +201,7 @@ export async function getChannelUsage(idOrChannelId: string): Promise<ChannelUsa
       : [];
     const artById = new Map(arts.map((a) => [a.id, a]));
     const hostByCampaign = new Map(offers.map((o) => [o.campaignId, o.domain.host]));
-    const revByCampaign = new Map<string, { day: string; revenueUsdMinor: number; afsClicks: number }[]>();
+    const revByCampaign = new Map<string, { day: string; revenueUsdMinor: number; afsClicks: number; afsRequests: number; afsMatchedRequests: number }[]>();
     for (const r of revRows) (revByCampaign.get(r.campaignId) ?? revByCampaign.set(r.campaignId, []).get(r.campaignId)!).push(r);
     const byCamp = new Map<string, { forDay: string; releasedAt: Date | null }[]>();
     for (const a of assigns) (byCamp.get(a.campaignId) ?? byCamp.set(a.campaignId, []).get(a.campaignId)!).push({ forDay: a.forDay, releasedAt: a.releasedAt });
@@ -208,7 +213,7 @@ export async function getChannelUsage(idOrChannelId: string): Promise<ChannelUsa
       const host = hostByCampaign.get(campaignId) ?? poolHost;
       const revList = revByCampaign.get(campaignId) ?? [];
       for (const s of collapseDays(rows)) {
-        const { revenueUsd, afsClicks } = sumRange(revList, s.firstDay, s.lastDay);
+        const agg = sumRange(revList, s.firstDay, s.lastDay);
         spans.push({
           campaignId,
           campaignName: camp?.name ?? null,
@@ -221,8 +226,11 @@ export async function getChannelUsage(idOrChannelId: string): Promise<ChannelUsa
           firstDay: s.firstDay,
           lastDay: s.lastDay,
           active: s.active,
-          revenueUsd,
-          afsClicks,
+          revenueUsd: agg.revenueUsd,
+          afsClicks: agg.afsClicks,
+          afsRequests: agg.afsRequests,
+          afsMatchedRequests: agg.afsMatchedRequests,
+          fillRate: displayFillRate(agg.afsMatchedRequests, agg.afsRequests),
         });
       }
     }
@@ -258,7 +266,7 @@ export async function getArticleUsage(auth: AuthContext, articleId: string): Pro
     const [channels, assigns, revRows] = await Promise.all([
       channelRefs.length ? tx.channel.findMany({ where: { id: { in: channelRefs } }, select: { id: true, channelId: true } }) : Promise.resolve([]),
       channelRefs.length ? tx.channelAssignment.findMany({ where: { campaignId: { in: campaignIds }, channelRef: { in: channelRefs } }, select: { campaignId: true, channelRef: true, forDay: true, releasedAt: true } }) : Promise.resolve([]),
-      channelRefs.length ? tx.offerRevenueDaily.findMany({ where: { campaignId: { in: campaignIds }, channelRef: { in: channelRefs } }, select: { campaignId: true, channelRef: true, day: true, revenueUsdMinor: true, afsClicks: true } }) : Promise.resolve([]),
+      channelRefs.length ? tx.offerRevenueDaily.findMany({ where: { campaignId: { in: campaignIds }, channelRef: { in: channelRefs } }, select: { campaignId: true, channelRef: true, day: true, revenueUsdMinor: true, afsClicks: true, afsRequests: true, afsMatchedRequests: true } }) : Promise.resolve([]),
     ]);
     const chById = new Map(channels.map((c) => [c.id, c.channelId]));
     const liveHosts = new Set<string>();
@@ -278,6 +286,8 @@ export async function getArticleUsage(auth: AuthContext, articleId: string): Pro
           const rRows = revRows.filter((r) => r.campaignId === c.id && r.channelRef === channelRef);
           const revenueUsd = usd(rRows.reduce((s, r) => s + r.revenueUsdMinor, 0));
           totalRevenueUsd += revenueUsd;
+          const afsRequests = rRows.reduce((s, r) => s + r.afsRequests, 0);
+          const afsMatchedRequests = rRows.reduce((s, r) => s + r.afsMatchedRequests, 0);
           return {
             channelDbId: channelRef,
             channelId: chById.get(channelRef) ?? '(unknown)',
@@ -288,6 +298,9 @@ export async function getArticleUsage(auth: AuthContext, articleId: string): Pro
             active: sp.some((s) => s.active),
             revenueUsd,
             afsClicks: rRows.reduce((s, r) => s + r.afsClicks, 0),
+            afsRequests,
+            afsMatchedRequests,
+            fillRate: displayFillRate(afsMatchedRequests, afsRequests),
           };
         });
       return { campaignId: c.id, campaignName: c.name, companyName: orgName.get(c.orgId) ?? null, status: c.status, channels: channelsOut };

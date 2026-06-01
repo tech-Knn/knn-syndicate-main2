@@ -673,6 +673,11 @@ model CampaignRevenueDaily {
   revenueMinor    Int      @default(0) @map("revenue_minor")
   revenueUsdMinor Int      @default(0) @map("revenue_usd_minor")
   currency        String   @default("USD")
+  /// AFS fill-rate counts (RSOC observe-only, summed across the campaign's channels):
+  /// fill rate = afsMatchedRequests / afsRequests ("coverage"). 0 when AFS doesn't report them.
+  afsRequests        Int   @default(0) @map("afs_requests")
+  afsMatchedRequests Int   @default(0) @map("afs_matched_requests")
+  afsImpressions     Int   @default(0) @map("afs_impressions")
   suppressed      Boolean  @default(false)
   finalized       Boolean  @default(false)
   createdAt       DateTime @default(now()) @map("created_at")
@@ -726,6 +731,11 @@ model OfferRevenueDaily {
   revenueMinor    Int      @default(0) @map("revenue_minor")
   revenueUsdMinor Int      @default(0) @map("revenue_usd_minor")
   currency        String   @default("USD")
+  /// Per-offer (= per-channel) AFS fill-rate counts (RSOC observe-only): fill rate =
+  /// afsMatchedRequests / afsRequests. 0 when AFS doesn't report them.
+  afsRequests        Int   @default(0) @map("afs_requests")
+  afsMatchedRequests Int   @default(0) @map("afs_matched_requests")
+  afsImpressions     Int   @default(0) @map("afs_impressions")
   suppressed      Boolean  @default(false)
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")

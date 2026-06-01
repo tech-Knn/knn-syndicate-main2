@@ -318,6 +318,11 @@ export interface AdsenseRevenuePreviewRow {
   inPool: boolean;
   revenueMinor: number;
   afsClicks: number;
+  /** AFS fill-rate (observe-only): fill rate = matchedRequests / requests; null below the floor. */
+  requests: number;
+  matchedRequests: number;
+  impressions: number;
+  fillRate: number | null;
 }
 
 export interface AdsenseRevenuePreview {

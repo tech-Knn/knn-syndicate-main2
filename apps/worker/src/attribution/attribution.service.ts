@@ -208,6 +208,10 @@ interface CampaignDayRollup {
   revenueMinor: number;
   revenueUsdMinor: number;
   afsClicks: number;
+  // AFS fill-rate counts (observe-only) — summed across the campaign's channels, like afsClicks.
+  afsRequests: number;
+  afsMatchedRequests: number;
+  afsImpressions: number;
   currencies: Set<string>;
 }
 
@@ -289,12 +293,13 @@ export async function pullAdsenseRevenue(
       const suppressed = r.afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD;
 
       // Per-offer: the offer that holds this channel (if any).
+      const fill = { afsRequests: r.requests ?? 0, afsMatchedRequests: r.matchedRequests ?? 0, afsImpressions: r.impressions ?? 0 };
       const offer = await tx.offer.findFirst({ where: { channelRef }, select: { id: true, orgId: true, campaignId: true } });
       if (offer) {
         await tx.offerRevenueDaily.upsert({
           where: { offerId_day: { offerId: offer.id, day: r.day } },
-          create: { orgId: offer.orgId, offerId: offer.id, campaignId: offer.campaignId, channelRef, day: r.day, afsClicks: r.afsClicks, revenueMinor: r.revenueMinor, revenueUsdMinor, currency: r.currency, suppressed },
-          update: { campaignId: offer.campaignId, channelRef, afsClicks: r.afsClicks, revenueMinor: r.revenueMinor, revenueUsdMinor, currency: r.currency, suppressed },
+          create: { orgId: offer.orgId, offerId: offer.id, campaignId: offer.campaignId, channelRef, day: r.day, afsClicks: r.afsClicks, revenueMinor: r.revenueMinor, revenueUsdMinor, currency: r.currency, suppressed, ...fill },
+          update: { campaignId: offer.campaignId, channelRef, afsClicks: r.afsClicks, revenueMinor: r.revenueMinor, revenueUsdMinor, currency: r.currency, suppressed, ...fill },
         });
         offerRows += 1;
       }
@@ -312,6 +317,9 @@ export async function pullAdsenseRevenue(
         cur.revenueMinor += r.revenueMinor;
         cur.revenueUsdMinor += revenueUsdMinor;
         cur.afsClicks += r.afsClicks;
+        cur.afsRequests += fill.afsRequests;
+        cur.afsMatchedRequests += fill.afsMatchedRequests;
+        cur.afsImpressions += fill.afsImpressions;
         cur.currencies.add(r.currency);
       } else {
         rollup.set(key, {
@@ -322,6 +330,7 @@ export async function pullAdsenseRevenue(
           revenueMinor: r.revenueMinor,
           revenueUsdMinor,
           afsClicks: r.afsClicks,
+          ...fill,
           currencies: new Set([r.currency]),
         });
       }
@@ -346,6 +355,9 @@ export async function pullAdsenseRevenue(
           revenueUsdMinor: v.revenueUsdMinor,
           currency: mixed ? 'USD' : [...v.currencies][0]!,
           suppressed: v.afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD,
+          afsRequests: v.afsRequests,
+          afsMatchedRequests: v.afsMatchedRequests,
+          afsImpressions: v.afsImpressions,
         },
         update: {
           channelRef: v.channelRef,
@@ -354,6 +366,9 @@ export async function pullAdsenseRevenue(
           revenueUsdMinor: v.revenueUsdMinor,
           currency: mixed ? 'USD' : [...v.currencies][0]!,
           suppressed: v.afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD,
+          afsRequests: v.afsRequests,
+          afsMatchedRequests: v.afsMatchedRequests,
+          afsImpressions: v.afsImpressions,
         },
       }),
     );
