@@ -5,7 +5,7 @@ import {
   embedText as defaultEmbedText,
   generateArticleOpenAI as defaultGenerateArticle,
 } from '@knn/ai';
-import { env } from '@knn/config';
+import { env, isProd } from '@knn/config';
 import { type Prisma, type TxClient, withSystem, withTenant } from '@knn/db';
 import { ARTICLE_SIMILARITY_THRESHOLD, EMBEDDING_DIMENSIONS, ROLES } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
@@ -237,6 +237,22 @@ async function getCompliancePrompt(tx: TxClient): Promise<string> {
 }
 
 /**
+ * Fail-closed compliance gate (audit Blocker B2). In PRODUCTION, refuse to generate a landing page
+ * when no compliance policy is configured — a non-compliant page reaching live Google AFS risks
+ * suspension of the shared AdSense account the whole platform's revenue depends on. A super-admin
+ * sets `compliance_prompt` once, globally (Platform → Settings). No-op outside production (so local /
+ * staging test flows aren't blocked) and when a prompt is set. Pure + exported for unit testing.
+ */
+export function assertComplianceConfigured(compliancePrompt: string, prod: boolean): void {
+  if (prod && !compliancePrompt.trim()) {
+    throw new AppError(
+      422,
+      'Article generation is blocked: no compliance policy is configured. A platform super-admin must set the compliance prompt (Platform → Settings) before campaigns can generate landing pages for live ads.',
+    );
+  }
+}
+
+/**
  * Resolve a campaign's article (D6: one per campaign). Embeds the campaign's
  * keywords/angle, **reuses** an existing org article when cosine ≥ threshold
  * (D16), otherwise **generates** via Claude → compliance rewrite (storing both
@@ -302,6 +318,10 @@ export async function generateArticleForCampaign(
 
     // Generate (network, no txn). compliance_prompt is a global setting (quick read).
     const compliancePrompt = await withSystem((tx) => getCompliancePrompt(tx));
+    // B2 (fail-closed compliance): in PRODUCTION never serve an AI page to live Google AFS without a
+    // compliance policy configured — a non-compliant landing page risks suspension of the shared
+    // AdSense account the WHOLE platform's revenue depends on.
+    assertComplianceConfigured(compliancePrompt, isProd);
     const generated = await deps.generateArticle({ keywords, query: campaign.query ?? undefined });
     // Only spend a second model call when an admin has actually set compliance rules.
     const compliant = compliancePrompt.trim()

@@ -4,6 +4,7 @@ import { ROLES, USER_STATUS } from '@knn/shared';
 import type { AuthContext } from '../../middleware/authenticate.js';
 import {
   type ArticleAiDeps,
+  assertComplianceConfigured,
   generateArticleForCampaign,
   getPublicArticleBySlug,
 } from './articles.service.js';
@@ -166,5 +167,18 @@ describe('article engine', () => {
 
   it('returns null for an unknown slug', async () => {
     expect(await getPublicArticleBySlug('does-not-exist-xyz')).toBeNull();
+  });
+});
+
+describe('assertComplianceConfigured (B2 fail-closed compliance gate)', () => {
+  it('throws 422 in production when no compliance policy is configured', () => {
+    expect(() => assertComplianceConfigured('', true)).toThrow(/compliance policy is configured/);
+    expect(() => assertComplianceConfigured('   ', true)).toThrowError(expect.objectContaining({ statusCode: 422 }));
+  });
+  it('is a no-op when a compliance prompt is set (even in production)', () => {
+    expect(() => assertComplianceConfigured('No medical claims; no superlatives.', true)).not.toThrow();
+  });
+  it('is a no-op outside production (local/staging test flows are not blocked)', () => {
+    expect(() => assertComplianceConfigured('', false)).not.toThrow();
   });
 });

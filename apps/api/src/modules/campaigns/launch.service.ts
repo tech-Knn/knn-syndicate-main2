@@ -205,6 +205,7 @@ export async function setCampaignActive(
   auth: AuthContext,
   campaignId: string,
   active: boolean,
+  deps: Pick<LaunchDeps, 'writeRedirectConfigs'> = { writeRedirectConfigs },
 ): Promise<{ id: string; status: string }> {
   const target = active ? CAMPAIGN_STATUS.ACTIVE : CAMPAIGN_STATUS.PAUSED;
 
@@ -260,8 +261,8 @@ export async function setCampaignActive(
   }
 
   // Write phase: persist the new status + audit.
-  return runScoped(auth, async (tx) => {
-    const updated = await tx.campaign.update({ where: { id: campaignId }, data: { status: target }, select: { id: true, status: true } });
+  const updated = await runScoped(auth, async (tx) => {
+    const u = await tx.campaign.update({ where: { id: campaignId }, data: { status: target }, select: { id: true, status: true } });
     await writeAudit(tx, {
       orgId: plan.orgId,
       actorId: auth.userId,
@@ -269,8 +270,18 @@ export async function setCampaignActive(
       entityType: 'campaign',
       entityId: campaignId,
     });
-    return updated;
+    return u;
   });
+
+  // Sync the edge KV so the redirect's `active` flag matches the new status (B1): a PAUSED
+  // campaign must STOP routing residual paid clicks to the monetized money-page — otherwise its
+  // (soon-to-be-reassigned) channel keeps emitting and AFS revenue mis-attributes, possibly to a
+  // DIFFERENT tenant. Resume re-enables it. `syncCampaignRedirectConfigs` derives active from the
+  // current status. Best-effort: a KV hiccup must never fail an otherwise-successful pause/resume.
+  await syncCampaignRedirectConfigs(campaignId, deps).catch((e) =>
+    console.warn(`[setCampaignActive] edge KV resync failed for ${campaignId}:`, e instanceof Error ? e.message : String(e)),
+  );
+  return updated;
 }
 
 /** FB write phase — campaign → ad sets → (image, creative, ad), all at `status`. */
@@ -691,6 +702,10 @@ export async function launchCampaign(
     await runScoped(auth, (tx) =>
       tx.campaign.update({ where: { id: campaignId }, data: { status: CAMPAIGN_STATUS.PROCESSING } }),
     ).catch(() => undefined);
+    // B1: launch wrote the edge KV with active:true BEFORE the FB build; the build failed, so roll
+    // the config back to active:false (status is now PROCESSING) — otherwise residual paid clicks
+    // keep hitting the monetized page with no live FB ads behind them. Best-effort.
+    await syncCampaignRedirectConfigs(campaignId, { writeRedirectConfigs: deps.writeRedirectConfigs }).catch(() => undefined);
 
     // Ad-account security/policy hold (FB code 368 "authenticate your account in Ads
     // Manager"). The token is fine and existing ads keep running — only create/modify is

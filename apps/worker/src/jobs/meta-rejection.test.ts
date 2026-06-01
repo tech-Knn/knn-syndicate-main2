@@ -38,16 +38,21 @@ describe('checkMetaRejections', () => {
   it('flags a campaign with a DISAPPROVED ad → META_REJECTED + releases channel + notifies', async () => {
     const id = await makeActiveCampaign('fbcamp-1');
     const releaseChannel = vi.fn(async () => ({ released: true }));
+    const resync = vi.fn(async () => undefined);
     const notify = vi.fn();
 
     const res = await checkMetaRejections({
       fetchStatuses: async () => [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }, { fbAdId: 'a2', effectiveStatus: 'DISAPPROVED' }],
       releaseChannel,
+      resync,
       notify,
     });
 
     expect(res.rejected).toBe(1);
     expect(releaseChannel).toHaveBeenCalledWith(id);
+    // B1: the rejected campaign's edge KV is re-published (active:false, channel dropped) so residual
+    // paid clicks stop monetizing a disapproved page and stop crediting the channel's next holder.
+    expect(resync).toHaveBeenCalledWith(id);
     expect(notify).toHaveBeenCalledTimes(1);
     const c = await withSystem((tx) => tx.campaign.findUnique({ where: { id }, select: { status: true } }));
     expect(c?.status).toBe('META_REJECTED');
@@ -60,6 +65,7 @@ describe('checkMetaRejections', () => {
     const res = await checkMetaRejections({
       fetchStatuses: async () => [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }],
       releaseChannel,
+      resync: vi.fn(async () => undefined),
       notify: vi.fn(),
     });
 
@@ -76,6 +82,7 @@ describe('checkMetaRejections', () => {
         throw new Error('FB down');
       },
       releaseChannel: vi.fn(async () => ({ released: false })),
+      resync: vi.fn(async () => undefined),
       notify: vi.fn(),
     });
     expect(res.checked).toBe(1);

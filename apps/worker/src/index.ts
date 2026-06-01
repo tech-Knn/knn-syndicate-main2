@@ -74,8 +74,16 @@ async function main(): Promise<void> {
           if (result.assigned) await triggerAutoLaunch(campaignId);
           return result;
         }
-        case 'release':
-          return campaignId ? releaseChannelForCampaign(campaignId, triggerAutoLaunch) : { skipped: true };
+        case 'release': {
+          if (!campaignId) return { skipped: true };
+          const result = await releaseChannelForCampaign(campaignId, triggerAutoLaunch);
+          // B1: the campaign just lost its channel → re-publish its edge KV so it stops emitting the
+          // (now-reassignable) channel and routes by its current status. Best-effort.
+          await resyncOffersToKv(campaignId).catch((err) =>
+            console.warn(`[release] edge KV resync failed for ${campaignId}:`, err.message),
+          );
+          return result;
+        }
         case 'rollover':
           return rolloverChannels(undefined, triggerAutoLaunch);
         case 'process-queue':

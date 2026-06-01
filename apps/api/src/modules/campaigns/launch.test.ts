@@ -247,16 +247,25 @@ describe('launchCampaign (Phase 8)', () => {
     expect(c?.status).toBe('BATCHED');
   });
 
-  it('reverts LAUNCHING → PROCESSING (not stuck) on a non-rate-limit FB error', async () => {
+  it('reverts LAUNCHING → PROCESSING (not stuck) on a non-rate-limit FB error + rolls the edge KV back to active:false (B1)', async () => {
     const campaignId = await makeCampaign();
+    // A persisted article (as a real launched campaign has) so the rollback resync can rebuild the config.
+    await withSystem(async (tx) => {
+      const art = await tx.article.create({ data: { orgId, slug: `revert-art-${suffix}`, title: 'T', rawContent: 'r', compliantContent: 'c' } });
+      await tx.campaign.update({ where: { id: campaignId }, data: { articleId: art.id } });
+    });
     vi.mocked(fb.createFbCampaign).mockImplementationOnce(async () => {
       throw new fb.FbApiError('Invalid objective/optimization combination', { code: 100 });
     });
+    const writeRedirectConfigs = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {});
     await expect(
-      launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
+      launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs }),
     ).rejects.toThrow('Invalid objective');
     const c = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { status: true } }));
     expect(c?.status).toBe('PROCESSING'); // retryable, not stuck at LAUNCHING
+    // B1: KV was written active:true at launch (before the FB build); the failure must roll it back to
+    // active:false so residual paid clicks don't keep hitting a monetized page with no live ads behind it.
+    expect(writeRedirectConfigs.mock.calls.at(-1)![0][0]!.config.active).toBe(false);
   });
 
   it('on FB account restriction (368): reverts to PROCESSING + surfaces an actionable 409 (no blind retry)', async () => {
@@ -384,6 +393,31 @@ describe('launchCampaign (Phase 8)', () => {
     await expect(
       launchCampaign(auth(), c.id, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
     ).rejects.toMatchObject({ statusCode: 409 });
+  });
+});
+
+describe('setCampaignActive — edge KV stays in sync with status (B1)', () => {
+  it('pause → republishes the redirect config active:false; resume → active:true', async () => {
+    const campaignId = await makeCampaign();
+    // ACTIVE campaign with a persisted article (sync re-reads articleId from the DB) + an fb id so
+    // the (mocked) FB pause/resume call runs. Mirrors a real launched campaign's state.
+    await withSystem(async (tx) => {
+      const art = await tx.article.create({ data: { orgId, slug: `pause-art-${suffix}`, title: 'T', rawContent: 'r', compliantContent: 'c' } });
+      await tx.campaign.update({ where: { id: campaignId }, data: { articleId: art.id, status: 'ACTIVE', fbCampaignId: 'fbcamp-pause' } });
+    });
+
+    // Pause: the resync must publish active:false so the redirect stops monetizing residual clicks.
+    const pauseWrite = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {});
+    const paused = await setCampaignActive(auth(), campaignId, false, { writeRedirectConfigs: pauseWrite });
+    expect(paused.status).toBe('PAUSED');
+    expect(pauseWrite).toHaveBeenCalledTimes(1);
+    expect(pauseWrite.mock.calls[0]![0][0]!.config.active).toBe(false);
+
+    // Resume: active:true again.
+    const resumeWrite = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {});
+    const resumed = await setCampaignActive(auth(), campaignId, true, { writeRedirectConfigs: resumeWrite });
+    expect(resumed.status).toBe('ACTIVE');
+    expect(resumeWrite.mock.calls[0]![0][0]!.config.active).toBe(true);
   });
 });
 

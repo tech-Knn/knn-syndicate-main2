@@ -2,6 +2,7 @@ import { withSystem } from '@knn/db';
 import { type AdStatusDTO, decryptToken, fetchCampaignAdStatuses } from '@knn/fb';
 import { CAMPAIGN_STATUS, canTransitionCampaign } from '@knn/shared';
 import { releaseChannelForCampaign } from '../channel-pool/channel.service.js';
+import { resyncOffersToKv } from '../launch-trigger.js';
 
 /**
  * Meta-rejection polling (D14). Facebook has no reliable "ad disapproved" webhook,
@@ -28,6 +29,8 @@ interface Notification {
 export interface MetaRejectionDeps {
   fetchStatuses?: (c: CampaignRow) => Promise<AdStatusDTO[]>;
   releaseChannel?: (campaignId: string) => Promise<unknown>;
+  /** Re-publish the edge KV so a META_REJECTED campaign stops emitting its (released) channel (B1). */
+  resync?: (campaignId: string) => Promise<unknown>;
   notify?: (n: Notification) => void;
 }
 
@@ -57,6 +60,7 @@ export async function checkMetaRejections(
 ): Promise<{ checked: number; rejected: number }> {
   const fetchStatuses = deps.fetchStatuses ?? defaultFetchStatuses;
   const releaseChannel = deps.releaseChannel ?? releaseChannelForCampaign;
+  const resync = deps.resync ?? resyncOffersToKv;
   const notify = deps.notify ?? defaultNotify;
 
   const campaigns = (await withSystem((tx) =>
@@ -84,6 +88,12 @@ export async function checkMetaRejections(
       }
     });
     await releaseChannel(c.id);
+    // B1: the campaign is now META_REJECTED and its channel released → re-publish the edge KV so the
+    // redirect goes active:false and stops emitting the (now-reassignable) channel; otherwise residual
+    // paid clicks keep monetizing a disapproved page and credit whoever next holds that channel.
+    await resync(c.id).catch((err) =>
+      console.warn(`[meta-rejection] edge KV resync failed for ${c.id}:`, err instanceof Error ? err.message : String(err)),
+    );
     notify({
       orgId: c.orgId,
       userId: c.buyerId,

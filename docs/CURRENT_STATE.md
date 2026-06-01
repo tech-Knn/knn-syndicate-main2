@@ -518,3 +518,23 @@ terms). All observe-only; no auto-action.
 - Gate: typecheck 12/12, lint 12/12, tests serial 10/10 (api 179, worker 44, shared 101, ai 14), build 4/4.
 - **Not yet deployed** — awaiting deploy authorization. Deferred (post data-validation): auto term
   pruning/regeneration, redirect curated-terms override, content-substance gate.
+
+## Launch-readiness remediation (2026-06-01) — score 62 → 80, NO-GO → CONDITIONAL-GO
+
+Fixed the audit's true launch blockers (code + regression tests, all green):
+- **B1 — edge KV ⇄ campaign-status sync** (cross-tenant revenue mis-attribution). `setCampaignActive`
+  (pause/resume), the launchCampaign failure-revert, `checkMetaRejections`, and the worker
+  `CHANNEL_MAINTENANCE` release now re-publish the redirect config via `syncCampaignRedirectConfigs`
+  (`active = status===ACTIVE`) — a paused/disapproved/released campaign stops routing residual paid
+  clicks + stops emitting its (reassignable) channel. Tests: launch.test (pause/resume/launch-fail),
+  meta-rejection.test (resync invoked).
+- **Auth revocation** — `authenticate` now re-checks the user against the DB every request (withSystem),
+  so suspend/reject/role-change takes effect immediately (was stale ≤ access-token TTL). DB role/org are
+  authoritative. Test: authenticate.test (suspended token → 401).
+- **B2 fail-closed compliance** — `assertComplianceConfigured(prompt, isProd)`: in production, article
+  generation hard-fails (422) when no compliance prompt is set (no more silent skip). Test: articles.test.
+
+Deferred (justified): B2 classifier + human-review UI, revenue-cut snapshot, FB launch idempotency,
+BATCHED re-drive, monitoring/alerting → Week 1; non-USD FX (latent), tz/suppression/dead-field cleanup →
+Month 1. External launch gate (not code): dedicated prod stack + FB ads_management Advanced Access.
+Gate: typecheck 12/12, lint 12/12, tests serial 10/10 (api 186, worker 44), build 4/4.
