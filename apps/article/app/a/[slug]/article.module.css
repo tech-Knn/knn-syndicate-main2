@@ -8,94 +8,11 @@
   color: #1a1a1a;
 }
 
-/* ── Site shell (legitimacy: real masthead + footer, per-host brand) ──────────
-   A registered-publisher look so the page reads as a genuine editorial site, not a
-   thin AdSense doorway. The brand name is resolved PER HOST (never hardcoded). */
-.siteHeader {
-  border-bottom: 1px solid var(--rule, #e4e4e0);
-  background: var(--paper, #ffffff);
-}
-.siteHeaderInner {
-  max-width: 680px;
-  margin: 0 auto;
-  padding: 1rem 1.25rem;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
-}
-.brandLink {
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 1.35rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: #111;
-  text-decoration: none;
-}
-.brandLink:hover {
-  text-decoration: underline;
-}
-.siteTagline {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 0.8rem;
-  color: var(--ink-soft, #4a4a4a);
-}
-
+/* The money-page intentionally has NO top masthead/byline (focus on the RSOC unit; the
+   shared <SiteFooter/> + legal pages carry the publisher legitimacy). */
 .main {
   flex: 1 0 auto;
   padding: 2.5rem 1.25rem 4rem;
-}
-
-.siteFooter {
-  border-top: 1px solid var(--rule, #e4e4e0);
-  background: var(--paper-2, #f6f6f4);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-.siteFooterInner {
-  max-width: 680px;
-  margin: 0 auto;
-  padding: 1.5rem 1.25rem 2rem;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem 1.25rem;
-  font-size: 0.85rem;
-  color: var(--ink-soft, #4a4a4a);
-}
-.footerNav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.25rem;
-}
-.footerLink {
-  color: var(--ink-soft, #4a4a4a);
-  text-decoration: none;
-}
-.footerLink:hover {
-  text-decoration: underline;
-}
-.copyright {
-  margin-left: auto;
-  color: #6a6a6a;
-}
-
-/* Byline + publish/updated date directly under the headline. */
-.meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem 0.6rem;
-  margin: 0 0 1.25rem;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 0.85rem;
-  color: var(--ink-soft, #4a4a4a);
-}
-.byline {
-  font-weight: 600;
-  color: #2a2a2a;
-}
-.metaDot {
-  color: #b0b0b0;
 }
 
 .article {
