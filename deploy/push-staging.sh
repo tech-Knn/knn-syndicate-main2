@@ -71,4 +71,12 @@ else
   echo "==> Recreate: full stack (+ edge/caddy, --remove-orphans)"
   "${SSH[@]}" "$HOST" "cd $DEST && $COMPOSE --profile edge up -d --remove-orphans"
 fi
+
+# Cap the on-box build cache + drop dangling images. Building the image on the box accumulates
+# BuildKit cache layers every deploy; left unbounded it ballooned to ~120GB and filled the 150GB
+# disk, wedging the host (2026-05-31 outage). Keep ~15GB for fast incremental rebuilds, prune the
+# rest. Best-effort: a prune hiccup must never fail an otherwise-successful deploy.
+echo "==> Reclaim disk: cap build cache (~15GB) + drop dangling images"
+"${SSH[@]}" "$HOST" "docker builder prune -f --keep-storage 15GB 2>/dev/null || docker builder prune -f 2>/dev/null || true; docker image prune -f 2>/dev/null || true; df -h / | tail -1" || true
+
 echo "✓ deployed${SERVICES:+ ($SERVICES)}"
