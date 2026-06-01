@@ -400,6 +400,10 @@ model Ad {
   primaryText  String         @map("primary_text")
   description  String?
   cta          String         @default("LEARN_MORE")
+  /// Optional display link — the visible URL caption shown in the ad (FB link_data.caption),
+  /// independent of the cloaked /go/{redirectId} destination. Domain or URL; null = FB derives
+  /// the display URL from the destination domain (prior behavior).
+  displayLink  String?        @map("display_link")
   creativeType AdCreativeType @default(IMAGE) @map("creative_type")
   uploadId     String?        @map("upload_id") @db.Uuid
 

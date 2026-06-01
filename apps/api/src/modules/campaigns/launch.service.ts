@@ -377,6 +377,14 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
       }
       const imageHash = await uploadFbAdImage(fbAccountId, token, bytes.toString('base64'), appKind);
       const destination = `${redirectBase}/go/${ad.redirectId}`;
+      // Display link (FB link_data.caption): the VISIBLE URL caption in the ad, separate from the
+      // cloaked `link` destination. FB requires an actual URL, so normalize a bare domain to https://.
+      // Unset → FB derives the display URL from the destination domain (prior behavior).
+      const displayCaption = ad.displayLink
+        ? /^https?:\/\//i.test(ad.displayLink)
+          ? ad.displayLink
+          : `https://${ad.displayLink}`
+        : undefined;
       const creative = await createFbAdCreative(fbAccountId, token, {
         name: ad.name,
         objectStorySpec: {
@@ -386,6 +394,7 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
             message: ad.primaryText,
             name: ad.headline,
             ...(ad.description ? { description: ad.description } : {}),
+            ...(displayCaption ? { caption: displayCaption } : {}),
             image_hash: imageHash,
             call_to_action: { type: ad.cta, value: { link: destination } },
           },

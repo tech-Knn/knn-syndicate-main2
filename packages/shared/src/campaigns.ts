@@ -131,6 +131,13 @@ export const adInputSchema = z.object({
   uploadId: uuid.optional(),
   fallbackUrl: optionalUrl,
   beneficiary: z.string().trim().max(120).optional(),
+  /**
+   * Optional display link — the visible URL caption shown in the ad (FB `link_data.caption`),
+   * INDEPENDENT of the actual destination (the `/go/{redirectId}` redirect). A domain or full URL,
+   * e.g. "yourbrand.com". Facebook expects it to plausibly reflect the destination/business
+   * (a wildly unrelated display link risks disapproval), and it's ignored on Instagram placements.
+   */
+  displayLink: z.string().trim().max(255).regex(/^\S+\.\S+$/, 'Display link must be a domain or URL').optional(),
 });
 export type AdInput = z.input<typeof adInputSchema>;
 

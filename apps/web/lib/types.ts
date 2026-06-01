@@ -105,6 +105,8 @@ export interface CampaignAd {
   primaryText: string;
   description: string | null;
   cta: string;
+  /** Visible URL caption shown in the ad (FB link_data.caption); null = derived from destination. */
+  displayLink: string | null;
   creativeType: 'IMAGE' | 'VIDEO';
   uploadId: string | null;
   redirectId: string;

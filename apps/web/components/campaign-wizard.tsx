@@ -45,6 +45,7 @@ interface AdForm {
   primaryText: string;
   description: string;
   cta: CtaOption;
+  displayLink: string;
   creativeType: CreativeType;
   uploadId?: string;
   uploadName?: string;
@@ -110,7 +111,7 @@ function toggle<T>(list: T[], v: T): T[] {
 }
 
 function emptyAd(): AdForm {
-  return { key: uuid(), name: '', headline: '', primaryText: '', description: '', cta: 'LEARN_MORE', creativeType: 'IMAGE', fallbackUrl: '', beneficiary: '' };
+  return { key: uuid(), name: '', headline: '', primaryText: '', description: '', cta: 'LEARN_MORE', displayLink: '', creativeType: 'IMAGE', fallbackUrl: '', beneficiary: '' };
 }
 
 function emptyAdSet(n: number): AdSetForm {
@@ -209,6 +210,7 @@ function toForm(c?: Campaign): CampaignForm {
         primaryText: a.primaryText,
         description: a.description ?? '',
         cta: a.cta as CtaOption,
+        displayLink: a.displayLink ?? '',
         creativeType: a.creativeType,
         uploadId: a.uploadId ?? undefined,
         uploadName: a.uploadId ? 'Attached creative' : undefined,
@@ -266,6 +268,7 @@ function toDraft(form: CampaignForm): CampaignDraftInput {
         primaryText: a.primaryText.trim(),
         description: a.description.trim() || undefined,
         cta: a.cta,
+        displayLink: a.displayLink.trim() || undefined,
         creativeType: a.creativeType,
         uploadId: a.uploadId,
         fallbackUrl: a.fallbackUrl.trim() || undefined,
@@ -1340,6 +1343,17 @@ function AdSetsStep({
                         </option>
                       ))}
                     </select>
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.label} htmlFor={`${ad.key}-displaylink`}>Display link</label>
+                    <input
+                      id={`${ad.key}-displaylink`}
+                      className={styles.input}
+                      value={ad.displayLink}
+                      onChange={(e) => patchAd(set.key, ad.key, { displayLink: e.target.value })}
+                      placeholder="yourbrand.com (optional)"
+                    />
+                    <span className={styles.hint}>The visible URL shown in the ad. Should plausibly match where people land; ignored on Instagram. Leave blank to use the destination domain.</span>
                   </div>
                   <div className={`${styles.field} ${styles.full}`}>
                     <span className={styles.label}>Creative<Req /></span>

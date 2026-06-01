@@ -157,6 +157,21 @@ describe('launchCampaign (Phase 8)', () => {
     expect(campaign?.adSets[0]?.ads[0]?.fbAdId).toBe('fbad-1');
   });
 
+  it('sets the FB display link (link_data.caption) from the ad displayLink, normalized to https — destination unchanged', async () => {
+    const campaignId = await makeCampaign();
+    // A bare-domain display link on the ad — the visible URL, separate from the /go redirect.
+    await withSystem((tx) => tx.ad.updateMany({ where: { adSet: { campaignId } }, data: { displayLink: 'creatorrule.com' } }));
+    await launchCampaign(auth(), campaignId, {
+      generateArticle: vi.fn(async () => ({ slug: 's' })),
+      writeRedirectConfigs: vi.fn(async () => undefined),
+    });
+    const spec = vi.mocked(fb.createFbAdCreative).mock.calls.at(-1)![2].objectStorySpec as {
+      link_data: { caption?: string; link: string };
+    };
+    expect(spec.link_data.caption).toBe('https://creatorrule.com'); // bare domain → https URL (FB requires a URL)
+    expect(spec.link_data.link).toContain(`/go/`); // destination is still the cloaked redirect, untouched
+  });
+
   it('two-app: writes use the same person\'s LAUNCH connection (short-lived token) when configured', async () => {
     // A separate LAUNCH app is configured, and this person has a usable LAUNCH connection
     // for the SAME FB profile (fbUserId "fb") that owns the ad account → ad writes must go
