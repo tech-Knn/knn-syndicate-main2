@@ -67,24 +67,29 @@ interface WriteAuth {
 
 /**
  * Resolve the credential for FB *writes* (create/modify ads). When a separate LAUNCH app
- * is configured, FB ad-publish must use the SAME PERSON's short-lived LAUNCH token — it's
- * what clears the 31/3858385 checkpoint; falling back to the DATA token would just trip it
- * again. So if a LAUNCH connection exists for this profile it MUST be usable (else a clean,
- * actionable "reconnect the launch app" 409, since launch tokens are short-lived by design).
- * With no launch app configured — or no LAUNCH connection for this person yet — we use the
- * DATA connection exactly as before (single-app, fully backwards-compatible).
+ * is configured, FB ad-publish must use the LAUNCH token — it's what clears the 31/3858385
+ * checkpoint; falling back to the DATA token would just trip it again. So if the connecting
+ * user has a LAUNCH connection it MUST be usable (else a clean, actionable "reconnect the
+ * launch app" 409). With no launch app configured — or no LAUNCH connection for this user
+ * yet — we use the DATA connection exactly as before (single-app, backwards-compatible).
+ *
+ * NB: matched by our internal `userId`, NOT `fb_user_id` — Facebook returns a DIFFERENT
+ * app-scoped user id per app for the same person, so the DATA and LAUNCH connections never
+ * share an `fb_user_id` (verified on staging: 995168526234717 vs 996495602768676). The
+ * connecting KNN user is the stable join key. Pick the freshest LAUNCH connection.
  */
 async function resolveWriteAuth(tx: TxClient, dataConn: OwningConnection): Promise<WriteAuth> {
   if (hasLaunchApp()) {
     const launch = await tx.fbConnection.findFirst({
-      where: { userId: dataConn.userId, fbUserId: dataConn.fbUserId, appKind: 'LAUNCH' },
+      where: { userId: dataConn.userId, appKind: 'LAUNCH' },
+      orderBy: { tokenExpiresAt: 'desc' },
       select: { id: true, accessTokenEnc: true, tokenExpiresAt: true, status: true },
     });
     if (launch) {
       if (launch.status === FbConnectionStatus.CONNECTION_BROKEN || launch.tokenExpiresAt.getTime() <= Date.now()) {
         throw new AppError(
           409,
-          'Your Facebook launch-app token has expired — reconnect the Launch app in Settings → Facebook, then relaunch. (Launch tokens are short-lived by design, so reconnect right before launching.)',
+          'Your Facebook launch-app connection needs reconnecting — open Settings → Facebook → Connect launch app, then relaunch.',
         );
       }
       return { token: decryptConnectionToken(launch.accessTokenEnc), appKind: 'LAUNCH', connectionId: launch.id };

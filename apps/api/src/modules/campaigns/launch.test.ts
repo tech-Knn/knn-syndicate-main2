@@ -163,7 +163,9 @@ describe('launchCampaign (Phase 8)', () => {
     // through the LAUNCH token, so every create carries appKind 'LAUNCH' (for appsecret_proof).
     const launchConn = await withSystem((tx) =>
       tx.fbConnection.create({
-        data: { orgId, userId: buyerId, fbUserId: 'fb', appKind: 'LAUNCH', accessTokenEnc: 'enc-launch', tokenExpiresAt: new Date(Date.now() + 3_600_000), status: 'ACTIVE' },
+        // Different fb_user_id than the DATA fixture ('fb') — FB issues a per-app ASID, so a
+        // real LAUNCH connection never shares the DATA connection's fb_user_id. Match is by userId.
+        data: { orgId, userId: buyerId, fbUserId: 'fb-launch-asid', appKind: 'LAUNCH', accessTokenEnc: 'enc-launch', tokenExpiresAt: new Date(Date.now() + 3_600_000), status: 'ACTIVE' },
       }),
     );
     vi.mocked(fb.hasLaunchApp).mockReturnValue(true);
@@ -187,7 +189,9 @@ describe('launchCampaign (Phase 8)', () => {
   it('two-app: a launch app missing the pixel fails fast with a clear 409 before any FB object is created', async () => {
     const launchConn = await withSystem((tx) =>
       tx.fbConnection.create({
-        data: { orgId, userId: buyerId, fbUserId: 'fb', appKind: 'LAUNCH', accessTokenEnc: 'enc-launch', tokenExpiresAt: new Date(Date.now() + 3_600_000), status: 'ACTIVE' },
+        // Different fb_user_id than the DATA fixture ('fb') — FB issues a per-app ASID, so a
+        // real LAUNCH connection never shares the DATA connection's fb_user_id. Match is by userId.
+        data: { orgId, userId: buyerId, fbUserId: 'fb-launch-asid', appKind: 'LAUNCH', accessTokenEnc: 'enc-launch', tokenExpiresAt: new Date(Date.now() + 3_600_000), status: 'ACTIVE' },
       }),
     );
     vi.mocked(fb.hasLaunchApp).mockReturnValue(true);
@@ -220,7 +224,7 @@ describe('launchCampaign (Phase 8)', () => {
       const campaignId = await makeCampaign();
       await expect(
         launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
-      ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('launch-app token has expired') });
+      ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('launch-app connection needs reconnecting') });
     } finally {
       vi.mocked(fb.hasLaunchApp).mockReturnValue(false);
       await withSystem((tx) => tx.fbConnection.delete({ where: { id: launchConn.id } }));
