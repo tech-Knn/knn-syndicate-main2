@@ -160,8 +160,10 @@ export interface BuyerRollup {
 }
 
 /** Per-offer revenue for a campaign (Phase F). Cost is campaign-level FB spend; revenue
- *  is per offer (its AFS channel). `revenueUsd` is buyer-visible (the platform cut applied);
- *  hidden (0 + `suppressed`) when AFS clicks are below the §5.8.2 threshold. */
+ *  is per offer (its AFS channel). `revenueUsd` is buyer-visible (the platform cut applied) and is
+ *  ALWAYS shown — even $0.01 — because Google's AFS rule masks only CLICK-DERIVED metrics below 10
+ *  clicks/day, not earnings (answer/10078316). `suppressed` flags that the click-derived columns
+ *  (afsClicks / CPC) are hidden below that threshold; it does NOT hide the revenue. */
 /** A breakdown dimension for the campaign drill-down. */
 export type StatDim = 'country' | 'hour';
 

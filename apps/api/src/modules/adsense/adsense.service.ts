@@ -5,8 +5,10 @@ import {
   buildGoogleAuthUrl,
   discoverChannelsInRanges,
   exchangeGoogleCode,
+  fetchChannelReport,
   fetchChannelTotals,
   isGoogleConfigured,
+  qualifyChannelId,
   listAccounts,
   listAdClients,
   listCustomChannels,
@@ -441,6 +443,53 @@ export async function previewAccountRevenue(
     channelsWithRevenue: out.filter((r) => r.revenueMinor > 0).length,
     matchedInPool: out.filter((r) => r.inPool).length,
     rows: out,
+  };
+}
+
+/**
+ * AFS report DEBUG (super-admin, read-only). For ONE channel, queries the live AdSense report three
+ * ways so we can see exactly why a channel's earnings do (or don't) reach attribution:
+ *  - `totalsForChannel`: the channel as it appears in the UNFILTERED top-earners totals (proves what
+ *    id-format + earnings Google actually reports for it, independent of our filter).
+ *  - `qualifiedFilter`: the report filtered by `{pubId}:{code}` — exactly what the attribution pull sends.
+ *  - `bareFilter`: the report filtered by the bare `{code}` — the alternative format.
+ * If qualified returns rows → our pull is correct; if only bare returns rows → the filter format is the
+ * bug; if the unfiltered totals show earnings but BOTH filters are empty → the API is dropping the
+ * low-traffic row even though the dashboard shows it. Token-refresh errors surface here too.
+ */
+export async function debugChannelReport(
+  accountId: string,
+  channel: string,
+  since: string,
+  until: string,
+): Promise<Record<string, unknown>> {
+  const conn = await withSystem((tx) => tx.googleConnection.findUnique({ where: { id: accountId } }));
+  if (!conn) throw new AppError(404, 'AFS account not found');
+  if (!conn.adsenseAccount) throw new AppError(409, 'AdSense account not resolved yet — reconnect');
+  const token = await freshAccountToken(conn);
+  const acct = conn.adsenseAccount;
+  const qualified = qualifyChannelId(conn.afsPubId, channel);
+
+  const safe = async <T>(p: Promise<T>): Promise<T | { error: string }> => p.catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+  const [totals, qualifiedRows, bareRows] = await Promise.all([
+    safe(fetchChannelTotals({ accessToken: token, account: acct, since, until, limit: 500 })),
+    safe(fetchChannelReport({ accessToken: token, account: acct, since, until, channelIds: [qualified] })),
+    safe(fetchChannelReport({ accessToken: token, account: acct, since, until, channelIds: [channel] })),
+  ]);
+
+  const totalsForChannel =
+    'error' in totals ? totals : totals.rows.filter((r) => bareChannelId(r.channelId) === channel || r.channelId === qualified);
+
+  return {
+    account: acct,
+    channel,
+    qualifiedId: qualified,
+    afsPubId: conn.afsPubId,
+    range: { since, until },
+    totalsChannelCount: 'error' in totals ? null : totals.rows.length,
+    totalsForChannel,
+    qualifiedFilter: qualifiedRows,
+    bareFilter: bareRows,
   };
 }
 

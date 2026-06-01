@@ -4,6 +4,7 @@ import { ROLES } from '@knn/shared';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate, requireRole } from '../../middleware/authenticate.js';
 import {
+  debugChannelReport,
   disconnect,
   disconnectAccount,
   getAuthUrl,
@@ -92,6 +93,24 @@ export async function adsenseRoutes(app: FastifyInstance): Promise<void> {
       if (!isDay(since) || !isDay(until)) return reply.code(400).send({ error: 'since & until (YYYY-MM-DD) required' });
       try {
         return reply.send(await previewAccountRevenue(req.params.id, since!, until!));
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Debug: query the live AFS report for ONE channel (unfiltered totals + qualified + bare filters)
+  // to see why a channel's earnings do/don't reach attribution. Read-only, super-admin.
+  app.get<{ Params: { id: string }; Querystring: { channel?: string; since?: string; until?: string } }>(
+    '/accounts/:id/report-debug',
+    { preHandler: superOnly },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      const { channel, since, until } = req.query;
+      const isDay = (s?: string): boolean => Boolean(s && /^\d{4}-\d{2}-\d{2}$/.test(s));
+      if (!channel || !isDay(since) || !isDay(until)) return reply.code(400).send({ error: 'channel, since & until (YYYY-MM-DD) required' });
+      try {
+        return reply.send(await debugChannelReport(req.params.id, channel, since!, until!));
       } catch (err) {
         return handleRouteError(err, reply);
       }

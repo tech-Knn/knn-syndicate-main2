@@ -143,7 +143,7 @@ export function OffersEditor({ campaignId, status }: { campaignId: string; statu
                       </td>
                       <td className={styles.num}>{o.weightPct}%</td>
                       <td className={`${styles.num} ${r && r.revenueUsd > 0 ? styles.pos : ''}`}>
-                        {r?.suppressed ? '—' : r ? `$${r.revenueUsd.toFixed(2)}` : '$0.00'}
+                        {r ? `$${r.revenueUsd.toFixed(2)}` : '$0.00'}
                       </td>
                       <td className="mono">{o.channelId ?? '—'}</td>
                     </tr>

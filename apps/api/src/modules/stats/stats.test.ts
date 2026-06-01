@@ -286,7 +286,7 @@ describe('admin & super-admin rollups + platform surfaces', () => {
 });
 
 describe('getCampaignOfferStats (Phase F per-offer revenue)', () => {
-  it('sums per-offer revenue, applies the buyer cut, and suppresses low-click offers', async () => {
+  it('sums per-offer revenue, applies the buyer cut, and flags (but does NOT hide) low-click offers', async () => {
     const sfx = `ofs-${suffix}`;
     const CH = '11111111-1111-1111-1111-111111111111';
     let orgId = '';
@@ -311,10 +311,12 @@ describe('getCampaignOfferStats (Phase F per-offer revenue)', () => {
       const auth = { userId: buyerId, orgId, role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE };
       const stats = await getCampaignOfferStats(auth, campaignId, { from: today, to: today });
       const byOffer = new Map(stats.map((s) => [s.offerId, s]));
-      // Hi: gross $100 → 30% cut → buyer-visible $70; 50 AFS clicks → not suppressed.
+      // Hi: gross $100 → 30% cut → buyer-visible $70; 50 AFS clicks → not flagged.
       expect(byOffer.get(offerHi)).toMatchObject({ revenueUsd: 70, suppressed: false });
-      // Lo: 3 AFS clicks (< 10) → suppressed → revenue hidden.
-      expect(byOffer.get(offerLo)).toMatchObject({ revenueUsd: 0, suppressed: true });
+      // Lo: gross $50 → 30% cut → buyer-visible $35. 3 AFS clicks (< 10) → revenue is STILL shown
+      // (Google doesn't mask earnings); `suppressed:true` only flags that the click-derived columns
+      // (clicks / CPC) are hidden.
+      expect(byOffer.get(offerLo)).toMatchObject({ revenueUsd: 35, suppressed: true });
     } finally {
       await withSystem(async (tx) => {
         await tx.offerRevenueDaily.deleteMany({ where: { orgId } });

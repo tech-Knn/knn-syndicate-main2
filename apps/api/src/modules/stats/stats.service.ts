@@ -430,7 +430,11 @@ export async function getCampaignOfferStats(
       const r = byOffer.get(o.id);
       const grossMinor = r?._sum.revenueUsdMinor ?? 0;
       const afsClicks = r?._sum.afsClicks ?? 0;
-      const suppressed = grossMinor > 0 && afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD;
+      // Google's AFS rule (support.google.com/adsense/answer/10078316): below 10 clicks/day it masks
+      // CLICK-DERIVED metrics (clicks, CTR, CPC) to 0 — but NOT estimated earnings. So we ALWAYS show
+      // the revenue (even $0.01 if the channel earned it); `suppressed` now flags only that the
+      // click-derived columns are hidden, never the earnings.
+      const suppressed = afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD;
       const visibleMinor = Math.round(grossMinor * (1 - cut));
       return {
         offerId: o.id,
@@ -438,9 +442,9 @@ export async function getCampaignOfferStats(
         afsLabel: o.domain.afsAccount.label,
         kind: o.kind,
         weightPct: o.weightPct,
-        revenueUsd: suppressed ? 0 : round2(centsToDollars(visibleMinor)),
+        revenueUsd: round2(centsToDollars(visibleMinor)), // earnings always shown (Google doesn't mask earnings)
         afsClicks,
-        suppressed,
+        suppressed, // click-derived metrics (clicks / CPC) hidden below 10 clicks/day — revenue is NOT
       };
     });
   });

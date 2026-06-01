@@ -681,8 +681,8 @@ function CampaignDetail({ campaignId, bd, range }: { campaignId: string; bd: Cam
                 <td className={admin.name}>{o.host}</td>
                 <td className={admin.subtle}>{o.kind === 'PAID' ? 'Paid' : 'Organic'}</td>
                 <td>{o.weightPct}%</td>
-                <td>{o.suppressed ? <span className={styles.suppressed}>low volume</span> : money(o.revenueUsd)}</td>
-                <td>{o.suppressed ? '—' : o.afsClicks.toLocaleString()}</td>
+                <td>{money(o.revenueUsd)}</td>
+                <td>{o.suppressed ? <span className={styles.suppressed}>&lt;10/day</span> : o.afsClicks.toLocaleString()}</td>
                 <td>{!o.suppressed && o.afsClicks ? money(o.revenueUsd / o.afsClicks) : '—'}</td>
               </tr>
             ))}
