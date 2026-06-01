@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   AdsenseNotConfiguredError,
   bareChannelId,
+  REPORT_ROW_LIMIT,
   buildReportQuery,
   buildTotalsQuery,
   fetchChannelReport,
@@ -99,7 +100,7 @@ describe('channel-id form mapping (OQ#4)', () => {
 });
 
 describe('buildReportQuery', () => {
-  it('encodes the custom date range, dimensions, metrics, and channel filters', () => {
+  it('encodes the custom date range, dimensions, and metrics', () => {
     const q = buildReportQuery({
       accessToken: 't',
       account: 'accounts/pub-1',
@@ -118,7 +119,26 @@ describe('buildReportQuery', () => {
     expect(q).toContain('metrics=AD_REQUESTS');
     expect(q).toContain('metrics=MATCHED_AD_REQUESTS');
     expect(q).toContain('metrics=IMPRESSIONS');
+  });
+
+  it('pushes a server-side filter down for EXACTLY ONE channel', () => {
+    const q = buildReportQuery({ accessToken: 't', account: 'accounts/pub-1', since: '2026-05-01', until: '2026-05-08', channelIds: ['ch-A'] });
     expect(q).toContain('filters=CUSTOM_CHANNEL_ID%3D%3Dch-A');
+    expect(q).not.toContain('limit=');
+  });
+
+  it('does NOT AND-filter multiple channels (the v2 API ANDs filters → 0 rows); fetches capped + ordered instead', () => {
+    const q = buildReportQuery({ accessToken: 't', account: 'accounts/pub-1', since: '2026-05-01', until: '2026-05-08', channelIds: ['ch-A', 'ch-B', 'ch-C'] });
+    // No per-channel filter — multiple equality filters would AND to zero matches.
+    expect(q).not.toContain('filters=');
+    expect(q).toContain('orderBy=-ESTIMATED_EARNINGS');
+    expect(q).toContain(`limit=${REPORT_ROW_LIMIT}`);
+  });
+
+  it('emits no filter and no limit when no channels are requested', () => {
+    const q = buildReportQuery({ accessToken: 't', account: 'accounts/pub-1', since: '2026-05-01', until: '2026-05-08' });
+    expect(q).not.toContain('filters=');
+    expect(q).not.toContain('limit=');
   });
 });
 
@@ -148,6 +168,36 @@ describe('fetchChannelReport', () => {
     const init = fetchMock.mock.calls[0]?.[1];
     expect(url).toContain('/accounts/pub-1/reports:generate?');
     expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+  });
+
+  it('fetches UNFILTERED for >1 channel and filters the rows to the requested set client-side', async () => {
+    // Regression guard: the v2 API ANDs repeated `filters`, so a multi-channel server filter
+    // returns 0 rows. We must fetch the whole account and keep only the requested channels.
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      new Response(
+        JSON.stringify({
+          headers: [{ name: 'DATE' }, { name: 'CUSTOM_CHANNEL_ID' }, { name: 'ESTIMATED_EARNINGS', currencyCode: 'USD' }, { name: 'CLICKS' }],
+          rows: [
+            { cells: [{ value: '2026-06-01' }, { value: 'pub:05024' }, { value: '0.07' }, { value: '0' }] },
+            { cells: [{ value: '2026-06-01' }, { value: 'pub:09999' }, { value: '42.00' }, { value: '99' }] }, // foreign channel — must be dropped
+            { cells: [{ value: '2026-06-01' }, { value: 'pub:05269' }, { value: '0.03' }, { value: '0' }] },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    const rows = await fetchChannelReport(
+      { accessToken: 'tok', account: 'accounts/pub-1', since: '2026-06-01', until: '2026-06-01', channelIds: ['pub:05024', 'pub:05269'] },
+      { fetch: fetchMock as unknown as typeof fetch, baseUrl: 'https://adsense.googleapis.com/v2' },
+    );
+    // Only the two requested channels survive; the high-earning foreign channel is dropped.
+    expect(rows.map((r) => r.channelId).sort()).toEqual(['pub:05024', 'pub:05269']);
+    expect(rows.find((r) => r.channelId === 'pub:05024')?.revenueMinor).toBe(7);
+    expect(rows.find((r) => r.channelId === 'pub:05269')?.revenueMinor).toBe(3);
+    // The request itself carried NO channel filter (else it would have matched nothing).
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).not.toContain('filters=');
+    expect(url).toContain(`limit=${REPORT_ROW_LIMIT}`);
   });
 });
 

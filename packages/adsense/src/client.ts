@@ -134,7 +134,25 @@ export interface FetchDeps {
 }
 const defaultDeps: FetchDeps = { fetch, baseUrl: 'https://adsense.googleapis.com/v2' };
 
-/** Build the `reports:generate` query string for a per-channel per-day report. */
+/**
+ * Row cap for a per-day report fetched WITHOUT a server channel filter (the >1-channel
+ * path — see `buildReportQuery`). 50k comfortably covers a very large AFS account's
+ * (channels × days) over the finalization window; `fetchChannelReport` warns if a real
+ * report ever hits it (signalling that pagination is needed).
+ */
+export const REPORT_ROW_LIMIT = 50_000;
+
+/**
+ * Build the `reports:generate` query string for a per-channel per-day report.
+ *
+ * **Filter footgun (verified live, OQ#4):** the AdSense v2 API combines repeated `filters`
+ * params with **AND**, so `CUSTOM_CHANNEL_ID==A` + `CUSTOM_CHANNEL_ID==B` matches ZERO rows
+ * (no single row's channel equals both) — the bug that left revenue empty platform-wide.
+ * So we push a server filter down ONLY for a single channel; for many, we fetch the whole
+ * account's per-day rows (ordered by earnings, row-capped) and match client-side in
+ * `fetchChannelReport`. A row's `CUSTOM_CHANNEL_ID` is the qualified `{pubId}:{code}`, which
+ * is exactly what `qualifyChannelId` produces, so the client-side `Set` match is 1:1.
+ */
 export function buildReportQuery(p: FetchChannelReportParams): string {
   const [sy, sm, sd] = p.since.split('-');
   const [uy, um, ud] = p.until.split('-');
@@ -151,14 +169,24 @@ export function buildReportQuery(p: FetchChannelReportParams): string {
   q.append('metrics', MET_EARNINGS);
   q.append('metrics', MET_CLICKS);
   for (const m of FILL_METRICS) q.append('metrics', m);
-  for (const id of p.channelIds ?? []) q.append('filters', `${DIM_CHANNEL}==${id}`);
+  const ids = p.channelIds ?? [];
+  if (ids.length === 1) {
+    // Exactly one channel → a single server-side equality filter is safe (and cheap).
+    q.append('filters', `${DIM_CHANNEL}==${ids[0]}`);
+  } else if (ids.length > 1) {
+    // Many channels → cannot AND-filter; fetch all + match client-side. Cap the response.
+    q.append('orderBy', `-${MET_EARNINGS}`);
+    q.set('limit', String(REPORT_ROW_LIMIT));
+  }
   return q.toString();
 }
 
 /**
  * Fetch per-channel daily AFS revenue over [since, until]. Throws
  * `AdsenseNotConfiguredError` when no access token is supplied (the dormant path),
- * `AdsenseRequestError` on a non-OK response.
+ * `AdsenseRequestError` on a non-OK response. When MORE THAN ONE `channelIds` is requested
+ * the report is fetched unfiltered (the v2 API can't AND-filter multiple channels — see
+ * `buildReportQuery`) and the rows are filtered to the requested set here, client-side.
  */
 export async function fetchChannelReport(
   params: FetchChannelReportParams,
@@ -172,7 +200,21 @@ export async function fetchChannelReport(
     throw new AdsenseRequestError(`AdSense report failed (${res.status}): ${body.slice(0, 200)}`, res.status);
   }
   const json = (await res.json()) as AdsenseReportResponse;
-  return parseChannelReport(json);
+  const rawRowCount = json.rows?.length ?? 0;
+  const rows = parseChannelReport(json);
+  const ids = params.channelIds ?? [];
+  if (ids.length > 1) {
+    // No silent truncation: a full-limit response means some channels may be missing.
+    if (rawRowCount >= REPORT_ROW_LIMIT) {
+      console.warn(
+        `[adsense] channel report hit the ${REPORT_ROW_LIMIT}-row cap for ${params.account} — ` +
+          `some channels may be truncated; pagination needed.`,
+      );
+    }
+    const want = new Set(ids);
+    return rows.filter((r) => want.has(r.channelId));
+  }
+  return rows;
 }
 
 export interface FetchChannelTotalsParams {
