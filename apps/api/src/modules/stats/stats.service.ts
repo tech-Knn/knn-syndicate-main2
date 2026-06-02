@@ -143,7 +143,7 @@ export async function getCampaignPerformance(
     const campaigns = await tx.campaign.findMany({
       where: auth.role === ROLES.MEDIA_BUYER ? { buyerId: auth.userId } : {},
       orderBy: { createdAt: 'desc' },
-      select: { id: true, name: true, status: true, channelId: true, buyerId: true, orgId: true },
+      select: { id: true, name: true, status: true, channelId: true, buyerId: true, orgId: true, budgetMode: true, dailyBudgetCents: true },
     });
     if (campaigns.length === 0) return [];
 
@@ -161,7 +161,7 @@ export async function getCampaignPerformance(
       tx.adRevenueDaily.groupBy({ by: ['campaignId'], where, _sum: { visibleUsdMinor: true } }),
       tx.adSet.findMany({
         where: { campaignId: { in: ids } },
-        select: { campaignId: true, _count: { select: { ads: true } } },
+        select: { campaignId: true, dailyBudgetCents: true, _count: { select: { ads: true } } },
       }),
       (() => {
         const refs = campaigns.map((c) => c.channelId).filter((x): x is string => Boolean(x));
@@ -179,9 +179,11 @@ export async function getCampaignPerformance(
     const orgName = new Map(orgs.map((o) => [o.id, o.name]));
     const adSetCount = new Map<string, number>();
     const adCount = new Map<string, number>();
+    const adSetBudget = new Map<string, number>(); // ABO: sum of ad-set daily budgets (cents)
     for (const s of adSets) {
       adSetCount.set(s.campaignId, (adSetCount.get(s.campaignId) ?? 0) + 1);
       adCount.set(s.campaignId, (adCount.get(s.campaignId) ?? 0) + s._count.ads);
+      if (s.dailyBudgetCents != null) adSetBudget.set(s.campaignId, (adSetBudget.get(s.campaignId) ?? 0) + s.dailyBudgetCents);
     }
     const channelLabel = new Map(channels.map((c) => [c.id, c.label ?? c.channelId]));
 
@@ -207,6 +209,8 @@ export async function getCampaignPerformance(
         conversions: s?.conversions ?? 0,
         adSetCount: adSetCount.get(c.id) ?? 0,
         adCount: adCount.get(c.id) ?? 0,
+        budgetMode: c.budgetMode,
+        dailyBudgetCents: c.budgetMode === 'CAMPAIGN' ? c.dailyBudgetCents : (adSetBudget.get(c.id) ?? null),
       };
     });
   });

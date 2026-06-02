@@ -311,3 +311,27 @@
     min-height: 44px;
   }
 }
+
+/* Inline-editable daily-budget cell — reads as plain text; a dashed border on hover signals it's
+   editable, so a buyer can change budget right in the table (no drill-in). */
+.budgetEdit {
+  background: transparent;
+  border: 1px dashed transparent;
+  border-radius: var(--radius-sm);
+  color: var(--cream);
+  font: inherit;
+  padding: 0.2rem 0.45rem;
+  cursor: text;
+}
+.budgetEdit:hover {
+  border-color: var(--border-interactive);
+}
+.budgetEdit:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: 1px;
+}
+@media (pointer: coarse) {
+  .budgetEdit {
+    min-height: 44px;
+  }
+}

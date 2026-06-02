@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   type CampaignBreakdown,
@@ -28,6 +27,79 @@ import { campaigns as campaignApi, stats } from '@/lib/api';
 import { useAuth } from '../../providers';
 import admin from '../admin.module.css';
 import styles from '../analytics.module.css';
+
+/**
+ * Inline daily-budget cell — shows the campaign's daily budget right in the table and lets a buyer
+ * edit it in place (click → type → Enter / blur saves, Esc cancels) without drilling into the campaign.
+ * Editable only when live (ACTIVE/PAUSED) and CBO or a single ad set — matching the server's rule;
+ * the save pushes to Facebook without releasing the channel. Read-only ("$X.XX" / "—") otherwise.
+ */
+function BudgetCell({ row, onSaved, onError }: { row: CampaignPerf; onSaved: (cents: number) => void; onError: (msg: string) => void }) {
+  const live = row.status === 'ACTIVE' || row.status === 'PAUSED';
+  const editable = live && (row.budgetMode === 'CAMPAIGN' || row.adSetCount === 1);
+  const cents = row.dailyBudgetCents;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const display = cents != null ? formatUsd(cents / 100) : '—';
+  if (!editable) return <span>{display}</span>;
+
+  const start = (): void => {
+    setDraft(((cents ?? 0) / 100).toFixed(2));
+    setEditing(true);
+  };
+  const save = async (): Promise<void> => {
+    const c = Math.round(Number(draft) * 100);
+    if (!Number.isFinite(c) || c === cents) {
+      setEditing(false);
+      return;
+    }
+    if (c < 200) {
+      onError('Minimum daily budget is $2.00 (Facebook minimum).');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await campaignApi.setBudget(row.id, c);
+      onSaved(res.dailyBudgetCents);
+      setEditing(false);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Could not update the budget.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end' }}>
+        <span style={{ color: 'var(--muted)' }}>$</span>
+        <input
+          autoFocus
+          type="number"
+          min={2}
+          step="0.01"
+          value={draft}
+          disabled={busy}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void save();
+            if (e.key === 'Escape') setEditing(false);
+          }}
+          onBlur={() => void save()}
+          aria-label={`Daily budget for ${row.name}`}
+          style={{ width: '4.6rem', background: 'var(--bg)', border: '1px solid var(--rust)', borderRadius: 'var(--radius-sm)', color: 'var(--cream)', padding: '0.25rem 0.4rem', fontSize: '0.85rem', textAlign: 'right' }}
+        />
+      </span>
+    );
+  }
+  return (
+    <button type="button" className={styles.budgetEdit} onClick={start} title="Click to edit daily budget">
+      {display}
+    </button>
+  );
+}
 
 function rangeFor(days: number): DateRange {
   const to = currentBusinessDay();
@@ -234,7 +306,7 @@ export default function AnalyticsPage() {
   };
 
   const exportCsv = (): void => {
-    const head = ['Campaign', 'Status', 'Buyer', 'Company', 'Spend', 'Revenue', 'Profit', 'ROI %', 'Conversions', 'CPA', 'Clicks', 'CPC', 'CTR%', 'Impressions', 'RPC', 'Channel'];
+    const head = ['Campaign', 'Status', 'Buyer', 'Company', 'Spend', 'Budget', 'Revenue', 'Profit', 'ROI %', 'Conversions', 'CPA', 'Clicks', 'CPC', 'CTR%', 'Impressions', 'RPC', 'Channel'];
     const esc = (v: string | number): string => {
       const s = String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -242,7 +314,7 @@ export default function AnalyticsPage() {
     const lines = [
       head.join(','),
       ...filtered.map((r) =>
-        [r.name, r.status, r.buyerName, r.companyName, r.spendUsd, r.revenueUsd, r.profitUsd, (r.roi * 100).toFixed(1), r.conversions, cpa(r).toFixed(2), r.clicks, cpc(r).toFixed(2), ctr(r).toFixed(2), r.impressions, rpc(r).toFixed(2), r.channelLabel ?? '']
+        [r.name, r.status, r.buyerName, r.companyName, r.spendUsd, r.dailyBudgetCents != null ? (r.dailyBudgetCents / 100).toFixed(2) : '', r.revenueUsd, r.profitUsd, (r.roi * 100).toFixed(1), r.conversions, cpa(r).toFixed(2), r.clicks, cpc(r).toFixed(2), ctr(r).toFixed(2), r.impressions, rpc(r).toFixed(2), r.channelLabel ?? '']
           .map(esc)
           .join(','),
       ),
@@ -258,7 +330,7 @@ export default function AnalyticsPage() {
 
   const num = (n: number): string => formatUsd(n);
   const arrow = (key: SortKey): string => (sortKey !== key ? '' : sortDir === 'asc' ? '▲' : '▼');
-  const colSpan = 14 + (isAdmin ? 1 : 0) + (isSuper ? 1 : 0); // total columns incl. actions
+  const colSpan = 15 + (isAdmin ? 1 : 0) + (isSuper ? 1 : 0); // total columns incl. budget + actions
 
   const clearAllFilters = (): void => {
     setSearch('');
@@ -398,6 +470,7 @@ export default function AnalyticsPage() {
                   {isAdmin && <Th k="buyerName" label="Buyer" />}
                   {isSuper && <Th k="companyName" label="Company" />}
                   <Th k="spendUsd" label="Spend" />
+                  <th style={{ textAlign: 'right' }}>Budget</th>
                   <Th k="revenueUsd" label="Revenue" />
                   <Th k="profitUsd" label="Profit" />
                   <Th k="roi" label="ROI" />
@@ -435,14 +508,6 @@ export default function AnalyticsPage() {
                               {r.channelLabel && <span className={admin.subtle}>{r.channelLabel}</span>}
                             </span>
                           </button>
-                          <Link
-                            href={`/dashboard/campaigns/${r.id}`}
-                            title="Open campaign"
-                            aria-label={`Open ${r.name}`}
-                            style={{ marginLeft: '0.4rem', fontSize: '0.82rem', padding: '0.15rem 0.35rem' }}
-                          >
-                            ↗
-                          </Link>
                         </td>
                         <td>
                           <Badge tone={STATUS_TONE[r.status] ?? 'neutral'} dot>
@@ -452,6 +517,13 @@ export default function AnalyticsPage() {
                         {isAdmin && <td className={admin.subtle}>{r.buyerName}</td>}
                         {isSuper && <td className={admin.subtle}>{r.companyName}</td>}
                         <td className={admin.num}>{num(r.spendUsd)}</td>
+                        <td className={admin.num}>
+                          <BudgetCell
+                            row={r}
+                            onSaved={(c) => setRows((prev) => (prev ? prev.map((x) => (x.id === r.id ? { ...x, dailyBudgetCents: c } : x)) : prev))}
+                            onError={setError}
+                          />
+                        </td>
                         <td className={admin.num}>{num(r.revenueUsd)}</td>
                         <td className={`${admin.num} ${r.profitUsd > 0 ? styles.pos : r.profitUsd < 0 ? styles.neg : ''}`}>{num(r.profitUsd)}</td>
                         <td className={`${admin.num} ${r.roi > 0 ? styles.pos : r.roi < 0 ? styles.neg : ''}`}>{formatRoi(r.roi)}</td>

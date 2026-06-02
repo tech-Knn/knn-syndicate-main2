@@ -111,6 +111,11 @@ export interface CampaignPerf {
   conversions: number;
   adSetCount: number;
   adCount: number;
+  /** Budget mode + the EFFECTIVE daily budget in cents (CBO → campaign budget; ABO → sum of ad-set
+   *  budgets). Lets the Analytics table show + inline-edit the daily budget without a drill-in.
+   *  Inline-editable only when live (ACTIVE/PAUSED) and CBO or a single ad set (see updateCampaignBudget). */
+  budgetMode: 'AD_SET' | 'CAMPAIGN';
+  dailyBudgetCents: number | null;
 }
 
 export interface AdPerf {
