@@ -3,9 +3,176 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Badge, Banner, Button, Card, EmptyState, Spinner, useConfirm, useToast } from '@/components/ui';
 import { ApiError, facebook } from '@/lib/api';
-import { type FbAccount, type FbPage, type FbPixel, type FbProfile, type FbProfileWithOwner, type LaunchAccessResult } from '@/lib/types';
+import { type FbAccessRequestList, type FbAccessState, type FbAccount, type FbPage, type FbPixel, type FbProfile, type FbProfileWithOwner, type LaunchAccessResult } from '@/lib/types';
 import { useAuth } from '../../providers';
 import styles from './facebook.module.css';
+
+/**
+ * Buyer tester-onboarding checklist (apps in Dev mode). Replaces "DM us your FB ID": the buyer pastes
+ * their Facebook profile, we route it to a super-admin to add, and we guide them to approve. Shown
+ * only until they've connected a profile.
+ */
+function TesterOnboarding({ onConnect, connecting }: { onConnect: (app: 'data' | 'launch') => void; connecting: boolean }) {
+  const toast = useToast();
+  const [state, setState] = useState<FbAccessState | null>(null);
+  const [handle, setHandle] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => void facebook.getAccess().then(setState).catch(() => setState(null)), []);
+  useEffect(load, [load]);
+
+  if (!state || state.connected) return null; // not loaded yet, or already connected → no checklist
+
+  const submit = async (): Promise<void> => {
+    if (handle.trim().length < 3) {
+      toast.error('Paste your Facebook profile URL or username.');
+      return;
+    }
+    setBusy(true);
+    try {
+      setState(await facebook.requestAccess(handle.trim()));
+      toast.success("Submitted — we'll add you as a tester on both apps shortly.");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not submit your request.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const stepNum = (_n: number, active: boolean) => ({
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: '50%',
+    fontSize: '0.72rem', flexShrink: 0, background: active ? 'var(--rust)' : 'var(--surface-2)', color: active ? '#fff' : 'var(--muted)',
+    border: active ? 'none' : '1px solid var(--border-strong)',
+  });
+  const requested = state.status === 'REQUESTED' || state.status === 'INVITED';
+  const invited = state.status === 'INVITED';
+
+  return (
+    <Card style={{ padding: '1.25rem 1.4rem', marginBottom: '1.25rem', border: '1px solid var(--rust)' }}>
+      <h3 className="serif" style={{ fontSize: '1.1rem', color: 'var(--cream)', margin: 0 }}>Get tester access — one-time setup (~2 min)</h3>
+      <p style={{ color: 'var(--muted)', fontSize: '0.9rem', margin: '0.35rem 0 1rem' }}>
+        Our Facebook apps are in review, so we add you as a tester on both apps before you can connect. Do this once.
+      </p>
+
+      {/* Step 1 — submit profile */}
+      <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', marginBottom: '0.9rem' }}>
+        <span style={stepNum(1, !requested)}>{requested ? '✓' : '1'}</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ color: 'var(--cream)', fontWeight: 600, fontSize: '0.9rem' }}>Share your Facebook profile</div>
+          {requested ? (
+            <div style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>
+              Submitted: <code>{state.fbHandle}</code>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem', flexWrap: 'wrap' }}>
+              <input
+                value={handle}
+                onChange={(e) => setHandle(e.target.value)}
+                placeholder="https://facebook.com/your.profile"
+                aria-label="Your Facebook profile URL"
+                style={{ flex: 1, minWidth: '16rem', background: 'var(--bg)', border: '1px solid var(--border-interactive)', borderRadius: 'var(--radius-sm)', color: 'var(--cream)', padding: '0.5rem 0.7rem', fontSize: '0.9rem' }}
+              />
+              <Button onClick={() => void submit()} loading={busy}>Request access</Button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Step 2 — we add you */}
+      <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start', marginBottom: '0.9rem' }}>
+        <span style={stepNum(2, requested && !invited)}>{invited ? '✓' : '2'}</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ color: 'var(--cream)', fontWeight: 600, fontSize: '0.9rem' }}>We add you as a tester</div>
+          <div style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>
+            {invited ? 'Done — you’ve been added on both apps.' : requested ? 'Pending — we’re adding you on both apps. Check back shortly.' : 'After you submit, we add your profile on both apps.'}
+            {requested && !invited && (
+              <Button variant="ghost" onClick={load} style={{ marginLeft: '0.5rem' }}>Re-check</Button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Step 3 — approve + connect */}
+      <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start' }}>
+        <span style={stepNum(3, invited)}>3</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ color: 'var(--cream)', fontWeight: 600, fontSize: '0.9rem' }}>Approve the invites, then connect</div>
+          <div style={{ color: 'var(--muted)', fontSize: '0.85rem', marginBottom: invited ? '0.5rem' : 0 }}>
+            Approve <strong>both</strong> app invites on Facebook, then connect each below.
+          </div>
+          {invited && (
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <a href="https://developers.facebook.com/settings/developer/requests/" target="_blank" rel="noreferrer">
+                <Button variant="secondary">Approve invites on Facebook ↗</Button>
+              </a>
+              <Button onClick={() => onConnect('data')} loading={connecting}>Connect main</Button>
+              <Button variant="secondary" onClick={() => onConnect('launch')} loading={connecting}>Connect launch app</Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/** Super-admin queue of buyers awaiting tester access, with one-click deep-links to add them. */
+function AccessRequestsQueue() {
+  const toast = useToast();
+  const [data, setData] = useState<FbAccessRequestList | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const load = useCallback(() => void facebook.accessRequests().then(setData).catch(() => setData(null)), []);
+  useEffect(load, [load]);
+
+  if (!data || data.requests.length === 0) return null;
+
+  const markInvited = async (userId: string): Promise<void> => {
+    setBusyId(userId);
+    try {
+      await facebook.markInvited(userId);
+      toast.success('Marked as invited.');
+      load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not update.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <section className={styles.section}>
+      <div className={styles.sectionHead}>
+        <h3 className={styles.sectionTitle}>Access requests</h3>
+        <span className={styles.count}>{data.requests.length}</span>
+      </div>
+      <p style={{ color: 'var(--muted)', fontSize: '0.88rem', marginBottom: '0.8rem' }}>
+        Buyers awaiting tester access. Add their Facebook profile on <strong>both</strong> apps&rsquo; Roles pages, then mark invited — they get an invite to approve.
+      </p>
+      {data.requests.map((r) => (
+        <Card key={r.userId} style={{ padding: '0.9rem 1.1rem', marginBottom: '0.6rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+          <div style={{ minWidth: '14rem' }}>
+            <div style={{ color: 'var(--cream)', fontWeight: 600 }}>
+              {r.name} <Badge tone={r.status === 'INVITED' ? 'success' : 'warning'} dot>{r.status.toLowerCase()}</Badge>
+            </div>
+            <div style={{ color: 'var(--muted)', fontSize: '0.82rem' }}>{r.email} · {r.orgName}</div>
+            <div style={{ fontSize: '0.82rem', marginTop: '0.2rem' }}>
+              FB: <code style={{ color: 'var(--cream)' }}>{r.fbHandle ?? '—'}</code>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            {data.dataAppRolesUrl && (
+              <a href={data.dataAppRolesUrl} target="_blank" rel="noreferrer"><Button variant="ghost">Add on main app ↗</Button></a>
+            )}
+            {data.launchAppRolesUrl && (
+              <a href={data.launchAppRolesUrl} target="_blank" rel="noreferrer"><Button variant="ghost">Add on launch app ↗</Button></a>
+            )}
+            {r.status === 'REQUESTED' && (
+              <Button onClick={() => void markInvited(r.userId)} loading={busyId === r.userId}>Mark invited</Button>
+            )}
+          </div>
+        </Card>
+      ))}
+    </section>
+  );
+}
 
 interface PageBanner {
   tone: 'success' | 'error';
@@ -599,6 +766,13 @@ export default function FacebookPage() {
           </Banner>
         </div>
       )}
+
+      {/* Buyer tester-onboarding checklist — self-hides once they've connected a profile. Super-admins
+          are app role-holders already, so they don't see it. */}
+      {!isSuper && <TesterOnboarding onConnect={connect} connecting={connecting} />}
+
+      {/* Super-admin: queue of buyers awaiting tester access, with one-click deep-links to add them. */}
+      {isSuper && <AccessRequestsQueue />}
 
       {/* Two-connection explainer — buyers need to know WHY there are two + WHEN to use each. */}
       <Card className={styles.explainer}>

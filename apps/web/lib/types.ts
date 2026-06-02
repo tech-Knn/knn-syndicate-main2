@@ -354,3 +354,26 @@ export interface BulkResult {
   succeeded: string[];
   failed: { id: string; error: string }[];
 }
+
+/** A buyer's Facebook tester-onboarding state (apps in Dev mode). */
+export interface FbAccessState {
+  fbHandle: string | null;
+  status: 'NONE' | 'REQUESTED' | 'INVITED';
+  connected: boolean;
+}
+export interface FbAccessRequestRow {
+  userId: string;
+  name: string;
+  email: string;
+  orgName: string;
+  fbHandle: string | null;
+  status: 'REQUESTED' | 'INVITED';
+  updatedAt: string;
+}
+/** Super-admin queue of buyers awaiting tester access + the dashboard deep-links to add them. */
+export interface FbAccessRequestList {
+  requests: FbAccessRequestRow[];
+  dataAppRolesUrl: string | null;
+  launchAppRolesUrl: string | null;
+  approveUrl: string;
+}

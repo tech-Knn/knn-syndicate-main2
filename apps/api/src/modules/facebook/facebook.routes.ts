@@ -7,15 +7,19 @@ import {
   checkLaunchAccess,
   disconnect,
   getAuthUrl,
+  getFbAccess,
   handleCallback,
   listAccountPages,
   listAccounts,
   listAllProfiles,
+  listFbAccessRequests,
   listPages,
   listPixels,
   listProfileAccounts,
   listProfilePages,
   listProfiles,
+  markFbAccessInvited,
+  requestFbAccess,
   resync,
 } from './facebook.service.js';
 
@@ -72,6 +76,45 @@ export async function facebookRoutes(app: FastifyInstance): Promise<void> {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     try {
       return reply.send({ profiles: await listAllProfiles() });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // ── Tester onboarding (apps in Dev mode) ─────────────────────────────────────────────────────
+  // Buyer's own onboarding state (drives the in-product checklist).
+  app.get('/access', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await getFbAccess(req.auth));
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+  // Buyer submits their Facebook profile URL/username → REQUESTED.
+  app.post<{ Body: { fbHandle?: string } }>('/access', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await requestFbAccess(req.auth, String(req.body?.fbHandle ?? '')));
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+  // Super-admin: the queue of buyers awaiting tester access + dashboard deep-links to add them.
+  app.get('/access/requests', { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await listFbAccessRequests());
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+  // Super-admin: mark a buyer as added in the FB dashboard → INVITED.
+  app.post<{ Params: { userId: string } }>('/access/requests/:userId/invited', { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      await markFbAccessInvited(req.params.userId);
+      return reply.send({ ok: true });
     } catch (err) {
       return handleRouteError(err, reply);
     }

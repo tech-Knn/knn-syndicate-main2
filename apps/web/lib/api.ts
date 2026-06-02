@@ -7,6 +7,8 @@ import {
   type AfsChannelRow,
   type BulkResult,
   type Campaign,
+  type FbAccessRequestList,
+  type FbAccessState,
   type CreateOrgInput,
   type DomainRow,
   type FbAccount,
@@ -264,6 +266,13 @@ export const facebook = {
     (await parse<{ pages: FbPage[] }>(await authedFetch(`/api/facebook/accounts/${accountId}/pages`))).pages,
   pixels: async (accountId: string): Promise<FbPixel[]> =>
     (await parse<{ pixels: FbPixel[] }>(await authedFetch(`/api/facebook/accounts/${accountId}/pixels`))).pixels,
+  // Tester onboarding (apps in Dev mode).
+  getAccess: async (): Promise<FbAccessState> => parse(await authedFetch('/api/facebook/access')),
+  requestAccess: async (fbHandle: string): Promise<FbAccessState> =>
+    parse(await authedFetch('/api/facebook/access', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ fbHandle }) })),
+  accessRequests: async (): Promise<FbAccessRequestList> => parse(await authedFetch('/api/facebook/access/requests')),
+  markInvited: async (userId: string): Promise<void> =>
+    parse(await authedFetch(`/api/facebook/access/requests/${userId}/invited`, { method: 'POST' })),
 };
 
 export const campaigns = {

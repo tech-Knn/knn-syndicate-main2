@@ -511,3 +511,84 @@ export async function disconnect(auth: AuthContext, connectionId: string): Promi
   await loadConnection(auth, connectionId);
   await runScoped(auth, (tx) => tx.fbConnection.delete({ where: { id: connectionId } }));
 }
+
+// ── FB tester onboarding (apps in Dev mode → buyers must be added as testers on BOTH apps) ──────────
+// Facebook has no API to add a real person as a tester (verified: POST /{app}/roles is unsupported),
+// so we capture the buyer's profile in-product, route it to a super-admin to add in the FB dashboard,
+// and guide the buyer to approve. This replaces the "DM us your ID" flow.
+
+export interface FbAccessState {
+  fbHandle: string | null;
+  status: 'NONE' | 'REQUESTED' | 'INVITED';
+  connected: boolean; // derived: has ≥1 FbConnection
+}
+export interface FbAccessRequestRow {
+  userId: string;
+  name: string;
+  email: string;
+  orgName: string;
+  fbHandle: string | null;
+  status: 'REQUESTED' | 'INVITED';
+  updatedAt: string;
+}
+export interface FbAccessRequestList {
+  requests: FbAccessRequestRow[];
+  /** Deep-links the super-admin uses to add the buyer's profile in each app's Roles page. */
+  dataAppRolesUrl: string | null;
+  launchAppRolesUrl: string | null;
+  /** Where the BUYER approves the invites. */
+  approveUrl: string;
+}
+
+const APPROVE_URL = 'https://developers.facebook.com/settings/developer/requests/';
+function appRolesUrl(appId: string | undefined): string | null {
+  return appId ? `https://developers.facebook.com/apps/${appId}/roles/roles/` : null;
+}
+
+/** Buyer submits their Facebook profile URL/username → moves them to REQUESTED. */
+export async function requestFbAccess(auth: AuthContext, rawHandle: string): Promise<FbAccessState> {
+  const fbHandle = (rawHandle ?? '').trim();
+  if (!fbHandle) throw new AppError(400, 'Enter your Facebook profile URL or username.');
+  if (fbHandle.length > 300) throw new AppError(400, "That doesn't look like a Facebook profile — paste your profile URL.");
+  await runScoped(auth, (tx) => tx.user.update({ where: { id: auth.userId }, data: { fbHandle, fbAccessStatus: 'REQUESTED' } }));
+  return getFbAccess(auth);
+}
+
+/** The buyer's own onboarding state (drives the in-product checklist). */
+export async function getFbAccess(auth: AuthContext): Promise<FbAccessState> {
+  return runScoped(auth, async (tx) => {
+    const u = await tx.user.findUnique({ where: { id: auth.userId }, select: { fbHandle: true, fbAccessStatus: true } });
+    const connected = (await tx.fbConnection.count({ where: { userId: auth.userId } })) > 0;
+    return { fbHandle: u?.fbHandle ?? null, status: (u?.fbAccessStatus ?? 'NONE') as FbAccessState['status'], connected };
+  });
+}
+
+/** Super-admin queue: everyone awaiting tester access, + the dashboard deep-links to add them. */
+export async function listFbAccessRequests(): Promise<FbAccessRequestList> {
+  const users = await withSystem((tx) =>
+    tx.user.findMany({
+      where: { fbAccessStatus: { in: ['REQUESTED', 'INVITED'] } },
+      select: { id: true, name: true, email: true, fbHandle: true, fbAccessStatus: true, updatedAt: true, organization: { select: { name: true } } },
+      orderBy: { updatedAt: 'desc' },
+    }),
+  );
+  return {
+    requests: users.map((u) => ({
+      userId: u.id,
+      name: u.name,
+      email: u.email,
+      orgName: u.organization.name,
+      fbHandle: u.fbHandle,
+      status: u.fbAccessStatus as 'REQUESTED' | 'INVITED',
+      updatedAt: u.updatedAt.toISOString(),
+    })),
+    dataAppRolesUrl: appRolesUrl(env.FB_APP_ID),
+    launchAppRolesUrl: appRolesUrl(env.FB_LAUNCH_APP_ID || env.FB_APP_ID),
+    approveUrl: APPROVE_URL,
+  };
+}
+
+/** Super-admin marks a buyer as added in the FB dashboard → INVITED (awaiting their approval). */
+export async function markFbAccessInvited(userId: string): Promise<void> {
+  await withSystem((tx) => tx.user.update({ where: { id: userId }, data: { fbAccessStatus: 'INVITED' } }));
+}
