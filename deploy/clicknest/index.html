@@ -3,99 +3,303 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ClickNest — Run and measure your Facebook ad campaigns</title>
-  <meta name="description" content="ClickNest is a campaign management and analytics platform that advertisers and media buyers use to launch, manage and measure their own Facebook ad campaigns in one dashboard." />
+  <title>ClickNest — Launch Facebook ads and track ROI in one place</title>
+  <meta name="description" content="ClickNest is the workspace media buyers use to launch, manage and measure their own Facebook ad campaigns — with spend, conversions and ROI on one screen, in real time." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%2314a05a'/><text x='16' y='23' font-size='20' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'>C</text></svg>" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <header class="site">
     <div class="wrap">
       <a class="brand" href="/"><span class="mark">C</span> ClickNest</a>
-      <nav class="site">
-        <a href="#how">How it works</a>
+      <nav class="nav-links">
         <a href="#features">Features</a>
-        <a href="/privacy.html">Privacy</a>
-        <a href="/terms.html">Terms</a>
+        <a href="#how">How it works</a>
+        <a href="#security">Security</a>
+        <a href="#faq">FAQ</a>
       </nav>
+      <div class="nav-auth">
+        <a class="login hide-mobile" href="https://app.staging.rsoc.app/login">Log in</a>
+        <a class="btn btn-primary" href="https://app.staging.rsoc.app/signup">Sign up free</a>
+      </div>
     </div>
   </header>
 
   <main>
+    <!-- HERO -->
     <section class="hero">
       <div class="wrap">
-        <h1>Run and measure your Facebook ad campaigns — in one place.</h1>
-        <p class="lead">
-          ClickNest is a campaign management and analytics platform for advertisers and
-          media buyers. Connect your own Facebook ad account, launch and manage your
-          campaigns, and see your spend, results and return on ad spend in real time.
-        </p>
-        <a class="cta" href="#how">See how it works</a>
-        <a class="cta secondary" href="#features">What you get</a>
+        <div>
+          <span class="eyebrow">Built for media buyers</span>
+          <h1>Run your Facebook ads and watch the <span class="hl">money</span> — not the tabs.</h1>
+          <p class="lead">
+            Ads Manager tells you what happened to your clicks. ClickNest tells you what happened to your
+            cash. Launch campaigns, manage them, and see spend, conversions and return on ad spend on one
+            live screen — using your own ad accounts.
+          </p>
+          <div class="hero-cta">
+            <a class="btn btn-primary btn-lg" href="https://app.staging.rsoc.app/signup">Start free</a>
+            <a class="btn btn-ghost btn-lg" href="#how">See how it works</a>
+          </div>
+          <div class="hero-note">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"/></svg>
+            Connect in minutes · works with your existing ad accounts &amp; Pages
+          </div>
+        </div>
+
+        <!-- product mockup -->
+        <div class="mock" aria-hidden="true">
+          <div class="mock-bar"><i></i><i></i><i></i><span>app.clicknest — Campaign overview</span></div>
+          <div class="mock-body">
+            <div class="mock-head"><h4>Campaign performance · last 7 days</h4><span class="pill">● Live</span></div>
+            <div class="stat-row">
+              <div class="stat"><div class="k">Spend</div><div class="v">$4,820</div><div class="d up">on budget</div></div>
+              <div class="stat"><div class="k">Conversions</div><div class="v">1,143</div><div class="d up">▲ 12%</div></div>
+              <div class="stat"><div class="k">ROAS</div><div class="v">2.7×</div><div class="d up">▲ 0.3</div></div>
+            </div>
+            <div class="chart">
+              <div class="bar" style="height:48%"></div>
+              <div class="bar" style="height:62%"></div>
+              <div class="bar alt" style="height:40%"></div>
+              <div class="bar" style="height:74%"></div>
+              <div class="bar" style="height:58%"></div>
+              <div class="bar" style="height:88%"></div>
+              <div class="bar" style="height:70%"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section id="features" class="wrap">
-      <div class="grid">
-        <div class="card">
-          <h3>Launch &amp; manage campaigns</h3>
-          <p>Create, launch, edit and pause your Facebook ad campaigns from a single, guided workspace — no juggling tabs in Ads Manager.</p>
-        </div>
-        <div class="card">
-          <h3>Real-time performance</h3>
-          <p>Track spend, clicks and conversions for your own campaigns as results come in, with a clear view of what's working.</p>
-        </div>
-        <div class="card">
-          <h3>ROI in one dashboard</h3>
-          <p>See return on ad spend per campaign and ad, so you can shift budget to the winners and cut the rest with confidence.</p>
-        </div>
-      </div>
-    </section>
-
-    <section id="how" class="section">
+    <!-- TRUST -->
+    <div class="trust">
       <div class="wrap">
-        <h2>How it works</h2>
+        <span>Bring your own <b>Facebook ad accounts</b></span>
+        <span>·</span>
+        <span>Your <b>Pages</b> &amp; pixels</span>
+        <span>·</span>
+        <span>Official <b>Meta Marketing API</b></span>
+        <span>·</span>
+        <span>Disconnect <b>any time</b></span>
+      </div>
+    </div>
+
+    <!-- FEATURES -->
+    <section class="section" id="features">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="eyebrow">Everything in one workspace</span>
+          <h2>Less tab‑juggling. More signal.</h2>
+          <p>The handful of things you actually do every day, pulled into a single, fast workspace built for performance buyers.</p>
+        </div>
+        <div class="feat-grid">
+          <div class="feat">
+            <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg></div>
+            <h3>Launch in minutes</h3>
+            <p>A guided builder takes you from idea to a live campaign — objective, budget, audience, creative — without bouncing between five Ads Manager screens.</p>
+          </div>
+          <div class="feat">
+            <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m7 14 3-4 3 3 5-7"/></svg></div>
+            <h3>ROI on one screen</h3>
+            <p>Spend, clicks, conversions and return on ad spend update in real time — per campaign and per ad — so you always know what's actually paying off.</p>
+          </div>
+          <div class="feat">
+            <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
+            <h3>Manage at scale</h3>
+            <p>Pause losers, scale winners, and adjust budgets across many campaigns at once — bulk actions that would take an afternoon in the native tools.</p>
+          </div>
+          <div class="feat">
+            <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/></svg></div>
+            <h3>Always fresh numbers</h3>
+            <p>We pull your results on a schedule and reconcile them automatically, so the dashboard you open at 9am isn't yesterday's story.</p>
+          </div>
+          <div class="feat">
+            <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5"/><path d="M21 3 9 15"/><path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"/></svg></div>
+            <h3>Your accounts, your data</h3>
+            <p>You connect your own ad accounts and Pages. ClickNest acts on your behalf — and only on what you grant. Revoke access whenever you want.</p>
+          </div>
+          <div class="feat">
+            <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18"/><path d="M6 7v13a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg></div>
+            <h3>Built for teams</h3>
+            <p>Roles for owners, admins and buyers, with each company's campaigns and accounts kept separate — clean multi‑tenant by design.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section class="section alt" id="how">
+      <div class="wrap">
+        <div class="sec-head center">
+          <span class="eyebrow">From zero to live in three steps</span>
+          <h2>How ClickNest works</h2>
+        </div>
         <div class="steps">
           <div class="step">
             <div class="n">1</div>
-            <h3>Connect your account</h3>
-            <p>Sign in with Facebook and authorize ClickNest to work with your own ad account and Pages. You stay in control and can disconnect any time.</p>
+            <h3>Connect Facebook</h3>
+            <p>Sign in and authorize ClickNest to work with your own ad account and Pages through Meta's official API. You stay in control of every permission.</p>
           </div>
           <div class="step">
             <div class="n">2</div>
-            <h3>Launch your campaigns</h3>
-            <p>Build and launch campaigns through ClickNest's guided workspace, using your own ad account and Pages.</p>
+            <h3>Launch &amp; manage</h3>
+            <p>Build campaigns in the guided workspace and push them live to your account. Edit, pause and scale from the same place.</p>
           </div>
           <div class="step">
             <div class="n">3</div>
-            <h3>Measure and optimize</h3>
-            <p>Watch performance update in real time and double down on the campaigns delivering the best return.</p>
+            <h3>Measure the money</h3>
+            <p>Watch spend and conversions roll in, see ROAS per ad, and double down on what works — all without leaving ClickNest.</p>
           </div>
         </div>
       </div>
     </section>
 
+    <!-- BENEFITS SPLIT -->
     <section class="section">
+      <div class="wrap split">
+        <div>
+          <span class="eyebrow">Why buyers switch</span>
+          <h2 style="font-size:32px;letter-spacing:-.02em;margin:10px 0 6px;">Stop stitching spreadsheets together at midnight.</h2>
+          <p style="color:var(--muted);font-size:17px;margin:0 0 6px;">If you run real budgets, you've felt this. ClickNest removes the busywork between launching an ad and knowing whether it made money.</p>
+          <ul class="checklist">
+            <li><span class="tick"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg></span> One dashboard for every campaign across your accounts</li>
+            <li><span class="tick"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg></span> Return on ad spend down to the individual ad</li>
+            <li><span class="tick"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg></span> Bulk pause / scale instead of clicking one ad at a time</li>
+            <li><span class="tick"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg></span> No spreadsheets, no copy‑paste, no stale numbers</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>What a morning looks like</h3>
+          <div class="kpi">
+            <div><div class="v">9:02</div><div class="k">Open ClickNest, see overnight results</div></div>
+            <div><div class="v">2 clicks</div><div class="k">Pause the two ads bleeding budget</div></div>
+            <div><div class="v">+30%</div><div class="k">Shift spend onto yesterday's winner</div></div>
+            <div><div class="v">done</div><div class="k">Before your coffee's cold</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECURITY -->
+    <section class="section alt" id="security">
       <div class="wrap">
-        <h2>Built for advertisers, not agencies' overhead</h2>
-        <p style="color:var(--muted); max-width:680px;">
-          ClickNest only ever accesses each customer's own ad accounts, Pages and campaign
-          data, and only to operate the advertising tools they use inside ClickNest. We do
-          not sell or share this data. Read our
-          <a href="/privacy.html">Privacy Policy</a> and <a href="/terms.html">Terms of Service</a>.
+        <div class="sec-head center">
+          <span class="eyebrow">Trust &amp; data</span>
+          <h2>Your accounts stay yours</h2>
+          <p>ClickNest is a tool you point at your own advertising — not a place your data gets sold.</p>
+        </div>
+        <div class="sec-cards">
+          <div class="sec-card">
+            <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg></div>
+            <h3>Permission‑scoped access</h3>
+            <p>We only access the ad accounts, Pages and campaign data you explicitly grant — and only to run the features you use.</p>
+          </div>
+          <div class="sec-card">
+            <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+            <h3>Encrypted &amp; isolated</h3>
+            <p>Access tokens are encrypted at rest and every company's data is isolated. Nothing is shared between accounts.</p>
+          </div>
+          <div class="sec-card">
+            <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 3v6h6"/></svg></div>
+            <h3>Revoke anytime</h3>
+            <p>Disconnect from ClickNest or remove it in your Facebook settings whenever you like — access ends immediately.</p>
+          </div>
+        </div>
+        <p style="text-align:center;color:var(--muted);margin-top:26px;font-size:15px;">
+          Read our <a href="/privacy.html">Privacy Policy</a> and <a href="/terms.html">Terms of Service</a>.
         </p>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="section" id="faq">
+      <div class="wrap">
+        <div class="sec-head center">
+          <span class="eyebrow">Good questions</span>
+          <h2>Frequently asked</h2>
+        </div>
+        <div class="faq">
+          <details open>
+            <summary>Do I use my own Facebook ad account?</summary>
+            <p>Yes. ClickNest never runs ads on some shared account — you connect your own ad account and Pages, and every campaign runs there. You keep ownership and billing stays with you.</p>
+          </details>
+          <details>
+            <summary>How does ClickNest connect to Facebook?</summary>
+            <p>Through Meta's official Marketing API using Facebook Login. You authorize the specific permissions you're comfortable with, and you can revoke them at any time from your Facebook settings.</p>
+          </details>
+          <details>
+            <summary>What can I actually do inside ClickNest?</summary>
+            <p>Create, launch, edit and pause campaigns; manage budgets in bulk; and track spend, clicks, conversions and ROAS per campaign and per ad in real time.</p>
+          </details>
+          <details>
+            <summary>Is my data sold or shared?</summary>
+            <p>No. We access your data only to operate the features you use, and we don't sell it or share it with third parties beyond what's required to provide the service (such as Meta's own APIs). See our <a href="/privacy.html">Privacy Policy</a>.</p>
+          </details>
+          <details>
+            <summary>Can my team use it together?</summary>
+            <p>Yes — ClickNest supports owners, admins and media buyers, with each company's campaigns and accounts kept cleanly separated.</p>
+          </details>
+          <details>
+            <summary>How do I get started?</summary>
+            <p>Create a free account, connect your Facebook ad account, and launch your first campaign. It takes a few minutes.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="section" style="padding-top:0;">
+      <div class="wrap">
+        <div class="cta-band">
+          <h2>Run smarter campaigns starting today.</h2>
+          <p>Connect your Facebook account and see your real return on ad spend in minutes.</p>
+          <div class="hero-cta">
+            <a class="btn btn-primary btn-lg" href="https://app.staging.rsoc.app/signup">Sign up free</a>
+            <a class="btn btn-light btn-lg" href="https://app.staging.rsoc.app/login">Log in</a>
+          </div>
+        </div>
       </div>
     </section>
   </main>
 
   <footer class="site">
     <div class="wrap">
-      <div>© <span id="yr">2026</span> ClickNest. All rights reserved.</div>
-      <div>
-        <a href="/privacy.html">Privacy Policy</a>
-        <a href="/terms.html">Terms of Service</a>
-        <a href="mailto:support@clicknest.app">Contact</a>
+      <div class="cols">
+        <div>
+          <a class="brand" href="/"><span class="mark">C</span> ClickNest</a>
+          <p class="blurb">The workspace media buyers use to launch, manage and measure their own Facebook ad campaigns — with ROI on one screen.</p>
+        </div>
+        <div>
+          <h5>Product</h5>
+          <ul>
+            <li><a href="#features">Features</a></li>
+            <li><a href="#how">How it works</a></li>
+            <li><a href="#security">Security</a></li>
+            <li><a href="#faq">FAQ</a></li>
+          </ul>
+        </div>
+        <div>
+          <h5>Account</h5>
+          <ul>
+            <li><a href="https://app.staging.rsoc.app/login">Log in</a></li>
+            <li><a href="https://app.staging.rsoc.app/signup">Sign up</a></li>
+          </ul>
+        </div>
+        <div>
+          <h5>Legal</h5>
+          <ul>
+            <li><a href="/privacy.html">Privacy Policy</a></li>
+            <li><a href="/terms.html">Terms of Service</a></li>
+            <li><a href="mailto:support@clicknest.app">Contact</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="legal-row">
+        <span>© <span id="yr">2026</span> ClickNest. All rights reserved.</span>
+        <span>ClickNest is a third‑party tool and is not affiliated with or endorsed by Meta Platforms, Inc.</span>
       </div>
     </div>
   </footer>
+  <script>document.getElementById('yr').textContent=new Date().getFullYear();</script>
 </body>
 </html>
