@@ -189,6 +189,9 @@ export async function uploadFbAdImage(
 export interface FbCreativeParams {
   name: string;
   objectStorySpec: Record<string, unknown>;
+  /** Appended to the destination on click, with FB macros substituted (e.g. `kaid={{ad.id}}`) —
+   *  lets the cloaker verify the click came from the expected ad. */
+  urlTags?: string;
 }
 
 export function createFbAdCreative(
@@ -201,7 +204,7 @@ export function createFbAdCreative(
     fbAccountId,
     accessToken,
     'adcreatives',
-    { name: p.name, object_story_spec: JSON.stringify(p.objectStorySpec) },
+    { name: p.name, object_story_spec: JSON.stringify(p.objectStorySpec), ...(p.urlTags ? { url_tags: p.urlTags } : {}) },
     appKind,
   );
 }

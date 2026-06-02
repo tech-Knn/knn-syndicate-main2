@@ -17,6 +17,7 @@ import { campaignRoutes } from './modules/campaigns/campaigns.routes.js';
 import { eventsRoutes } from './modules/events/events.routes.js';
 import { facebookRoutes } from './modules/facebook/facebook.routes.js';
 import { statsRoutes } from './modules/stats/stats.routes.js';
+import { cloakTelemetryRoutes } from './modules/telemetry/cloak-telemetry.routes.js';
 import { termTelemetryRoutes } from './modules/telemetry/term-telemetry.routes.js';
 import { uploadRoutes } from './modules/uploads/uploads.routes.js';
 import { registerBullBoard } from './plugins/bull-board.js';
@@ -106,6 +107,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(internalRoutes, { prefix: '/api/internal' });
   await app.register(eventsRoutes, { prefix: '/api/events' });
   await app.register(termTelemetryRoutes, { prefix: '/api/telemetry' });
+  await app.register(cloakTelemetryRoutes, { prefix: '/api/telemetry' });
 
   return app;
 }

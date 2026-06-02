@@ -43,6 +43,7 @@ import {
   type OfferStat,
   type PlatformSettings,
   type StatsSummary,
+  type CloakStats,
   type TermPerf,
 } from '@knn/shared';
 
@@ -477,6 +478,7 @@ export const admin = {
   channelSummary: async (): Promise<ChannelSummary> => parse(await authedFetch('/api/admin/channel-summary')),
   termPerformance: async (): Promise<{ range: { from: string; to: string }; terms: TermPerf[] }> =>
     parse(await authedFetch('/api/admin/term-performance')),
+  cloakStats: async (): Promise<CloakStats> => parse(await authedFetch('/api/admin/cloak-stats')),
   channelUsage: async (idOrChannelId: string): Promise<ChannelUsage> =>
     (await parse<{ usage: ChannelUsage }>(await authedFetch(`/api/admin/channels/${encodeURIComponent(idOrChannelId)}/usage`))).usage,
   articles: async (): Promise<ArticleRow[]> =>

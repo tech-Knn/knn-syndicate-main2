@@ -17,6 +17,11 @@ id = "0480a994b3e1469cb3d9fc966139ad41"
 
 [vars]
 ARTICLE_FALLBACK = "https://articles.10linesabout.com/"
+# Cloak ad-id verification: start in OBSERVE (route unchanged, only measure money-vs-white +
+# macro-hit rate). Flip to "enforce" ONLY after the stats prove real clicks carry {{ad.id}}.
+CLOAK_VERIFY_MODE = "observe"
+# Beacon each decision to the API so the split is visible. Empty disables telemetry.
+CLOAK_TELEMETRY_URL = "https://app.staging.rsoc.app/api/telemetry/cloak"
 
 # Custom domain for the redirect host. `custom_domain = true` provisions ONLY this
 # hostname's DNS + cert on Cloudflare (scoped to `go` — root/www/articles untouched).

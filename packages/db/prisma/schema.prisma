@@ -790,6 +790,31 @@ model TermStatDaily {
   @@map("term_stat_daily")
 }
 
+/// Cloaker decision telemetry (observe-first ad-ID verification). The edge redirect beacons every
+/// decision so we can SEE the money-vs-white split — and, before enforcing, whether real ad clicks
+/// carry the FB `{{ad.id}}` macro. `money`/`white` = where the click was actually routed. For PAID
+/// clicks we also record the would-be-enforce outcome: `verifiedMatch` (kaid == expected ad id),
+/// `verifiedMismatch` (kaid present but wrong → spoof/bot, safe to block), `macroMissing` (paid but
+/// no kaid → enforcing would white-page these = the revenue-loss signal to watch). Per campaign per
+/// IST day; platform-wide (super-admin visibility). Self-dormant: nothing writes unless the worker
+/// has a telemetry URL configured.
+model CloakStatDaily {
+  id               String   @id @default(uuid()) @db.Uuid
+  campaignId       String   @map("campaign_id") @db.Uuid
+  day              String
+  money            Int      @default(0)
+  white            Int      @default(0)
+  verifiedMatch    Int      @default(0) @map("verified_match")
+  verifiedMismatch Int      @default(0) @map("verified_mismatch")
+  macroMissing     Int      @default(0) @map("macro_missing")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@unique([campaignId, day])
+  @@index([day])
+  @@map("cloak_stat_daily")
+}
+
 // ---------------------------------------------------------------------------
 // Conversion tracking (RSOC final ad-click → Facebook Conversions API, S2S).
 // The AFS ad lives in a cross-origin Google iframe, so the client can't see the

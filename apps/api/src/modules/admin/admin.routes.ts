@@ -41,6 +41,7 @@ import {
   setOrgRevenueCut,
   updatePlatformSettings,
 } from './platform.service.js';
+import { getCloakStats } from '../telemetry/cloak-telemetry.service.js';
 import { getTermPerformance } from '../telemetry/term-telemetry.service.js';
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
@@ -242,6 +243,21 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       try {
         const limit = req.query.limit ? Number(req.query.limit) : undefined;
         return reply.send(await getTermPerformance({ from: req.query.from, to: req.query.to, limit }));
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Cloaker money-vs-white split per campaign (observe-first ad-ID verification) — so any
+  // revenue loss from verification is visible BEFORE enforcing.
+  app.get<{ Querystring: { from?: string; to?: string } }>(
+    '/cloak-stats',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.send(await getCloakStats({ from: req.query.from, to: req.query.to }));
       } catch (err) {
         return handleRouteError(err, reply);
       }

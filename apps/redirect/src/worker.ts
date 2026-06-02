@@ -23,6 +23,10 @@ interface Env {
   REDIRECTS: Kv;
   /** Generic fallback when a redirect id is unknown (never 404 a paid click). */
   ARTICLE_FALLBACK?: string;
+  /** Cloak ad-id verification mode: 'observe' (default — route unchanged, only measure) | 'enforce'. */
+  CLOAK_VERIFY_MODE?: string;
+  /** Where to beacon each cloak decision (money/white + verify outcome). Empty → telemetry off. */
+  CLOAK_TELEMETRY_URL?: string;
 }
 
 const key = (id: string): string => `redirect:${id}`;
@@ -50,8 +54,19 @@ worker.get('/go/:id', async (c) => {
     return c.redirect(fallback, 302);
   }
 
+  // Cloak ad-id verification mode is global (one switch to flip): default OBSERVE = route exactly as
+  // today, only measure. Set CLOAK_VERIFY_MODE=enforce (and redeploy) once the stats prove it's safe.
+  config.verifyMode = c.env.CLOAK_VERIFY_MODE === 'enforce' ? 'enforce' : 'observe';
+
   const query = Object.fromEntries(new URL(c.req.url).searchParams);
   const decision = resolveRedirect(config, query, { txid: mintTxid() });
+
+  // Beacon the decision (money/white + the would-be-enforce ad-id outcome) so the money-vs-white
+  // split + macro-hit rate are visible BEFORE enforcing. Fire-and-forget; never blocks the 302.
+  if (c.env.CLOAK_TELEMETRY_URL && config.campaignId) {
+    const t = `${c.env.CLOAK_TELEMETRY_URL}?cid=${encodeURIComponent(config.campaignId)}&route=${decision.verify.route}&v=${decision.verify.outcome}`;
+    c.executionCtx.waitUntil(fetch(t, { method: 'POST' }).then(() => undefined).catch(() => undefined));
+  }
 
   // On a funnel-bound (paid + active) click, log txid → {redirectId, fbclid} to KV so
   // the later conversion beacon can resolve the ad's pixel + the buyer's token and the

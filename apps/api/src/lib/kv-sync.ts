@@ -22,6 +22,8 @@ export interface RedirectConfigPayload {
   channel?: string;
   /** referrerAdCreative (AFS `rc`) — the campaign-level Referrer Ad Creative. */
   adCreative?: string;
+  /** Expected FB ad id (ad.fbAdId) — the cloaker verifies the click's `kaid` macro against it. */
+  expectedAdId?: string;
   styleId?: string;
   fallbackUrl?: string;
   splits?: RedirectSplitPayload[];

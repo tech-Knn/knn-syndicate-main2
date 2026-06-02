@@ -44,6 +44,23 @@ export interface RedirectConfig {
   /** Weighted destinations: A/B splits or the campaign's PAID offers (Phase E).
    *  Weights need not sum to 100 (normalized at pick time). */
   splits?: RedirectSplit[];
+  /** Expected FB ad id (ad.fbAdId). When present + verifyMode 'enforce', a paid click must carry a
+   *  matching `kaid` ({{ad.id}} macro) to reach the money page. Absent → legacy (base paid logic). */
+  expectedAdId?: string;
+  /** 'observe' (default): route exactly as today, only RECORD what verification would decide (zero
+   *  revenue risk). 'enforce': require the ad-id match for paid traffic. Set globally by the Worker. */
+  verifyMode?: 'observe' | 'enforce';
+}
+
+/** The cloak ad-id verification outcome for a click (observe-first telemetry). */
+export type VerifyOutcome = 'match' | 'mismatch' | 'missing' | 'na';
+
+/** Pure: did this paid click prove it came from the expected ad? `na` when not paid / no expected id. */
+function verifyOutcome(config: RedirectConfig, query: QueryParams, basePaid: boolean): VerifyOutcome {
+  if (!basePaid || !config.expectedAdId) return 'na';
+  const kaid = query.kaid; // FB {{ad.id}} macro, stamped on real ad clicks via url_tags
+  if (!kaid) return 'missing';
+  return kaid === config.expectedAdId ? 'match' : 'mismatch';
 }
 
 export type QueryParams = Record<string, string | undefined>;
@@ -76,6 +93,8 @@ export interface RedirectDecision {
   txid: string;
   /** The offer the click was routed to (Phase E), when splits carry offer ids. */
   offerId?: string;
+  /** Cloaker telemetry: the actual route taken + the would-be-enforce ad-id verification outcome. */
+  verify: { route: 'money' | 'white'; outcome: VerifyOutcome };
 }
 
 /**
@@ -88,9 +107,16 @@ export function resolveRedirect(
   query: QueryParams,
   opts: { txid: string; rand?: number },
 ): RedirectDecision {
-  const paid = isPaidTraffic(query);
+  const basePaid = isPaidTraffic(query);
+  const outcome = verifyOutcome(config, query, basePaid);
+
+  // Final routing. ENFORCE (only when an expected ad id is configured) requires the macro to match;
+  // OBSERVE / legacy (no expected id) routes exactly as the base paid signal → zero revenue risk.
+  const enforce = config.verifyMode === 'enforce' && Boolean(config.expectedAdId);
+  const paid = enforce ? basePaid && outcome === 'match' : basePaid;
+
   if (!paid || !config.active) {
-    return { location: config.fallbackUrl || config.articleUrl, paid, txid: opts.txid };
+    return { location: config.fallbackUrl || config.articleUrl, paid, txid: opts.txid, verify: { route: 'white', outcome } };
   }
 
   const picked = pickSplit(config.splits, opts.rand ?? Math.random());
@@ -102,5 +128,5 @@ export function resolveRedirect(
   if (config.rac) url.searchParams.set('rac', config.rac);
   if (config.styleId) url.searchParams.set('styleId', config.styleId);
   url.searchParams.set('txid', opts.txid);
-  return { location: url.toString(), paid, txid: opts.txid, offerId: picked?.offerId };
+  return { location: url.toString(), paid, txid: opts.txid, offerId: picked?.offerId, verify: { route: 'money', outcome } };
 }

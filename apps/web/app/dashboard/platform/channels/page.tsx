@@ -1,7 +1,7 @@
 'use client';
 
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
-import { type ChannelSummary, type ChannelUsage, type TermPerf } from '@knn/shared';
+import { type ChannelSummary, type ChannelUsage, type CloakStats, type TermPerf } from '@knn/shared';
 import { Badge, Banner, Button, Card, EmptyState, Skeleton, useConfirm } from '@/components/ui';
 import { ApiError, admin, adsense, domains } from '@/lib/api';
 import { type AfsChannelRow, type DomainRow } from '@/lib/types';
@@ -39,6 +39,12 @@ export default function ChannelsPage() {
         setTermRange(r.range);
       })
       .catch(() => setTerms([]));
+  }, []);
+  // Cloaker routing (observe-first ad-id verification): how many clicks reach the money page vs the
+  // white page, and — before enforcing — how many real clicks lack the {{ad.id}} macro (loss risk).
+  const [cloak, setCloak] = useState<CloakStats | null>(null);
+  useEffect(() => {
+    void admin.cloakStats().then(setCloak).catch(() => setCloak(null));
   }, []);
   useEffect(() => {
     void domains.list().then((r) => setDomainList(r.domains)).catch(() => setDomainList([]));
@@ -277,6 +283,64 @@ export default function ChannelsPage() {
             )}
           </>
         ) : null}
+      </Card>
+
+      {/* Cloaker routing (observe-first ad-id verification): money vs white + the macro-loss signal. */}
+      <Card className={styles.section}>
+        <div className={styles.sectionHead}>
+          <span className={styles.sectionTitle}>Cloaker routing</span>
+          {cloak && (
+            <span className={styles.subtle}>
+              {cloak.range.from} → {cloak.range.to}
+            </span>
+          )}
+        </div>
+        <p className={styles.subtle}>
+          Clicks routed to the money page vs the white page. <strong>Macro missing</strong> = real ad clicks
+          that arrived without the <code>{'{{ad.id}}'}</code> macro — they&apos;d be sent to the white page if
+          verification were <em>enforced</em>, so a non‑zero count is the revenue‑loss signal to watch. Currently{' '}
+          <strong>observe</strong> mode: routing is unchanged.
+        </p>
+        {cloak === null ? (
+          <Skeleton />
+        ) : cloak.rows.length === 0 ? (
+          <EmptyState title="No cloaker traffic yet" description="Money-vs-white counts appear once live ad clicks flow through the redirect." />
+        ) : (
+          <>
+            <p className={styles.subtle}>
+              Totals — Money <strong>{cloak.totals.money.toLocaleString()}</strong> · White{' '}
+              <strong>{cloak.totals.white.toLocaleString()}</strong> · Verified{' '}
+              <strong>{cloak.totals.verifiedMatch.toLocaleString()}</strong> · Macro missing{' '}
+              <strong>{cloak.totals.macroMissing.toLocaleString()}</strong>
+            </p>
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th className={styles.thLeft}>Campaign</th>
+                    <th>Money</th>
+                    <th>White</th>
+                    <th>Verified</th>
+                    <th>Macro missing</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cloak.rows.slice(0, 50).map((r) => (
+                    <tr key={r.campaignId}>
+                      <td className={styles.name}>{r.name}</td>
+                      <td className={styles.num}>{r.money.toLocaleString()}</td>
+                      <td className={styles.num}>{r.white.toLocaleString()}</td>
+                      <td className={styles.num}>{r.verifiedMatch.toLocaleString()}</td>
+                      <td className={styles.num}>
+                        {r.macroMissing > 0 ? <Badge tone="danger">{r.macroMissing.toLocaleString()}</Badge> : r.macroMissing}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </Card>
 
       {/* Term performance (observe-only): the term-grain "monitor partner terms" RSOC signal. */}

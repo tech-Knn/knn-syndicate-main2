@@ -68,6 +68,26 @@ export interface TermPerf {
   ctr: number | null;
 }
 
+/** Cloaker decision counts for one campaign (observe-first ad-ID verification). */
+export interface CloakStatRow {
+  campaignId: string;
+  name: string;
+  /** Clicks routed to the money/article page vs the white/fallback page (actual routing). */
+  money: number;
+  white: number;
+  /** Of PAID clicks: would-be-enforce outcome — matched the expected ad id… */
+  verifiedMatch: number;
+  /** …had the macro but the WRONG id (spoof/bot → safe to block on enforce)… */
+  verifiedMismatch: number;
+  /** …or had NO {{ad.id}} macro (enforcing would white-page these = revenue-loss signal). */
+  macroMissing: number;
+}
+export interface CloakStats {
+  range: { from: string; to: string };
+  totals: Omit<CloakStatRow, 'campaignId' | 'name'>;
+  rows: CloakStatRow[];
+}
+
 export interface MetricTotals {
   spendUsd: number;
   revenueUsd: number; // buyer-visible revenue (post revenue-cut)

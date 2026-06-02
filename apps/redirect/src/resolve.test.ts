@@ -123,3 +123,60 @@ describe('resolveRedirect', () => {
     expect(d.offerId).toBeUndefined();
   });
 });
+
+describe('resolveRedirect — cloak ad-id verification', () => {
+  const verifyCfg: RedirectConfig = { ...base, expectedAdId: '120250294019500066' };
+  const isMoney = (loc: string) => new URL(loc).pathname === '/a/medicare-2026';
+
+  describe('OBSERVE mode (default) — routing must NEVER change (zero revenue risk)', () => {
+    it('records "match" but still routes by the base signal', () => {
+      const d = resolveRedirect(verifyCfg, { fbclid: 'x', kaid: '120250294019500066' }, { txid: 't' });
+      expect(d.paid).toBe(true);
+      expect(isMoney(d.location)).toBe(true);
+      expect(d.verify).toEqual({ route: 'money', outcome: 'match' });
+    });
+    it('records "mismatch" but STILL routes to money (observe does not block)', () => {
+      const d = resolveRedirect(verifyCfg, { fbclid: 'x', kaid: 'WRONG' }, { txid: 't' });
+      expect(d.paid).toBe(true);
+      expect(isMoney(d.location)).toBe(true); // <-- unchanged routing: no money lost
+      expect(d.verify).toEqual({ route: 'money', outcome: 'mismatch' });
+    });
+    it('records "missing" (no macro) but STILL routes to money', () => {
+      const d = resolveRedirect(verifyCfg, { fbclid: 'x' }, { txid: 't' });
+      expect(isMoney(d.location)).toBe(true); // <-- unchanged: the macro-loss case is only measured
+      expect(d.verify).toEqual({ route: 'money', outcome: 'missing' });
+    });
+    it('non-paid → white, outcome "na"', () => {
+      const d = resolveRedirect(verifyCfg, { utm_source: 'google' }, { txid: 't' });
+      expect(d.verify).toEqual({ route: 'white', outcome: 'na' });
+    });
+  });
+
+  describe('ENFORCE mode — block unverified paid traffic', () => {
+    const enforce: RedirectConfig = { ...verifyCfg, verifyMode: 'enforce' };
+    it('matching kaid → money', () => {
+      const d = resolveRedirect(enforce, { fbclid: 'x', kaid: '120250294019500066' }, { txid: 't' });
+      expect(d.paid).toBe(true);
+      expect(isMoney(d.location)).toBe(true);
+      expect(d.verify).toEqual({ route: 'money', outcome: 'match' });
+    });
+    it('wrong kaid → white (blocked)', () => {
+      const d = resolveRedirect(enforce, { fbclid: 'x', kaid: 'WRONG' }, { txid: 't' });
+      expect(d.paid).toBe(false);
+      expect(d.location).toBe('https://articles.example.com/');
+      expect(d.verify).toEqual({ route: 'white', outcome: 'mismatch' });
+    });
+    it('missing macro → white (blocked)', () => {
+      const d = resolveRedirect(enforce, { fbclid: 'x' }, { txid: 't' });
+      expect(d.paid).toBe(false);
+      expect(d.verify).toEqual({ route: 'white', outcome: 'missing' });
+    });
+    it('LEGACY-TOLERANT: no expectedAdId → routes by base signal (existing campaigns never break)', () => {
+      const legacy: RedirectConfig = { ...base, verifyMode: 'enforce' }; // no expectedAdId
+      const d = resolveRedirect(legacy, { fbclid: 'x' }, { txid: 't' });
+      expect(d.paid).toBe(true);
+      expect(isMoney(d.location)).toBe(true);
+      expect(d.verify).toEqual({ route: 'money', outcome: 'na' });
+    });
+  });
+});

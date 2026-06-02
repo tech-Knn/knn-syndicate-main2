@@ -610,6 +610,9 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
             call_to_action: { type: ad.cta, value: { link: destination } },
           },
         },
+        // FB substitutes {{ad.id}} at click time → `/go/{redirectId}?…&kaid=<fbAdId>`, which the
+        // cloaker verifies against the ad's stored fbAdId (observe-first; see syncCampaignRedirectConfigs).
+        urlTags: 'kaid={{ad.id}}',
       }, appKind);
       const fbAd = await createFbAd(fbAccountId, token, {
         name: ad.name,
@@ -732,6 +735,8 @@ export async function syncCampaignRedirectConfigs(
           articleUrl,
           channel,
           splits,
+          // Cloak verification: the click must carry kaid={{ad.id}} matching this id (enforce mode).
+          expectedAdId: ad.fbAdId ?? undefined,
           // referrerAdCreative (the AFS `rc`) is the campaign-level Referrer Ad Creative — one
           // value for all the campaign's ads (not derived from each ad's copy). Stored in racValue.
           adCreative: campaign.racValue ?? undefined,
@@ -848,6 +853,7 @@ export async function launchCampaign(
         articleUrl,
         channel,
         splits,
+        expectedAdId: ad.fbAdId ?? undefined,
         // referrerAdCreative (AFS `rc`) = the campaign-level Referrer Ad Creative (racValue).
         adCreative: campaign.racValue ?? undefined,
         fallbackUrl: organicFallbackUrl ?? ad.fallbackUrl ?? campaign.fallbackUrl ?? undefined,
