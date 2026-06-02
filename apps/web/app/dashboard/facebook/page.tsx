@@ -758,11 +758,14 @@ export default function FacebookPage() {
           <Button variant="secondary" onClick={() => void connect('launch')} loading={connecting}>
             Connect launch app
           </Button>
-          {/* The Advanced-Access app (post-App-Review). One connection both syncs AND publishes —
-              no tester role, no separate launch app. Only acts if FB_VERIFY_* is configured (else 503). */}
-          <Button variant="secondary" onClick={() => void connect('verify')} loading={connecting}>
-            Connect verification app
-          </Button>
+          {/* The Advanced-Access app (post-App-Review). Parked until Meta approves Advanced Access —
+              SUPER-ADMIN ONLY so buyers stay on the proven DATA + LAUNCH flow and don't hit a dead end.
+              Code + env stay wired; flip this gate (and confirm Advanced Access) to re-expose to buyers. */}
+          {isSuper && (
+            <Button variant="secondary" onClick={() => void connect('verify')} loading={connecting} title="Internal: verify the Advanced-Access app (pending Meta approval)">
+              Connect verification app
+            </Button>
+          )}
         </div>
       </div>
 
