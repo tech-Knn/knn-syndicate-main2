@@ -22,6 +22,11 @@ ARTICLE_FALLBACK = "https://articles.10linesabout.com/"
 CLOAK_VERIFY_MODE = "observe"
 # Beacon each decision to the API so the split is visible. Empty disables telemetry.
 CLOAK_TELEMETRY_URL = "https://app.staging.rsoc.app/api/telemetry/cloak"
+# CLOAK_TOKEN_SECRET is NOT set here (a secret must never be committed). Set it out-of-band, the
+# SAME value the article uses, so the money 302 carries an opaque `?t=` instead of plaintext params:
+#   cd apps/redirect && pnpm dlx wrangler secret put CLOAK_TOKEN_SECRET
+# Unset → the Worker emits the legacy plaintext Location (current behavior). Deploy the token-aware
+# article (observe) BEFORE setting this, so a token-only 302 always meets an article that can decode it.
 
 # Custom domain for the redirect host. `custom_domain = true` provisions ONLY this
 # hostname's DNS + cert on Cloudflare (scoped to `go` — root/www/articles untouched).

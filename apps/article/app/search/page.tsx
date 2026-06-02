@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
+import { resolveCloakGate } from '../_afs/cloak-gate';
 import { resolveSiteConfig, resolveSiteName } from '../_afs/site-config';
 import { ConversionTracker } from '../funnel-beacons';
 import { SearchAds } from './search-ads';
@@ -34,16 +35,20 @@ export default async function SearchPage({
     resolveSiteName(),
     fetchWebResults(host),
   ]);
-  // `q` is the default CSA results param (resultsPageQueryParam); accept `query` too.
+  // `q` is the default CSA results param (resultsPageQueryParam); accept `query` too. The query is
+  // the visitor's clicked term — NOT a monetization secret — so it stays a normal param.
   const query = str(sp.q) || str(sp.query);
-  const referrerAdCreative = str(sp.rc) || undefined;
-  // The offer's AFS channel (per-offer attribution) — forwarded from the content page as `cid`,
-  // NOT `ch`: Google appends its own `ch=1` click-telemetry param to this results URL, so reading
-  // `ch` would get an array (ours + Google's) → dropped → silently lost revenue attribution.
-  const channel = str(sp.cid) || undefined;
-  // Conversion attribution: the redirect threads the click id (txid) + optional
-  // value (cv) / currency (ccy) here via the content page's results-page URL.
-  const clickId = str(sp.txid) || undefined;
+  // Cloak gate: a real click reaches /search carrying the forwarded signed token (`?t=`) — rc/ch/txid
+  // are decoded from it (no plaintext on the results URL either). In `enforce`, a tokenless direct hit
+  // to /search won't monetize (clean results page). In `observe` (default) we fall back to the
+  // plaintext `rc`/`cid`/`txid` params — today's behavior, zero revenue change.
+  const gate = await resolveCloakGate(sp, Date.now());
+  const referrerAdCreative = gate.params.rc;
+  // The offer's AFS channel (per-offer attribution) — from the token, or `cid` in observe.
+  const channel = gate.params.ch;
+  // Conversion attribution: the click id (txid) comes from the token / plaintext; optional
+  // value (cv) / currency (ccy) are non-secret conversion hints, read directly.
+  const clickId = gate.params.txid;
   const value = str(sp.cv) || undefined;
   const currency = str(sp.ccy) || undefined;
 
@@ -64,14 +69,17 @@ export default async function SearchPage({
           )}
         </div>
         {/* Ads supplement REAL search results: capped at (and suppressed without) the organic
-            Web-result count below — Google's Search-ads policy (ads ≤ results). */}
-        <SearchAds
-          query={query}
-          referrerAdCreative={referrerAdCreative}
-          channel={channel}
-          site={site}
-          maxAds={articles.length}
-        />
+            Web-result count below — Google's Search-ads policy (ads ≤ results). Gated by the cloak
+            gate: in `enforce` a tokenless direct hit renders no ads unit (clean results page). */}
+        {gate.monetize && (
+          <SearchAds
+            query={query}
+            referrerAdCreative={referrerAdCreative}
+            channel={channel}
+            site={site}
+            maxAds={articles.length}
+          />
+        )}
         <WebResults host={host} articles={articles} />
         <ConversionTracker clickId={clickId} value={value} currency={currency} term={query || undefined} />
       </main>

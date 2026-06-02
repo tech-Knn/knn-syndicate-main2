@@ -28,6 +28,7 @@ export function RelatedSearchUnit({
   terms,
   txid,
   channel,
+  token,
   site,
 }: {
   referrerAdCreative?: string;
@@ -36,6 +37,9 @@ export function RelatedSearchUnit({
   txid?: string;
   /** The offer's AFS channel — tags ad requests for per-offer revenue attribution (forwarded to /search as `cid`). */
   channel?: string;
+  /** The signed cloak token (when present). Forwarded to /search so the results page is gated by the
+   *  same proof and its URL leaks no plaintext AFS params either. Falls back to plaintext when absent. */
+  token?: string;
   /** Per-host AFS config resolved server-side (pubId/style/adsafe). */
   site: SiteConfig;
 }) {
@@ -47,12 +51,19 @@ export function RelatedSearchUnit({
     // Carry the click id (+ ad creative + channel) onto the results page so /search can
     // attribute conversion + AFS revenue. CSA appends the query term as `q`.
     const rp = new URLSearchParams();
-    if (txid) rp.set('txid', txid);
-    if (referrerAdCreative) rp.set('rc', referrerAdCreative);
-    // Forward the channel as `cid`, NOT `ch`: Google's results unit appends its own `ch=1`
-    // click-telemetry param, so a `ch` here collides (two values → array → dropped) and the
-    // offer's AFS revenue attribution is silently lost. Every competitor uses `cid` for this.
-    if (channel) rp.set('cid', channel);
+    if (token) {
+      // Forward the signed token ONLY — it carries rc/ch/txid; /search decodes + gates on it, so the
+      // results URL leaks no plaintext AFS params either.
+      rp.set('t', token);
+    } else {
+      // Legacy / observe-without-token: forward plaintext params (today's behavior).
+      if (txid) rp.set('txid', txid);
+      if (referrerAdCreative) rp.set('rc', referrerAdCreative);
+      // Forward the channel as `cid`, NOT `ch`: Google's results unit appends its own `ch=1`
+      // click-telemetry param, so a `ch` here collides (two values → array → dropped) and the
+      // offer's AFS revenue attribution is silently lost. Every competitor uses `cid` for this.
+      if (channel) rp.set('cid', channel);
+    }
     const resultsPageBaseUrl = `${window.location.origin}/search${rp.toString() ? `?${rp.toString()}` : ''}`;
 
     const pageOptions = basePageOptions(site, {
@@ -78,7 +89,7 @@ export function RelatedSearchUnit({
         if (adsLoaded) setFilled(true);
       },
     });
-  }, [live, referrerAdCreative, terms, txid, channel, site]);
+  }, [live, referrerAdCreative, terms, txid, channel, token, site]);
 
   // No AFS account for this host → don't render a unit at all (no placeholder, ever).
   if (!live) return null;

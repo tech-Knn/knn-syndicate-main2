@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { articleBlocks, articleTeaser, classifyTerm, cleanTerms } from '@knn/shared';
+import { resolveCloakGate } from '../../_afs/cloak-gate';
 import { resolveSiteConfig } from '../../_afs/site-config';
 import { SiteFooter } from '../../_components/site-footer';
 import { LanderBeacon } from '../../funnel-beacons';
@@ -91,12 +92,16 @@ export default async function ArticlePage({
   const leadBlock = blocks[0]?.type === 'p' ? blocks[0] : null;
   const lead = leadBlock?.text ?? '';
   const bodyBlocks = leadBlock ? blocks.slice(1) : blocks;
-  // Required (since 2025-11-01) when traffic comes from a source you control (our
-  // FB ads); the redirect passes the originating ad creative as `rc`.
-  const referrerAdCreative = str(sp.rc) || undefined;
-  const txid = str(sp.txid) || undefined;
+  // Cloak gate: a real FB click now arrives with an opaque signed token (`?t=`) instead of plaintext
+  // AFS params (the Worker stopped leaking them in the 302 Location). Decode it here; in `enforce`
+  // mode a direct hit with no valid token won't monetize (clean page) — closing direct-article-access.
+  // In `observe` (default) we fall back to plaintext params, so this is a no-op until flipped.
+  const gate = await resolveCloakGate(sp, Date.now());
+  // Required (since 2025-11-01) when traffic comes from a source you control (our FB ads).
+  const referrerAdCreative = gate.params.rc;
+  const txid = gate.params.txid;
   // The offer's AFS channel (per-offer attribution); forwarded to /search by the unit.
-  const channel = str(sp.ch) || undefined;
+  const channel = gate.params.ch;
   // Publisher-provided related-search terms. Preference: explicit `terms` from the redirect →
   // the article's AI-generated high-CPC related searches → campaign keywords. The chosen source
   // is run through the RSOC term-quality filter (rank-first, drop-rarely) so even legacy articles
@@ -130,8 +135,20 @@ export default async function ArticlePage({
           <h1 className={styles.title}>{article.title}</h1>
           {lead && <p className={styles.lead}>{lead}</p>}
 
-          {/* RSOC related-search unit (content-targeted). Clicks → /search results page. */}
-          <RelatedSearchUnit referrerAdCreative={referrerAdCreative} terms={terms} txid={txid} channel={channel} site={site} />
+          {/* RSOC related-search unit (content-targeted). Clicks → /search results page.
+              Gated by the cloak gate: in `enforce` a tokenless direct hit renders no unit (clean
+              page); in `observe` it always renders (today's behavior). The signed token is forwarded
+              to /search so the results page is gated by the same proof, with no plaintext params. */}
+          {gate.monetize && (
+            <RelatedSearchUnit
+              referrerAdCreative={referrerAdCreative}
+              terms={terms}
+              txid={txid}
+              channel={channel}
+              token={gate.params.token}
+              site={site}
+            />
+          )}
 
           <div className={styles.body}>
             {bodyBlocks.map((block, i) => {

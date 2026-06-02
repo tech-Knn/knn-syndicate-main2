@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { signCloakToken } from './cloak-token.js';
 import { type RedirectConfig, resolveRedirect } from './resolve.js';
 
 /**
@@ -27,10 +28,16 @@ interface Env {
   CLOAK_VERIFY_MODE?: string;
   /** Where to beacon each cloak decision (money/white + verify outcome). Empty → telemetry off. */
   CLOAK_TELEMETRY_URL?: string;
+  /** Shared HMAC secret for the cloak token. Set → money 302s carry an opaque `?t=` instead of
+   *  plaintext AFS params (closes the Location leak). Unset → legacy plaintext params (current). */
+  CLOAK_TOKEN_SECRET?: string;
 }
 
 const key = (id: string): string => `redirect:${id}`;
 const DEFAULT_FALLBACK = 'https://articles.10linesabout.com/';
+/** Cloak-token lifetime: long enough for a reading session + a later related-search click on the
+ *  article, short enough that a captured token can't be replayed hours later. */
+const CLOAK_TOKEN_TTL_MS = 30 * 60 * 1000;
 
 /** Attribution click id (txid). Uses the Web Crypto global present on Workers + Node 19+. */
 function mintTxid(): string {
@@ -82,9 +89,27 @@ worker.get('/go/:id', async (c) => {
     c.executionCtx.waitUntil(c.env.REDIRECTS.put(`click:${decision.txid}`, record, { expirationTtl: 604_800 }));
   }
 
+  // Mint a signed cloak token so the money 302's `Location` carries NO plaintext AFS params — a
+  // header scanner sees only the slug + an opaque `?t=`. The article decodes it (and, once flipped
+  // to enforce, renders ads ONLY with a valid token, closing direct-article-access too). Done only
+  // for the money route when a secret is configured; otherwise the legacy plaintext URL is used.
+  // Failure to mint never blocks the click — fall back to the plaintext Location.
+  let location = decision.location;
+  if (decision.verify.route === 'money' && c.env.CLOAK_TOKEN_SECRET) {
+    try {
+      const u = new URL(decision.location);
+      const p: Record<string, string> = {};
+      for (const [k, v] of u.searchParams) p[k] = v;
+      const token = await signCloakToken({ p, exp: Date.now() + CLOAK_TOKEN_TTL_MS }, c.env.CLOAK_TOKEN_SECRET);
+      location = `${u.origin}${u.pathname}?t=${encodeURIComponent(token)}`;
+    } catch {
+      location = decision.location;
+    }
+  }
+
   // Cache-Control: never cache the 302 (the txid + split must vary per click).
   c.header('Cache-Control', 'no-store');
-  return c.redirect(decision.location, 302);
+  return c.redirect(location, 302);
 });
 
 export default worker;
