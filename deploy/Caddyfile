@@ -47,6 +47,17 @@
 	encode gzip zstd
 }
 
+# ClickNest marketing + legal site (static files), used for the Meta Tech-Provider
+# verification. Optional — defaults to a local address when CLICKNEST_HOST is unset, so it
+# never tries to issue a public cert unless configured. Must stay BEFORE the catch-all so the
+# host wins exact match. Files are mounted into the caddy container at /srv/clicknest.
+{$CLICKNEST_HOST:localhost:9099} {
+	root * /srv/clicknest
+	try_files {path} {path}.html {path}/index.html
+	file_server
+	encode gzip zstd
+}
+
 # Catch-all for every OTHER registered article domain (Phase C "add a website"). Any host
 # the admin registers in the Domains UI and points at this box auto-gets a cert (gated by
 # the on_demand ask above) and serves the article app — zero Caddy changes per domain.
