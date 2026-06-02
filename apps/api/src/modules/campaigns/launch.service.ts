@@ -16,6 +16,8 @@ import {
   createFbCampaign,
   decryptToken,
   hasLaunchApp,
+  updateFbAdSetBudget,
+  updateFbCampaignBudget,
   updateFbCampaignStatus,
   uploadFbAdImage,
 } from '@knn/fb';
@@ -282,6 +284,128 @@ export async function setCampaignActive(
     console.warn(`[setCampaignActive] edge KV resync failed for ${campaignId}:`, e instanceof Error ? e.message : String(e)),
   );
   return updated;
+}
+
+/** Facebook's floor for a daily budget (account-currency minor units). Mirrors the submit-time
+ *  check in `campaignSubmitIssues` so a live edit can't drop a campaign below the launchable floor. */
+const MIN_DAILY_BUDGET_CENTS = 200;
+
+/**
+ * LIVE BUDGET EDIT (the daily-driver action) — change a launched campaign's daily budget and push
+ * it to Facebook WITHOUT releasing its AdSense channel or re-queuing for approval. This is the
+ * deliberate, narrow hole in the launch-and-freeze model: budget is the one field Facebook lets you
+ * change on a live campaign with no re-review, and scaling a winner / trimming a loser is the #1
+ * thing a buyer does all day. Mirrors `setCampaignActive`'s read→network→write phases exactly.
+ *
+ * Scope (intentionally conservative): ACTIVE/PAUSED only (an FB campaign must exist); CBO writes the
+ * campaign budget, single-ad-set ABO writes that ad set's budget. Multi-ad-set ABO is refused (we
+ * will not silently re-distribute money across ad sets). NO channel release, NO edge-KV resync —
+ * budget does not affect routing, so the channel mapping and the redirect config are untouched.
+ */
+export async function updateCampaignBudget(
+  auth: AuthContext,
+  campaignId: string,
+  input: { dailyBudgetCents: number },
+): Promise<{ id: string; dailyBudgetCents: number }> {
+  const cents = input.dailyBudgetCents;
+  if (!Number.isInteger(cents) || cents < MIN_DAILY_BUDGET_CENTS) {
+    throw new AppError(422, `Daily budget must be at least $${(MIN_DAILY_BUDGET_CENTS / 100).toFixed(2)} (Facebook minimum).`);
+  }
+
+  // Read phase: validate scope/state, pick the FB write target by budget mode, resolve the token.
+  const plan = await runScoped(auth, async (tx) => {
+    const campaign = await tx.campaign.findUnique({
+      where: { id: campaignId },
+      select: {
+        id: true, buyerId: true, orgId: true, status: true, budgetMode: true, dailyBudgetCents: true,
+        fbCampaignId: true, adAccountId: true,
+        adSets: { select: { id: true, fbAdSetId: true, dailyBudgetCents: true } },
+      },
+    });
+    if (!campaign) throw new AppError(404, 'Campaign not found');
+    if (auth.role === ROLES.MEDIA_BUYER && campaign.buyerId !== auth.userId) throw new AppError(404, 'Campaign not found');
+    if (campaign.status !== CAMPAIGN_STATUS.ACTIVE && campaign.status !== CAMPAIGN_STATUS.PAUSED) {
+      throw new AppError(409, 'Only a live (active or paused) campaign’s budget can be edited here — reopen a draft to change its budget before launch.');
+    }
+    if (!campaign.fbCampaignId || !campaign.adAccountId) {
+      throw new AppError(409, 'This campaign isn’t linked to a Facebook campaign yet.');
+    }
+    const acc = await tx.fbAdAccount.findUnique({
+      where: { id: campaign.adAccountId },
+      select: { fbAccountId: true, connection: { select: { id: true, userId: true, fbUserId: true, accessTokenEnc: true, status: true } } },
+    });
+    if (!acc) throw new AppError(400, 'Selected ad account no longer exists');
+
+    // Pick the FB object that carries the budget for this campaign's mode.
+    let target: { kind: 'campaign'; fbId: string } | { kind: 'adset'; fbId: string; adSetId: string };
+    let oldCents: number | null;
+    if (campaign.budgetMode === 'CAMPAIGN') {
+      target = { kind: 'campaign', fbId: campaign.fbCampaignId };
+      oldCents = campaign.dailyBudgetCents;
+    } else {
+      const launched = campaign.adSets.filter((s) => s.fbAdSetId);
+      if (launched.length !== 1) {
+        throw new AppError(
+          409,
+          launched.length === 0
+            ? 'This campaign has no launched ad set to budget.'
+            : 'This campaign uses per-ad-set budgets across multiple ad sets — edit each ad set’s budget individually (coming soon).',
+        );
+      }
+      target = { kind: 'adset', fbId: launched[0]!.fbAdSetId!, adSetId: launched[0]!.id };
+      oldCents = launched[0]!.dailyBudgetCents;
+    }
+
+    const writeAuth = await resolveWriteAuth(tx, acc.connection);
+    return { orgId: campaign.orgId, fbAccountId: acc.fbAccountId, token: writeAuth.token, appKind: writeAuth.appKind, connectionId: writeAuth.connectionId, target, oldCents };
+  });
+
+  // No-op if the budget didn't actually change (don't spend an FB write or an audit row).
+  if (plan.oldCents === cents) return { id: campaignId, dailyBudgetCents: cents };
+
+  // Network phase (outside any txn): push the new budget to Facebook. Same error policy as
+  // pause/resume — budget is a "modify", so the account security hold (code 368) applies.
+  try {
+    if (plan.target.kind === 'campaign') {
+      await updateFbCampaignBudget(plan.target.fbId, plan.fbAccountId, plan.token, cents, plan.appKind);
+    } else {
+      await updateFbAdSetBudget(plan.target.fbId, plan.fbAccountId, plan.token, cents, plan.appKind);
+    }
+  } catch (err) {
+    if (err instanceof FbRateLimitError) throw new AppError(429, 'Facebook is rate-limiting — try again in a moment');
+    if (err instanceof FbAccountRestrictedError) {
+      throw new AppError(
+        409,
+        'Facebook has temporarily restricted this ad account for security ("authenticate your account in Ads Manager"). The account owner must complete the prompt in Ads Manager, then try again.' +
+          (err.checkpointUrl ? ` Authenticate here: ${err.checkpointUrl}` : ''),
+      );
+    }
+    if (err instanceof FbConnectionBrokenError) {
+      await markConnectionBroken(plan.connectionId, err.message).catch(() => undefined);
+      throw new AppError(409, 'This Facebook connection has expired or been revoked — reconnect the profile in Settings → Facebook, then try again.');
+    }
+    throw err;
+  }
+
+  // Write phase: persist the new budget + audit. NO channel release, NO edge-KV resync —
+  // budget doesn't change routing, so the channel mapping and redirect config stay exactly as they are.
+  await runScoped(auth, async (tx) => {
+    if (plan.target.kind === 'campaign') {
+      await tx.campaign.update({ where: { id: campaignId }, data: { dailyBudgetCents: cents } });
+    } else {
+      await tx.adSet.update({ where: { id: plan.target.adSetId }, data: { dailyBudgetCents: cents } });
+    }
+    await writeAudit(tx, {
+      orgId: plan.orgId,
+      actorId: auth.userId,
+      action: 'campaign.budget_updated',
+      entityType: 'campaign',
+      entityId: campaignId,
+      details: { fromCents: plan.oldCents, toCents: cents },
+    });
+  });
+
+  return { id: campaignId, dailyBudgetCents: cents };
 }
 
 /** FB write phase — campaign → ad sets → (image, creative, ad), all at `status`. */

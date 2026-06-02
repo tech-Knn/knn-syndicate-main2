@@ -339,6 +339,13 @@ export const campaigns = {
     (await parse<{ campaign: { id: string; status: string } }>(await authedFetch(`/api/campaigns/${id}/pause`, { method: 'POST' }))).campaign,
   resume: async (id: string): Promise<{ id: string; status: string }> =>
     (await parse<{ campaign: { id: string; status: string } }>(await authedFetch(`/api/campaigns/${id}/resume`, { method: 'POST' }))).campaign,
+  // Live budget edit (active/paused) — pushes the new daily budget to Facebook without releasing the channel.
+  setBudget: async (id: string, dailyBudgetCents: number): Promise<{ id: string; dailyBudgetCents: number }> =>
+    (
+      await parse<{ campaign: { id: string; dailyBudgetCents: number } }>(
+        await authedFetch(`/api/campaigns/${id}/budget`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify({ dailyBudgetCents }) }),
+      )
+    ).campaign,
   pending: async (): Promise<Campaign[]> =>
     (await parse<{ campaigns: Campaign[] }>(await authedFetch('/api/campaigns/pending'))).campaigns,
   approve: async (id: string): Promise<Campaign> =>

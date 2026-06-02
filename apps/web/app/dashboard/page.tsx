@@ -396,6 +396,14 @@ function CampaignRows({
             </span>
             <span className={styles.cName}>{c.name}</span>
           </button>
+          <Link
+            href={`/dashboard/campaigns/${c.id}`}
+            title="Open campaign"
+            aria-label={`Open ${c.name}`}
+            style={{ marginLeft: '0.4rem', fontSize: '0.82rem', padding: '0.15rem 0.35rem' }}
+          >
+            ↗
+          </Link>
           {c.channelLabel && <span className={styles.chTag}>{c.channelLabel}</span>}
           <span className={styles.adCount}>
             {c.adSetCount} set{c.adSetCount === 1 ? '' : 's'} · {c.adCount} ad{c.adCount === 1 ? '' : 's'}

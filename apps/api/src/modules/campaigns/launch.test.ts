@@ -25,11 +25,13 @@ vi.mock('@knn/fb', async (importOriginal) => {
     createFbAdCreative: vi.fn(async () => ({ id: 'fbcreative-1' })),
     createFbAd: vi.fn(async () => ({ id: 'fbad-1' })),
     updateFbCampaignStatus: vi.fn(async () => ({ success: true })),
+    updateFbCampaignBudget: vi.fn(async () => ({ success: true })),
+    updateFbAdSetBudget: vi.fn(async () => ({ success: true })),
   };
 });
 
 const fb = await import('@knn/fb');
-const { launchCampaign, setCampaignActive } = await import('./launch.service.js');
+const { launchCampaign, setCampaignActive, updateCampaignBudget } = await import('./launch.service.js');
 const { reopenCampaign } = await import('./campaigns.service.js');
 
 const suffix = Date.now().toString(36);
@@ -521,5 +523,87 @@ describe('setCampaignActive (pause/resume optimization)', () => {
     const c = await withSystem((tx) => tx.campaign.create({ data: { orgId, buyerId, name: 'Mine', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-pr2' } }));
     const stranger = { userId: '00000000-0000-0000-0000-000000000000', orgId, role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE };
     await expect(setCampaignActive(stranger, c.id, false)).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe('updateCampaignBudget — live budget edit (M1 ceiling-breaker)', () => {
+  it('CBO: pushes the new daily budget to the FB campaign + persists it', async () => {
+    const c = await withSystem((tx) =>
+      tx.campaign.create({ data: { orgId, buyerId, name: 'CBO live', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-b1', budgetMode: 'CAMPAIGN', dailyBudgetCents: 300 } }),
+    );
+    vi.mocked(fb.updateFbCampaignBudget).mockClear();
+    vi.mocked(fb.updateFbAdSetBudget).mockClear();
+
+    const res = await updateCampaignBudget(auth(), c.id, { dailyBudgetCents: 1500 });
+    expect(res).toMatchObject({ id: c.id, dailyBudgetCents: 1500 });
+    expect(fb.updateFbCampaignBudget).toHaveBeenCalledWith('fbcamp-b1', 'act_1', 'tok', 1500, 'DATA');
+    expect(fb.updateFbAdSetBudget).not.toHaveBeenCalled();
+    const after = await withSystem((tx) => tx.campaign.findUnique({ where: { id: c.id }, select: { dailyBudgetCents: true, status: true } }));
+    expect(after).toMatchObject({ dailyBudgetCents: 1500, status: 'ACTIVE' });
+  });
+
+  it('ABO (single ad set): pushes the budget to the FB ad set + persists it on the ad set', async () => {
+    const c = await withSystem(async (tx) => {
+      const camp = await tx.campaign.create({ data: { orgId, buyerId, name: 'ABO live', status: 'PAUSED', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-b2', budgetMode: 'AD_SET' } });
+      await tx.adSet.create({ data: { orgId, campaignId: camp.id, name: 'set-1', fbAdSetId: 'fbadset-b2', dailyBudgetCents: 300 } });
+      return camp;
+    });
+    vi.mocked(fb.updateFbCampaignBudget).mockClear();
+    vi.mocked(fb.updateFbAdSetBudget).mockClear();
+
+    const res = await updateCampaignBudget(auth(), c.id, { dailyBudgetCents: 2500 });
+    expect(res).toMatchObject({ id: c.id, dailyBudgetCents: 2500 });
+    expect(fb.updateFbAdSetBudget).toHaveBeenCalledWith('fbadset-b2', 'act_1', 'tok', 2500, 'DATA');
+    expect(fb.updateFbCampaignBudget).not.toHaveBeenCalled();
+    const set = await withSystem((tx) => tx.adSet.findFirst({ where: { campaignId: c.id }, select: { dailyBudgetCents: true } }));
+    expect(set?.dailyBudgetCents).toBe(2500);
+  });
+
+  it('does NOT release the campaign’s channel (budget edit must not touch routing)', async () => {
+    const c = await withSystem(async (tx) => {
+      const camp = await tx.campaign.create({ data: { orgId, buyerId, name: 'Keep channel', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-b3', budgetMode: 'CAMPAIGN', dailyBudgetCents: 300 } });
+      const ch = await tx.channel.create({ data: { channelId: `budg-keep-${suffix}`, domainId: domA, status: 'ASSIGNED', currentCampaignId: camp.id } });
+      await tx.campaign.update({ where: { id: camp.id }, data: { channelId: ch.id } });
+      return { id: camp.id, channelRef: ch.id };
+    });
+
+    await updateCampaignBudget(auth(), c.id, { dailyBudgetCents: 999 });
+
+    const ch = await withSystem((tx) => tx.channel.findUnique({ where: { id: c.channelRef }, select: { status: true, currentCampaignId: true } }));
+    expect(ch).toMatchObject({ status: 'ASSIGNED', currentCampaignId: c.id });
+    const camp = await withSystem((tx) => tx.campaign.findUnique({ where: { id: c.id }, select: { channelId: true } }));
+    expect(camp?.channelId).toBe(c.channelRef);
+  });
+
+  it('rejects a budget below the $2.00 Facebook floor (422) and writes nothing', async () => {
+    const c = await withSystem((tx) =>
+      tx.campaign.create({ data: { orgId, buyerId, name: 'Floor', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-b4', budgetMode: 'CAMPAIGN', dailyBudgetCents: 300 } }),
+    );
+    vi.mocked(fb.updateFbCampaignBudget).mockClear();
+    await expect(updateCampaignBudget(auth(), c.id, { dailyBudgetCents: 100 })).rejects.toMatchObject({ statusCode: 422 });
+    expect(fb.updateFbCampaignBudget).not.toHaveBeenCalled();
+    const after = await withSystem((tx) => tx.campaign.findUnique({ where: { id: c.id }, select: { dailyBudgetCents: true } }));
+    expect(after?.dailyBudgetCents).toBe(300); // unchanged
+  });
+
+  it('refuses a non-live (DRAFT) campaign (409)', async () => {
+    const c = await withSystem((tx) => tx.campaign.create({ data: { orgId, buyerId, name: 'Draft budget', status: 'DRAFT', keywords: ['x'], budgetMode: 'CAMPAIGN', dailyBudgetCents: 300 } }));
+    await expect(updateCampaignBudget(auth(), c.id, { dailyBudgetCents: 500 })).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("forbids another buyer from editing someone else's budget (404)", async () => {
+    const c = await withSystem((tx) => tx.campaign.create({ data: { orgId, buyerId, name: 'Mine budget', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-b5', budgetMode: 'CAMPAIGN', dailyBudgetCents: 300 } }));
+    const stranger = { userId: '00000000-0000-0000-0000-000000000000', orgId, role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE };
+    await expect(updateCampaignBudget(stranger, c.id, { dailyBudgetCents: 500 })).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it('refuses multi-ad-set ABO (won’t silently re-distribute money) (409)', async () => {
+    const c = await withSystem(async (tx) => {
+      const camp = await tx.campaign.create({ data: { orgId, buyerId, name: 'ABO multi', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-b6', budgetMode: 'AD_SET' } });
+      await tx.adSet.create({ data: { orgId, campaignId: camp.id, name: 'a', fbAdSetId: 'fbadset-m1', dailyBudgetCents: 300 } });
+      await tx.adSet.create({ data: { orgId, campaignId: camp.id, name: 'b', fbAdSetId: 'fbadset-m2', dailyBudgetCents: 300 } });
+      return camp;
+    });
+    await expect(updateCampaignBudget(auth(), c.id, { dailyBudgetCents: 500 })).rejects.toMatchObject({ statusCode: 409 });
   });
 });

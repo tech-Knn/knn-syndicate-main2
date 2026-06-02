@@ -49,6 +49,51 @@ export function updateFbCampaignStatus(
   });
 }
 
+/**
+ * Update the daily budget of an existing FB CAMPAIGN (campaign budget optimization / CBO).
+ * `dailyBudgetCents` is in the ad account's currency minor units (same unit Facebook returned
+ * and that `createFbCampaign` writes). Budget edits do NOT re-trigger ad review, so this is a
+ * safe live-optimization action. Goes through the per-account rate limiter like every write.
+ */
+export function updateFbCampaignBudget(
+  fbCampaignId: string,
+  fbAccountId: string,
+  accessToken: string,
+  dailyBudgetCents: number,
+  appKind: FbAppKind = 'DATA',
+): Promise<{ success?: boolean }> {
+  return graphRequest<{ success?: boolean }>({
+    path: `/${fbCampaignId}`,
+    method: 'POST',
+    params: { daily_budget: String(dailyBudgetCents) },
+    accessToken,
+    accountId: fbAccountId,
+    appKind,
+  });
+}
+
+/**
+ * Update the daily budget of an existing FB AD SET (ad-set budget optimization / ABO). Same
+ * unit + same no-re-review property as `updateFbCampaignBudget`; the only difference is the
+ * budget lives on the ad set under ABO, so the edge is the ad-set id.
+ */
+export function updateFbAdSetBudget(
+  fbAdSetId: string,
+  fbAccountId: string,
+  accessToken: string,
+  dailyBudgetCents: number,
+  appKind: FbAppKind = 'DATA',
+): Promise<{ success?: boolean }> {
+  return graphRequest<{ success?: boolean }>({
+    path: `/${fbAdSetId}`,
+    method: 'POST',
+    params: { daily_budget: String(dailyBudgetCents) },
+    accessToken,
+    accountId: fbAccountId,
+    appKind,
+  });
+}
+
 export interface FbCampaignParams {
   name: string;
   objective: string;

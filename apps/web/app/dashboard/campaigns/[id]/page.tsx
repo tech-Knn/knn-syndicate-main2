@@ -3,9 +3,94 @@
 import { use, useCallback, useEffect, useState } from 'react';
 import { CampaignWizard } from '@/components/campaign-wizard';
 import { ApiError, campaigns } from '@/lib/api';
-import { Banner, Button, Spinner, useConfirm, useToast } from '@/components/ui';
+import { Banner, Button, Card, Spinner, useConfirm, useToast } from '@/components/ui';
 import { type Campaign } from '@/lib/types';
 import { OffersEditor } from './offers-editor';
+
+/** The campaign's effective daily budget (cents) + whether it's live-editable here. CBO → the
+ *  campaign budget; single-ad-set ABO → that ad set's budget; multi-ad-set ABO → edit per ad set. */
+function liveBudget(c: Campaign): { cents: number | null; editable: boolean; perAdSet: boolean } {
+  if (c.budgetMode === 'CAMPAIGN') return { cents: c.dailyBudgetCents, editable: true, perAdSet: false };
+  const sets = c.adSets ?? [];
+  if (sets.length === 1) return { cents: sets[0]!.dailyBudgetCents, editable: true, perAdSet: false };
+  return { cents: null, editable: false, perAdSet: true };
+}
+
+/**
+ * Live budget editor (the M1 daily-driver action) — change a launched campaign's daily budget and
+ * push it to Facebook instantly, WITHOUT releasing the AdSense channel or re-queuing for approval.
+ * Quick ±/scale buttons make trimming a loser / scaling a winner a one-click move.
+ */
+function LiveBudget({ campaign, onSaved }: { campaign: Campaign; onSaved: (cents: number) => void }) {
+  const toast = useToast();
+  const { cents, editable, perAdSet } = liveBudget(campaign);
+  const [draft, setDraft] = useState<string>(cents != null ? (cents / 100).toFixed(2) : '');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setDraft(cents != null ? (cents / 100).toFixed(2) : '');
+  }, [cents]);
+
+  const commit = async (nextCents: number): Promise<void> => {
+    const rounded = Math.round(nextCents);
+    if (!Number.isFinite(rounded) || rounded < 200) {
+      toast.error('Minimum daily budget is $2.00 (Facebook minimum).');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await campaigns.setBudget(campaign.id, rounded);
+      onSaved(res.dailyBudgetCents);
+      toast.success(`Daily budget set to $${(res.dailyBudgetCents / 100).toFixed(2)} — live on Facebook.`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not update the budget.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (perAdSet) {
+    return (
+      <Card style={{ padding: '0.9rem 1.1rem' }}>
+        <strong style={{ color: 'var(--cream)' }}>Daily budget</strong>{' '}
+        <span style={{ color: 'var(--muted)' }}>— this campaign uses per-ad-set budgets across multiple ad sets; edit each ad set individually (coming soon).</span>
+      </Card>
+    );
+  }
+
+  const bump = (factor: number): void => void commit(Math.max(200, (cents ?? 0) * factor));
+
+  return (
+    <Card style={{ padding: '0.9rem 1.1rem', display: 'flex', alignItems: 'center', gap: '0.9rem', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)' }}>DAILY BUDGET</span>
+        <span style={{ fontSize: '0.72rem', color: 'var(--muted-2)' }}>Pushes to Facebook instantly — no channel release, no re-review.</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        <span style={{ color: 'var(--muted)' }}>$</span>
+        <input
+          type="number"
+          min={2}
+          step="0.01"
+          value={draft}
+          disabled={!editable || busy}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && void commit(Math.round(Number(draft) * 100))}
+          aria-label="Daily budget in dollars"
+          style={{ width: '6.5rem', background: 'var(--bg)', border: '1px solid var(--border-interactive)', borderRadius: 'var(--radius-sm)', color: 'var(--cream)', padding: '0.5rem 0.6rem', fontSize: '0.95rem' }}
+        />
+        <Button onClick={() => void commit(Math.round(Number(draft) * 100))} loading={busy} disabled={!editable}>
+          Save
+        </Button>
+      </div>
+      <div style={{ display: 'flex', gap: '0.35rem' }} aria-label="Quick budget scaling">
+        <Button variant="ghost" onClick={() => bump(0.8)} disabled={!editable || busy} title="Cut 20%">−20%</Button>
+        <Button variant="ghost" onClick={() => bump(1.2)} disabled={!editable || busy} title="Scale 20%">+20%</Button>
+        <Button variant="ghost" onClick={() => bump(1.5)} disabled={!editable || busy} title="Scale 50%">+50%</Button>
+      </div>
+    </Card>
+  );
+}
 
 // Statuses where the campaign can be pushed live to Facebook (it has a channel). Manual
 // launch is available to the owning buyer + admins (the API owner-scopes it).
@@ -169,6 +254,20 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
         <Banner tone={note.tone} onDismiss={() => setNote(null)}>
           {note.text}
         </Banner>
+      )}
+      {LIVE_TOGGLEABLE.has(c.status) && (
+        <LiveBudget
+          campaign={c}
+          onSaved={(cents) =>
+            setCampaign((prev) =>
+              !prev || prev === 'error'
+                ? prev
+                : prev.budgetMode === 'CAMPAIGN'
+                  ? { ...prev, dailyBudgetCents: cents }
+                  : { ...prev, adSets: prev.adSets.map((s, i) => (i === 0 ? { ...s, dailyBudgetCents: cents } : s)) },
+            )
+          }
+        />
       )}
       <CampaignWizard campaign={c} />
       <OffersEditor campaignId={c.id} status={c.status} />

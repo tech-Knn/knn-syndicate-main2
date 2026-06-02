@@ -16,7 +16,7 @@ import {
   submitCampaign,
   updateCampaign,
 } from './campaigns.service.js';
-import { launchCampaign, setCampaignActive, testLaunchCampaign } from './launch.service.js';
+import { launchCampaign, setCampaignActive, testLaunchCampaign, updateCampaignBudget } from './launch.service.js';
 import { listArticleVariants, listOfferDomains, listOffers, setOffers, updateLiveOffers } from './offers.service.js';
 import { applyPreset, deletePreset, listPresets, savePreset } from './presets.service.js';
 import { liveOfferSetSchema, offerSetSchema } from './offers.schemas.js';
@@ -153,6 +153,23 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
       return handleRouteError(err, reply);
     }
   });
+
+  // Live budget edit (the #1 daily action): change a launched campaign's daily budget and push it
+  // to Facebook WITHOUT releasing its channel or re-queuing for approval. Owner-scoped in the
+  // service (like pause/resume); the service validates the $2 floor + ACTIVE/PAUSED state.
+  app.patch<{ Params: { id: string }; Body: { dailyBudgetCents?: number } }>(
+    '/:id/budget',
+    { preHandler: [authenticate] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const cents = Number(req.body?.dailyBudgetCents);
+        return reply.send({ campaign: await updateCampaignBudget(req.auth, req.params.id, { dailyBudgetCents: cents }) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
 
   // Power feature: clone a campaign into a fresh editable DRAFT (new redirect ids, same
   // config + offers). Owner-scoped in the service. Returns the new draft.

@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   type CampaignBreakdown,
@@ -434,6 +435,14 @@ export default function AnalyticsPage() {
                               {r.channelLabel && <span className={admin.subtle}>{r.channelLabel}</span>}
                             </span>
                           </button>
+                          <Link
+                            href={`/dashboard/campaigns/${r.id}`}
+                            title="Open campaign"
+                            aria-label={`Open ${r.name}`}
+                            style={{ marginLeft: '0.4rem', fontSize: '0.82rem', padding: '0.15rem 0.35rem' }}
+                          >
+                            ↗
+                          </Link>
                         </td>
                         <td>
                           <Badge tone={STATUS_TONE[r.status] ?? 'neutral'} dot>
