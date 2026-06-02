@@ -5,6 +5,7 @@ import {
   deleteRedirectDomain,
   listRedirectDomains,
   setDefaultRedirectDomain,
+  updateRedirectDomain,
 } from './redirect-domains.service.js';
 
 const suffix = Date.now().toString(36);
@@ -17,14 +18,18 @@ afterAll(async () => {
 });
 
 describe('redirect domains service', () => {
-  it('normalizes host + rejects junk', async () => {
-    await expect(createRedirectDomain('not a host')).rejects.toMatchObject({ statusCode: 400 });
-    const a = await createRedirectDomain(`HTTPS://${hostA.toUpperCase()}/go/x`, 'A');
+  it('normalizes host + rejects junk + defaults to the cloaker pool, active', async () => {
+    await expect(createRedirectDomain({ host: 'not a host' })).rejects.toMatchObject({ statusCode: 400 });
+    const a = await createRedirectDomain({ host: `HTTPS://${hostA.toUpperCase()}/go/x`, label: 'A' });
     expect(a.host).toBe(hostA); // scheme/path/case stripped
+    expect(a.mode).toBe('CLOAKER'); // pool segregation defaults to the cloaker pool
+    expect(a.isActive).toBe(true);
+    expect(a.ownerOrgId).toBeNull(); // shared pool by default
   });
 
   it('keeps at most one default + switches it', async () => {
-    const b = await createRedirectDomain(hostB, 'B');
+    const b = await createRedirectDomain({ host: hostB, label: 'B', mode: 'NORMAL' });
+    expect(b.mode).toBe('NORMAL');
     await setDefaultRedirectDomain(b.id);
     const list = await listRedirectDomains();
     const defaults = list.filter((d) => d.isDefault);
@@ -33,8 +38,13 @@ describe('redirect domains service', () => {
     expect(defaults[0]?.host).toBe(hostB);
   });
 
-  it('rejects a duplicate host', async () => {
-    await expect(createRedirectDomain(hostA)).rejects.toMatchObject({ statusCode: 409 });
+  it('updates pool placement (mode + active) and rejects a duplicate host', async () => {
+    const list = await listRedirectDomains();
+    const a = list.find((d) => d.host === hostA)!;
+    const upd = await updateRedirectDomain(a.id, { mode: 'NORMAL', isActive: false });
+    expect(upd.mode).toBe('NORMAL');
+    expect(upd.isActive).toBe(false);
+    await expect(createRedirectDomain({ host: hostA })).rejects.toMatchObject({ statusCode: 409 });
   });
 
   it('deletes a domain', async () => {

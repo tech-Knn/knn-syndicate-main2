@@ -1,5 +1,5 @@
 import { withSystem } from '@knn/db';
-import { ROLES, USER_STATUS, type Role, type UserStatus } from '@knn/shared';
+import { ROLES, USER_STATUS, type FunnelMode, type Role, type UserStatus } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { hashPassword } from '../../lib/password.js';
@@ -14,6 +14,8 @@ export interface PublicUser {
   name: string;
   role: Role;
   status: UserStatus;
+  /** Per-buyer funnel-mode override; null = inherit the org default. */
+  funnelMode: FunnelMode | null;
   createdAt: Date;
   approvedAt: Date | null;
 }
@@ -26,6 +28,7 @@ function toPublicUser(u: PublicUser): PublicUser {
     name: u.name,
     role: u.role,
     status: u.status,
+    funnelMode: u.funnelMode,
     createdAt: u.createdAt,
     approvedAt: u.approvedAt,
   };
@@ -75,8 +78,10 @@ export interface OrgSettings {
   name: string;
   autoApprove: boolean;
   autoLaunch: boolean;
+  cloakingEnabled: boolean;
+  defaultFunnelMode: FunnelMode;
 }
-const orgSettingsSelect = { id: true, name: true, autoApprove: true, autoLaunch: true } as const;
+const orgSettingsSelect = { id: true, name: true, autoApprove: true, autoLaunch: true, cloakingEnabled: true, defaultFunnelMode: true } as const;
 
 export interface OrgRow {
   id: string;
@@ -86,6 +91,8 @@ export interface OrgRow {
   isPlatform: boolean;
   autoApprove: boolean;
   autoLaunch: boolean;
+  cloakingEnabled: boolean;
+  defaultFunnelMode: FunnelMode;
   buyerCount: number;
   adminCount: number;
   pendingCount: number;
@@ -146,6 +153,8 @@ export async function listOrganizations(): Promise<OrgRow[]> {
       isPlatform: o.isPlatform,
       autoApprove: o.autoApprove,
       autoLaunch: o.autoLaunch,
+      cloakingEnabled: o.cloakingEnabled,
+      defaultFunnelMode: o.defaultFunnelMode,
       buyerCount: buyerByOrg.get(o.id) ?? 0,
       adminCount: adminByOrg.get(o.id) ?? 0,
       pendingCount: pendingByOrg.get(o.id) ?? 0,
@@ -281,6 +290,64 @@ export async function setOrgAutoLaunch(
       entityId: orgId,
     });
     return updated;
+  });
+}
+
+/**
+ * Cloaking gate (SUPER-ADMIN only): enable/disable the cloaker funnel for a company + set its default
+ * funnel mode. A company with cloaking off forces every buyer NORMAL, regardless of per-buyer overrides.
+ */
+export async function setOrgCloaking(
+  actor: AuthContext,
+  orgId: string,
+  input: { cloakingEnabled?: boolean; defaultFunnelMode?: FunnelMode },
+): Promise<OrgSettings> {
+  if (actor.role !== ROLES.SUPER_ADMIN) throw new AppError(403, 'Only a super admin can change cloaking access');
+  return runScoped(actor, async (tx) => {
+    const org = await tx.organization.findUnique({ where: { id: orgId }, select: { id: true } });
+    if (!org) throw new AppError(404, 'Company not found');
+    const updated = await tx.organization.update({
+      where: { id: orgId },
+      data: {
+        ...(input.cloakingEnabled !== undefined ? { cloakingEnabled: input.cloakingEnabled } : {}),
+        ...(input.defaultFunnelMode !== undefined ? { defaultFunnelMode: input.defaultFunnelMode } : {}),
+      },
+      select: orgSettingsSelect,
+    });
+    await writeAudit(tx, {
+      orgId,
+      actorId: actor.userId,
+      action: 'org.cloaking.updated',
+      entityType: 'organization',
+      entityId: orgId,
+      details: { cloakingEnabled: updated.cloakingEnabled, defaultFunnelMode: updated.defaultFunnelMode },
+    });
+    return updated;
+  });
+}
+
+/**
+ * Per-buyer funnel-mode override (super-admin OR the buyer's own COMPANY_ADMIN). null = inherit the org
+ * default. Only takes effect when the org has cloaking enabled. Never applies to a super-admin.
+ */
+export async function setUserFunnelMode(actor: AuthContext, userId: string, mode: FunnelMode | null): Promise<PublicUser> {
+  return runScoped(actor, async (tx) => {
+    const target = await tx.user.findUnique({ where: { id: userId }, select: { id: true, orgId: true, role: true } });
+    if (!target) throw new AppError(404, 'User not found');
+    if (target.role === ROLES.SUPER_ADMIN) throw new AppError(403, 'Cannot set a funnel mode on a super admin');
+    if (actor.role === ROLES.COMPANY_ADMIN && target.orgId !== actor.orgId) {
+      throw new AppError(403, 'You can only change your own company’s buyers');
+    }
+    const updated = await tx.user.update({ where: { id: userId }, data: { funnelMode: mode } });
+    await writeAudit(tx, {
+      orgId: target.orgId,
+      actorId: actor.userId,
+      action: 'user.funnel_mode.updated',
+      entityType: 'user',
+      entityId: userId,
+      details: { funnelMode: mode },
+    });
+    return toPublicUser(updated);
   });
 }
 

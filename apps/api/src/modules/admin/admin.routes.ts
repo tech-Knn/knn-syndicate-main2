@@ -7,16 +7,30 @@ import {
   deleteRedirectDomain,
   listRedirectDomains,
   setDefaultRedirectDomain,
+  updateRedirectDomain,
   verifyRedirectDomain,
 } from './redirect-domains.service.js';
+import {
+  createWhiteDomain,
+  deleteWhiteDomain,
+  listWhiteDomains,
+  updateWhiteDomain,
+  verifyWhiteDomain,
+} from './white-domains.service.js';
 import {
   addOrgUserSchema,
   autoApproveSchema,
   autoLaunchSchema,
+  cloakingSchema,
   createOrgSchema,
+  funnelModeSchema,
   platformSettingsSchema,
+  redirectDomainCreateSchema,
+  redirectDomainUpdateSchema,
   revenueCutSchema,
   userActionSchema,
+  whiteDomainCreateSchema,
+  whiteDomainUpdateSchema,
 } from './admin.schemas.js';
 import {
   addOrgUser,
@@ -29,6 +43,8 @@ import {
   listUsers,
   setOrgAutoApprove,
   setOrgAutoLaunch,
+  setOrgCloaking,
+  setUserFunnelMode,
   setUserStatus,
 } from './admin.service.js';
 import {
@@ -345,10 +361,19 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.post<{ Body: { host?: string; label?: string } }>('/redirect-domains', superOnly, async (req, reply) => {
+  app.post('/redirect-domains', superOnly, async (req, reply) => {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     try {
-      return reply.code(201).send({ domain: await createRedirectDomain(req.body?.host ?? '', req.body?.label) });
+      return reply.code(201).send({ domain: await createRedirectDomain(redirectDomainCreateSchema.parse(req.body)) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  app.patch<{ Params: { id: string } }>('/redirect-domains/:id', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ domain: await updateRedirectDomain(req.params.id, redirectDomainUpdateSchema.parse(req.body)) });
     } catch (err) {
       return handleRouteError(err, reply);
     }
@@ -381,4 +406,76 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       return handleRouteError(err, reply);
     }
   });
+
+  // ─── White domains (the cloaker fallback + display-link pool; super-admin) ───
+  app.get('/white-domains', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ domains: await listWhiteDomains() });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  app.post('/white-domains', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      const { host, label } = whiteDomainCreateSchema.parse(req.body);
+      return reply.code(201).send({ domain: await createWhiteDomain(host, label) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  app.patch<{ Params: { id: string } }>('/white-domains/:id', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ domain: await updateWhiteDomain(req.params.id, whiteDomainUpdateSchema.parse(req.body)) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  app.post<{ Params: { id: string } }>('/white-domains/:id/verify', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ domain: await verifyWhiteDomain(req.params.id) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  app.delete<{ Params: { id: string } }>('/white-domains/:id', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      await deleteWhiteDomain(req.params.id);
+      return reply.code(204).send();
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // ─── Cloaking gate (super-admin) + per-buyer funnel mode (super-admin OR the buyer's company admin) ───
+  app.patch<{ Params: { id: string } }>('/organizations/:id/cloaking', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ organization: await setOrgCloaking(req.auth, req.params.id, cloakingSchema.parse(req.body)) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  app.patch<{ Params: { id: string } }>(
+    '/users/:id/funnel-mode',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const { funnelMode } = funnelModeSchema.parse(req.body);
+        return reply.send({ user: await setUserFunnelMode(req.auth, req.params.id, funnelMode) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
 }

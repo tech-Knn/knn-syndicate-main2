@@ -51,3 +51,47 @@ export const revenueCutSchema = z.object({
   pct: z.number().min(0).max(1),
 });
 export type RevenueCutInput = z.infer<typeof revenueCutSchema>;
+
+const funnelModeEnum = z.enum(['NORMAL', 'CLOAKER']);
+
+/** Super-admin: enable cloaking for a company and/or set its default funnel mode. */
+export const cloakingSchema = z
+  .object({ cloakingEnabled: z.boolean(), defaultFunnelMode: funnelModeEnum })
+  .partial()
+  .refine((v) => v.cloakingEnabled !== undefined || v.defaultFunnelMode !== undefined, {
+    message: 'Provide cloakingEnabled and/or defaultFunnelMode',
+  });
+export type CloakingInput = z.infer<typeof cloakingSchema>;
+
+/** Per-buyer funnel-mode override (null = inherit the org default). */
+export const funnelModeSchema = z.object({ funnelMode: funnelModeEnum.nullable() });
+export type FunnelModeInput = z.infer<typeof funnelModeSchema>;
+
+export const redirectDomainCreateSchema = z.object({
+  host: z.string().trim().min(1).max(255),
+  label: z.string().trim().max(120).optional(),
+  mode: funnelModeEnum.optional(),
+  ownerOrgId: z.string().uuid().nullable().optional(),
+});
+export type RedirectDomainCreateInput = z.infer<typeof redirectDomainCreateSchema>;
+
+export const redirectDomainUpdateSchema = z
+  .object({
+    label: z.string().trim().max(120).nullable(),
+    mode: funnelModeEnum,
+    ownerOrgId: z.string().uuid().nullable(),
+    isActive: z.boolean(),
+  })
+  .partial();
+export type RedirectDomainUpdateInput = z.infer<typeof redirectDomainUpdateSchema>;
+
+export const whiteDomainCreateSchema = z.object({
+  host: z.string().trim().min(1).max(255),
+  label: z.string().trim().max(120).optional(),
+});
+export type WhiteDomainCreateInput = z.infer<typeof whiteDomainCreateSchema>;
+
+export const whiteDomainUpdateSchema = z
+  .object({ label: z.string().trim().max(120).nullable(), isActive: z.boolean() })
+  .partial();
+export type WhiteDomainUpdateInput = z.infer<typeof whiteDomainUpdateSchema>;
