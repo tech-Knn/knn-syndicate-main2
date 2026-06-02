@@ -130,7 +130,19 @@ afterAll(async () => {
 describe('launchCampaign (Phase 8)', () => {
   it('launches: ensures article, writes KV configs, creates on FB ACTIVE, → ACTIVE', async () => {
     const campaignId = await makeCampaign();
-    const generateArticle = vi.fn(async () => ({ slug: 'health-2026' }));
+    const artSlug = `health-${suffix}`;
+    // Mirror the REAL generateArticle: persist the article + link it to the campaign. The post-launch
+    // resync (which reloads campaign.articleId to route) needs this — the old stub returned only a
+    // slug, leaving the resync with no article to find.
+    const generateArticle = vi.fn(async () => {
+      const art = await withSystem((tx) =>
+        tx.article.create({
+          data: { orgId, slug: artSlug, title: 'Health 2026', rawContent: 'r', compliantContent: 'c', status: 'READY' },
+        }),
+      );
+      await withSystem((tx) => tx.campaign.update({ where: { id: campaignId }, data: { articleId: art.id } }));
+      return { slug: artSlug };
+    });
     const writeRedirectConfigs = vi.fn(
       async (_entries: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {},
     );
@@ -139,19 +151,24 @@ describe('launchCampaign (Phase 8)', () => {
 
     expect(result.status).toBe('ACTIVE');
     expect(result.fbCampaignId).toBe('fbcamp-1');
-    expect(generateArticle).toHaveBeenCalledTimes(1); // no articleId → generated
+    expect(generateArticle).toHaveBeenCalledTimes(1); // no articleId → generated (and persisted+linked)
 
-    // KV got a redirect config pointing at the article with the channel + ad creative.
-    expect(writeRedirectConfigs).toHaveBeenCalledTimes(1);
-    const entries = writeRedirectConfigs.mock.calls[0]![0];
+    // KV is written TWICE: first BEFORE the FB ads exist (no ad id yet), then a RE-SYNC after
+    // creation carrying expectedAdId = the FB ad id — so the cloak ad-id check (kaid={{ad.id}})
+    // has something to match. Without the resync, expectedAdId is permanently empty (the bug).
+    expect(writeRedirectConfigs).toHaveBeenCalledTimes(2);
+    expect(writeRedirectConfigs.mock.calls[0]![0][0]!.config.expectedAdId).toBeUndefined(); // pre-creation: no id yet
+    const entries = writeRedirectConfigs.mock.calls.at(-1)![0]; // the post-launch resync
     expect(entries).toHaveLength(1);
     expect(entries[0]!.config).toMatchObject({
       active: true,
-      articleUrl: `${env.ARTICLE_DOMAIN}/a/health-2026`,
+      articleUrl: `${env.ARTICLE_DOMAIN}/a/${artSlug}`,
       channel: `ch-launch-${suffix}`,
       // referrerAdCreative (AFS `rc`) is now the campaign-level Referrer Ad Creative (racValue),
       // shared by all the campaign's ads — no longer derived from each ad's headline/text.
       adCreative: 'health insurance',
+      // The resync maps the real FB ad id → cloaker verifies the click's kaid against it (enforce).
+      expectedAdId: 'fbad-1',
     });
 
     const campaign = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { status: true, fbCampaignId: true, adSets: { select: { fbAdSetId: true, ads: { select: { fbAdId: true } } } } } }));

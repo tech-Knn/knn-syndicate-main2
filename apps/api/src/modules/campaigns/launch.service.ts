@@ -911,6 +911,18 @@ export async function launchCampaign(
         details: { fbCampaignId: result.fbCampaignId },
       });
     });
+    // RE-SYNC the redirect configs now that the ad ids exist. Step 3 (above) wrote them BEFORE the FB
+    // ads were created, so `ad.fbAdId` was null and `expectedAdId` came out empty — which is why the
+    // cloak ad-id check (kaid={{ad.id}}) has nothing to match. persistFbIds just stored the real ids,
+    // and syncCampaignRedirectConfigs reloads the campaign fresh, so this write carries `expectedAdId`
+    // = the FB ad id (and active:true). REQUIRED for `CLOAK_VERIFY_MODE=enforce` to gate on the ad id.
+    // Best-effort: the campaign is already live on Facebook — a KV hiccup must not fail the launch; a
+    // later resync (resume/rebalance) heals it. (The launch is still ACTIVE either way.)
+    await syncCampaignRedirectConfigs(campaignId, { writeRedirectConfigs: deps.writeRedirectConfigs }).catch((e) =>
+      console.warn(
+        `[launch] post-launch redirect resync (expectedAdId) failed for ${campaignId}: ${e instanceof Error ? e.message : String(e)}`,
+      ),
+    );
     await notify({
       orgId: campaign.orgId,
       userId: campaign.buyerId,
