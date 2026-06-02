@@ -17,6 +17,7 @@ import {
   updateCampaign,
 } from './campaigns.service.js';
 import { launchCampaign, setCampaignActive, testLaunchCampaign, updateCampaignBudget } from './launch.service.js';
+import { bulkApprove, bulkDelete, bulkReject, bulkSetActive } from './bulk.service.js';
 import { listArticleVariants, listOfferDomains, listOffers, setOffers, updateLiveOffers } from './offers.service.js';
 import { applyPreset, deletePreset, listPresets, savePreset } from './presets.service.js';
 import { liveOfferSetSchema, offerSetSchema } from './offers.schemas.js';
@@ -34,6 +35,50 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
   app.get('/pending', { preHandler: adminOnly }, async (req, reply) => {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     return reply.send({ campaigns: await listPendingApprovals(req.auth) });
+  });
+
+  // Bulk queue actions (velocity) — apply an existing per-campaign action across a set of ids.
+  // Static paths → registered before `/:id`. Each returns { succeeded: [], failed: [{id,error}] }
+  // (partial success is intentional). Ownership/role/state are enforced by the underlying services.
+  app.post<{ Body: { ids?: unknown } }>('/bulk-approve', { preHandler: adminOnly }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await bulkApprove(req.auth, req.body?.ids));
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+  app.post<{ Body: { ids?: unknown; reason?: string } }>('/bulk-reject', { preHandler: adminOnly }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await bulkReject(req.auth, req.body?.ids, String(req.body?.reason ?? '')));
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+  app.post<{ Body: { ids?: unknown } }>('/bulk-pause', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await bulkSetActive(req.auth, req.body?.ids, false));
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+  app.post<{ Body: { ids?: unknown } }>('/bulk-resume', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await bulkSetActive(req.auth, req.body?.ids, true));
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+  app.post<{ Body: { ids?: unknown } }>('/bulk-delete', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await bulkDelete(req.auth, req.body?.ids));
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
   });
 
   // LIVE domains a buyer can attach as offers (Phase E). Static path → before `/:id`.

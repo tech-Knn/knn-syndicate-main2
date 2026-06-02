@@ -33,6 +33,7 @@ vi.mock('@knn/fb', async (importOriginal) => {
 const fb = await import('@knn/fb');
 const { launchCampaign, setCampaignActive, updateCampaignBudget } = await import('./launch.service.js');
 const { reopenCampaign } = await import('./campaigns.service.js');
+const { bulkSetActive } = await import('./bulk.service.js');
 
 const suffix = Date.now().toString(36);
 const storageKey = `launch-${suffix}.png`;
@@ -605,5 +606,28 @@ describe('updateCampaignBudget — live budget edit (M1 ceiling-breaker)', () =>
       return camp;
     });
     await expect(updateCampaignBudget(auth(), c.id, { dailyBudgetCents: 500 })).rejects.toMatchObject({ statusCode: 409 });
+  });
+});
+
+describe('bulkSetActive — batch pause/resume (M1 velocity)', () => {
+  it('pauses the valid campaigns and reports the invalid one (partial success)', async () => {
+    const ids = await withSystem(async (tx) => {
+      const a = await tx.campaign.create({ data: { orgId, buyerId, name: 'Bulk A', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-bk1' } });
+      const b = await tx.campaign.create({ data: { orgId, buyerId, name: 'Bulk B', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-bk2' } });
+      const draft = await tx.campaign.create({ data: { orgId, buyerId, name: 'Bulk Draft', status: 'DRAFT', keywords: ['x'] } });
+      return { a: a.id, b: b.id, draft: draft.id };
+    });
+
+    const res = await bulkSetActive(auth(), [ids.a, ids.b, ids.draft], false);
+    expect(res.succeeded.sort()).toEqual([ids.a, ids.b].sort());
+    expect(res.failed).toHaveLength(1);
+    expect(res.failed[0]!.id).toBe(ids.draft); // DRAFT can't be paused → reported, not thrown
+
+    const statuses = await withSystem((tx) => tx.campaign.findMany({ where: { id: { in: [ids.a, ids.b] } }, select: { status: true } }));
+    for (const s of statuses) expect(s.status).toBe('PAUSED');
+  });
+
+  it('rejects an empty selection (400)', async () => {
+    await expect(bulkSetActive(auth(), [], false)).rejects.toMatchObject({ statusCode: 400 });
   });
 });
