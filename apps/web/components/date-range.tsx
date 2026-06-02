@@ -109,10 +109,12 @@ export function DateRangePicker({
   }, [open, focusDay]);
 
   const today = currentBusinessDay();
+  const yesterday = addBusinessDays(today, -1);
   const tp = parse(today);
   const lastMonth = shiftMonth(tp.y, tp.m, -1);
   const presets: { label: string; range: DateRange }[] = [
     { label: 'Today', range: { from: today, to: today } },
+    { label: 'Yesterday', range: { from: yesterday, to: yesterday } },
     { label: 'Last 7 days', range: { from: addBusinessDays(today, -6), to: today } },
     { label: 'Last 30 days', range: { from: addBusinessDays(today, -29), to: today } },
     { label: 'Last 90 days', range: { from: addBusinessDays(today, -89), to: today } },
