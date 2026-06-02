@@ -1,5 +1,10 @@
 .wrap {
-  max-width: 760px;
+  /* Responsive: fluid up to a sensible form width, then centered. A form shouldn't grow
+     unbounded (a single input stretched across 2560px reads badly) — instead the inner
+     `.grid` reflows into MORE columns as width grows (see below), filling the space. */
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
 }
 .head {
   display: flex;
@@ -92,11 +97,20 @@
 }
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
+  /* Responsive auto-fit: 1 column on phones → 2 → 3 → 4 as the viewport grows, so a wide
+     screen is filled with more fields per row instead of stretching each input. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 1rem 1.25rem;
 }
 .full {
   grid-column: 1 / -1;
+}
+/* A lone single-line control in a full-row field shouldn't stretch the whole width on a
+   wide screen — cap it to a readable length (multi-control rows / chips / textareas fill). */
+.full > .input,
+.full > .select,
+.full > .staticField {
+  max-width: 42rem;
 }
 
 .field {
@@ -386,9 +400,11 @@
 
 /* Review */
 .summary {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  /* Read-only campaign summary (view page + Review step): flow the key/value rows into
+     2–3 responsive columns on wider screens instead of one tall list with huge gaps. */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 0 2.5rem;
   font-size: 0.9rem;
 }
 .summaryRow {
