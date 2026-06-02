@@ -220,6 +220,49 @@ describe('launchCampaign (Phase 8)', () => {
     }
   });
 
+  it('auto-fills the FB display link + the white fallback from the WhiteDomain pool for a CLOAKER buyer', async () => {
+    const wa = `wa-${suffix}.example.com`;
+    const wb = `wb-${suffix}.example.com`;
+    await withSystem(async (tx) => {
+      await tx.whiteDomain.createMany({
+        data: [
+          { host: wa, isActive: true, healthy: true },
+          { host: wb, isActive: true, healthy: true },
+          { host: `wsick-${suffix}.example.com`, isActive: true, healthy: false }, // ignored: unhealthy
+          { host: `wretired-${suffix}.example.com`, isActive: false, healthy: true }, // ignored: retired
+        ],
+      });
+      await tx.organization.update({ where: { id: orgId }, data: { cloakingEnabled: true, defaultFunnelMode: 'CLOAKER' } });
+    });
+    try {
+      const campaignId = await makeCampaign();
+      const artSlug = `wf-${suffix}`;
+      const generateArticle = vi.fn(async () => {
+        const art = await withSystem((tx) =>
+          tx.article.create({ data: { orgId, slug: artSlug, title: 'WF', rawContent: 'r', compliantContent: 'c', status: 'READY' } }),
+        );
+        await withSystem((tx) => tx.campaign.update({ where: { id: campaignId }, data: { articleId: art.id } }));
+        return { slug: artSlug };
+      });
+      const writeRedirectConfigs = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {});
+      await launchCampaign(auth(), campaignId, { generateArticle, writeRedirectConfigs });
+
+      const camp = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { whiteDomainHost: true } }));
+      expect([wa, wb]).toContain(camp?.whiteDomainHost); // rotated from the healthy+active pool only
+      const white = camp!.whiteDomainHost!;
+      // FB display link (link_data.caption) = the white domain apex.
+      const spec = vi.mocked(fb.createFbAdCreative).mock.calls.at(-1)![2] as unknown as { objectStorySpec: { link_data: { caption?: string } } };
+      expect(spec.objectStorySpec.link_data.caption).toBe(`https://${white}`);
+      // KV fallback (the white page non-ad traffic sees) = the white domain + the article slug.
+      expect(writeRedirectConfigs.mock.calls.at(-1)![0][0]!.config.fallbackUrl).toBe(`https://${white}/a/${artSlug}`);
+    } finally {
+      await withSystem(async (tx) => {
+        await tx.whiteDomain.deleteMany({ where: { host: { contains: suffix } } });
+        await tx.organization.update({ where: { id: orgId }, data: { cloakingEnabled: false, defaultFunnelMode: 'NORMAL' } });
+      });
+    }
+  });
+
   it('does NOT create two FB campaigns when launched CONCURRENTLY (atomic claim — the duplicate-launch bug)', async () => {
     const campaignId = await makeCampaign();
     vi.mocked(fb.createFbCampaign).mockClear();

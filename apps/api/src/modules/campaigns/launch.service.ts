@@ -557,6 +557,23 @@ async function resolveRedirectBase(mode: FunnelMode, orgId: string): Promise<{ b
 }
 
 /**
+ * Pick a white domain from the active + healthy pool, rotating LEAST-LOADED (fewest campaigns already
+ * on it) so cloaker ads spread across the pool instead of all sharing one display URL. Returns the
+ * host, or undefined when the pool is empty → no white auto-fill (the buyer's own display/fallback stand).
+ */
+async function pickWhiteDomain(): Promise<string | undefined> {
+  const pool = await withSystem((tx) => tx.whiteDomain.findMany({ where: { isActive: true, healthy: true }, select: { host: true } }));
+  const hosts = pool.map((d) => d.host);
+  if (hosts.length === 0) return undefined;
+  const loads = await withSystem((tx) =>
+    tx.campaign.groupBy({ by: ['whiteDomainHost'], where: { whiteDomainHost: { in: hosts } }, _count: { _all: true } }),
+  );
+  const loadByHost = new Map(loads.map((l) => [l.whiteDomainHost, l._count._all]));
+  hosts.sort((a, b) => (loadByHost.get(a) ?? 0) - (loadByHost.get(b) ?? 0));
+  return hosts[0]!;
+}
+
+/**
  * When launching through a separate LAUNCH app, verify ITS token can see the ad account,
  * Page and pixels first — Facebook grants assets per app, so a launch app that wasn't
  * granted the same assets as the DATA app would fail mid-build with a confusing "the ad
@@ -643,11 +660,16 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
       // Display link (FB link_data.caption): the VISIBLE URL caption in the ad, separate from the
       // cloaked `link` destination. FB requires an actual URL, so normalize a bare domain to https://.
       // Unset → FB derives the display URL from the destination domain (prior behavior).
-      const displayCaption = ad.displayLink
-        ? /^https?:\/\//i.test(ad.displayLink)
-          ? ad.displayLink
-          : `https://${ad.displayLink}`
-        : undefined;
+      // CLOAKER campaigns ALWAYS show the assigned white domain as the display link, so the visible ad
+      // URL matches where a reviewer/organic visitor actually lands (the fallback → the white site).
+      // Otherwise the buyer's own display link (normalized to a URL); unset → FB derives it.
+      const displayCaption = campaign.whiteDomainHost
+        ? `https://${campaign.whiteDomainHost}`
+        : ad.displayLink
+          ? /^https?:\/\//i.test(ad.displayLink)
+            ? ad.displayLink
+            : `https://${ad.displayLink}`
+          : undefined;
       const creative = await createFbAdCreative(fbAccountId, token, {
         name: ad.name,
         objectStorySpec: {
@@ -742,6 +764,9 @@ export async function syncCampaignRedirectConfigs(
   }
   if (!slug) throw new AppError(409, 'Campaign has no article yet — nothing to route');
 
+  // CLOAKER campaigns route white (non-ad) traffic to the white domain assigned at launch.
+  const whiteFallbackUrl = campaign.whiteDomainHost ? `https://${campaign.whiteDomainHost}/a/${slug}` : undefined;
+
   const offers = await withSystem((tx) =>
     tx.offer.findMany({ where: { campaignId }, include: { domain: { select: { host: true } } } }),
   );
@@ -793,7 +818,8 @@ export async function syncCampaignRedirectConfigs(
           // referrerAdCreative (the AFS `rc`) is the campaign-level Referrer Ad Creative — one
           // value for all the campaign's ads (not derived from each ad's copy). Stored in racValue.
           adCreative: campaign.racValue ?? undefined,
-          fallbackUrl: organicFallbackUrl ?? ad.fallbackUrl ?? campaign.fallbackUrl ?? undefined,
+          // CLOAKER: white domain is the fallback (white page); else organic offer → ad → campaign.
+          fallbackUrl: whiteFallbackUrl ?? organicFallbackUrl ?? ad.fallbackUrl ?? campaign.fallbackUrl ?? undefined,
         } satisfies RedirectConfigPayload,
       })),
   );
@@ -896,6 +922,14 @@ export async function launchCampaign(
     channel = channelRow?.channelId;
   }
 
+  // CLOAKER buyers: auto-assign a rotated white domain — the FB display link + the (white) fallback
+  // page that organic/bot/reviewer traffic sees. The buyer never sets these. Recorded on the campaign
+  // so the post-launch resync AND the FB creative (createFbStructure) read the SAME white host.
+  const funnelMode = await resolveBuyerFunnelMode(campaign.orgId, campaign.buyerId);
+  const whiteHost = funnelMode === 'CLOAKER' ? await pickWhiteDomain() : undefined;
+  const whiteFallbackUrl = whiteHost ? `https://${whiteHost}/a/${slug}` : undefined;
+  await runScoped(auth, (tx) => tx.campaign.update({ where: { id: campaignId }, data: { whiteDomainHost: whiteHost ?? null } }));
+
   // 3. Write each ad's redirect config to edge KV (so go.* resolves once ads go live).
   const entries = campaign.adSets.flatMap((set) =>
     set.ads.map((ad) => ({
@@ -909,7 +943,8 @@ export async function launchCampaign(
         expectedAdId: ad.fbAdId ?? undefined,
         // referrerAdCreative (AFS `rc`) = the campaign-level Referrer Ad Creative (racValue).
         adCreative: campaign.racValue ?? undefined,
-        fallbackUrl: organicFallbackUrl ?? ad.fallbackUrl ?? campaign.fallbackUrl ?? undefined,
+        // CLOAKER: white domain is the fallback (white page); else organic offer → ad → campaign.
+        fallbackUrl: whiteFallbackUrl ?? organicFallbackUrl ?? ad.fallbackUrl ?? campaign.fallbackUrl ?? undefined,
       } satisfies RedirectConfigPayload,
     })),
   );
