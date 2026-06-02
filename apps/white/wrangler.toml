@@ -14,8 +14,9 @@ main = "src/worker.ts"
 compatibility_date = "2026-05-01"
 workers_dev = false
 
-# The white Cloudflare account id (NOT the money account). Fill before the first deploy.
-account_id = "REPLACE_WITH_WHITE_ACCOUNT_ID"
+# account_id is inferred from the authenticated account when you `wrangler login` to the WHITE account
+# (a fresh account has just one). Only uncomment + set it if that login has multiple accounts:
+# account_id = "<white-account-id>"
 
 [vars]
 # Public API the white site pulls article CONTENT from, server-side. This fetch is invisible to
