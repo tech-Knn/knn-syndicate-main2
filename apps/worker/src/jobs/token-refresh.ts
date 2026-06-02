@@ -1,5 +1,6 @@
 import { FbConnectionStatus, withSystem } from '@knn/db';
 import {
+  type FbAppKind,
   FbConnectionBrokenError,
   decryptToken,
   encryptToken,
@@ -70,12 +71,13 @@ export async function refreshFbTokens(deps: TokenRefreshDeps = {}): Promise<Toke
   const notify = deps.notify ?? defaultNotify;
   const nowMs = now();
 
-  // DATA connections only. LAUNCH connections hold short-lived tokens by design (they clear
-  // the 31/3858385 checkpoint); trying to extend one would fail, and "expired" is its normal
-  // resting state — the buyer reconnects the launch app right before launching, so we must
-  // not degrade/notify on it here.
+  // Long-lived apps only: DATA and the Advanced-Access VERIFY app (both hold ~60-day tokens we
+  // extend within the refresh window). LAUNCH connections hold short-lived tokens by design (they
+  // clear the 31/3858385 checkpoint); trying to extend one would fail, and "expired" is its normal
+  // resting state — the buyer reconnects the launch app right before launching, so we must not
+  // degrade/notify on it here.
   const connections = await withSystem((tx) =>
-    tx.fbConnection.findMany({ where: { status: FbConnectionStatus.ACTIVE, appKind: 'DATA' } }),
+    tx.fbConnection.findMany({ where: { status: FbConnectionStatus.ACTIVE, appKind: { in: ['DATA', 'VERIFY'] } } }),
   );
 
   const summary: TokenRefreshSummary = {
@@ -97,7 +99,8 @@ export async function refreshFbTokens(deps: TokenRefreshDeps = {}): Promise<Toke
     if (msToExpiry > REFRESH_WITHIN_DAYS * DAY_MS) continue; // healthy, far from expiry
 
     try {
-      const refreshed = await exchangeForLongLivedToken(decryptToken(conn.accessTokenEnc));
+      // Sign the exchange with the token's OWN app secret (DATA or VERIFY) — never the wrong app's.
+      const refreshed = await exchangeForLongLivedToken(decryptToken(conn.accessTokenEnc), conn.appKind as FbAppKind);
       const newExpiry = new Date(nowMs + refreshed.expiresInSec * 1_000);
       await withSystem((tx) =>
         tx.fbConnection.update({

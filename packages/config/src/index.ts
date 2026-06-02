@@ -112,6 +112,17 @@ const EnvSchema = z.object({
   // Facebook Login for Business config id for the LAUNCH app (falls back to FB_LOGIN_CONFIG_ID).
   FB_LAUNCH_CONFIG_ID: optionalString,
 
+  // Optional THIRD Facebook app — an app with **Advanced Access** approved (App Review), so ANY
+  // Facebook user (not just app Testers) can connect it. Used to verify the post-App-Review path:
+  // it behaves like the DATA app (long-lived token, syncs ad accounts/Pages/pixels) AND can publish
+  // ads directly with its own ads_management token (no separate LAUNCH app / 31/3858385 detour). When
+  // these are empty the app is simply not offered — leaving them blank changes nothing. Shares the
+  // DATA app's OAuth redirect URI (FB_OAUTH_REDIRECT_URI), so add that callback to this app too. If
+  // FB_VERIFY_CONFIG_ID is unset, OAuth falls back to an explicit `scope` list (no Login config needed).
+  FB_VERIFY_APP_ID: optionalString,
+  FB_VERIFY_APP_SECRET: optionalString,
+  FB_VERIFY_CONFIG_ID: optionalString,
+
   // Google / AdSense
   GOOGLE_CLIENT_ID: optionalString,
   GOOGLE_CLIENT_SECRET: optionalString,

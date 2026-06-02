@@ -389,6 +389,7 @@ function ProfileBlock({
             <div className={styles.accountName}>
               {profile.name}{' '}
               {profile.appKind === 'LAUNCH' ? <Badge tone="warning">Launch app · short-lived</Badge> : null}
+              {profile.appKind === 'VERIFY' ? <Badge tone="success">Advanced Access · syncs + publishes</Badge> : null}
             </div>
             <div className={styles.accountSub}>
               {owner ? `${owner.email} · ${owner.org}` : `id ${profile.fbUserId}`}
@@ -716,21 +717,22 @@ export default function FacebookPage() {
     void loadAll();
   }, [load, loadAll]);
 
-  const connect = useCallback(async (app: 'data' | 'launch' = 'data') => {
+  const connect = useCallback(async (app: 'data' | 'launch' | 'verify' = 'data') => {
     setConnecting(true);
     setBanner(null);
     try {
       const { url } = await facebook.authUrl(app);
       window.location.href = url;
     } catch (err) {
+      const notConfigured =
+        app === 'launch'
+          ? 'The Facebook launch app is not configured on this environment yet.'
+          : app === 'verify'
+            ? 'The Facebook verification app is not configured on this environment yet.'
+            : 'Facebook is not configured on this environment yet.';
       setBanner({
         tone: 'error',
-        text:
-          err instanceof ApiError && err.status === 503
-            ? app === 'launch'
-              ? 'The Facebook launch app is not configured on this environment yet.'
-              : 'Facebook is not configured on this environment yet.'
-            : 'Could not start the Facebook connection.',
+        text: err instanceof ApiError && err.status === 503 ? notConfigured : 'Could not start the Facebook connection.',
       });
       setConnecting(false);
     }
@@ -755,6 +757,11 @@ export default function FacebookPage() {
               checkpoint). Reconnect it right before launching — its token is short-lived. */}
           <Button variant="secondary" onClick={() => void connect('launch')} loading={connecting}>
             Connect launch app
+          </Button>
+          {/* The Advanced-Access app (post-App-Review). One connection both syncs AND publishes —
+              no tester role, no separate launch app. Only acts if FB_VERIFY_* is configured (else 503). */}
+          <Button variant="secondary" onClick={() => void connect('verify')} loading={connecting}>
+            Connect verification app
           </Button>
         </div>
       </div>
@@ -832,7 +839,7 @@ export default function FacebookPage() {
               profile={p}
               onChanged={refresh}
               setBanner={setBanner}
-              onReconnect={() => void connect(p.appKind === 'LAUNCH' ? 'launch' : 'data')}
+              onReconnect={() => void connect(p.appKind === 'LAUNCH' ? 'launch' : p.appKind === 'VERIFY' ? 'verify' : 'data')}
             />
           ))
         )}

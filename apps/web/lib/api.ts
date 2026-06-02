@@ -237,9 +237,9 @@ export const auth = {
 };
 
 export const facebook = {
-  // `app: 'launch'` starts OAuth for the optional short-lived LAUNCH app; default = DATA app.
-  authUrl: async (app: 'data' | 'launch' = 'data'): Promise<{ url: string }> =>
-    parse(await authedFetch(`/api/facebook/auth-url${app === 'launch' ? '?app=launch' : ''}`)),
+  // `app: 'launch'` → the short-lived LAUNCH app; `app: 'verify'` → the Advanced-Access app; default = DATA.
+  authUrl: async (app: 'data' | 'launch' | 'verify' = 'data'): Promise<{ url: string }> =>
+    parse(await authedFetch(`/api/facebook/auth-url${app === 'data' ? '' : `?app=${app}`}`)),
   // The actor's own connected profiles.
   profiles: async (): Promise<FbProfile[]> =>
     (await parse<{ profiles: FbProfile[] }>(await authedFetch('/api/facebook/profiles'))).profiles,

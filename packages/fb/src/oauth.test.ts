@@ -35,4 +35,9 @@ describe('buildAuthUrl (app-kind aware)', () => {
     // In the test env FB_LAUNCH_APP_ID is unset, so LAUNCH resolves to the DATA creds.
     expect(new URL(buildAuthUrl('s', 'LAUNCH')).searchParams.get('client_id')).toBe(fbAppCreds('DATA').appId);
   });
+
+  it("falls back to the DATA app's client id for VERIFY when no verify app is configured", () => {
+    // In the test env FB_VERIFY_APP_ID is unset, so VERIFY resolves to the DATA creds.
+    expect(new URL(buildAuthUrl('s', 'VERIFY')).searchParams.get('client_id')).toBe(fbAppCreds('DATA').appId);
+  });
 });

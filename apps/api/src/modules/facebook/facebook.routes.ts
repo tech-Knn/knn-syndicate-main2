@@ -36,7 +36,7 @@ export async function facebookRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { app?: string } }>('/auth-url', { preHandler: [authenticate] }, async (req, reply) => {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     try {
-      const appKind = req.query.app === 'launch' ? 'LAUNCH' : 'DATA';
+      const appKind = req.query.app === 'launch' ? 'LAUNCH' : req.query.app === 'verify' ? 'VERIFY' : 'DATA';
       return reply.send(await getAuthUrl(req.auth, appKind));
     } catch (err) {
       return handleRouteError(err, reply);

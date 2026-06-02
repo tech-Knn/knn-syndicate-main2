@@ -28,8 +28,8 @@ export interface FbProfile {
   id: string;
   fbUserId: string;
   name: string;
-  /** Which app this connection is for: DATA (sync/reads/CAPI) or LAUNCH (short-lived, ad writes). */
-  appKind: 'DATA' | 'LAUNCH';
+  /** Which app: DATA (sync/reads/CAPI), LAUNCH (short-lived, ad writes), or VERIFY (Advanced-Access app — syncs + publishes). */
+  appKind: 'DATA' | 'LAUNCH' | 'VERIFY';
   status: FbStatus;
   scopes: string[];
   tokenExpiresAt: string;

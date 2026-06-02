@@ -17,6 +17,7 @@ import {
   fetchPromotePages,
   getMe,
   hasLaunchApp,
+  hasVerifyApp,
   isFbConfigured,
 } from '@knn/fb';
 import { ROLES } from '@knn/shared';
@@ -62,13 +63,17 @@ function profileName(c: { fbName: string | null; fbUserId: string }): string {
 }
 
 /** Build the Facebook OAuth dialog URL for the authenticated user (spec §5.2.1). The
- *  `appKind` picks which app to connect — DATA (default) or the optional LAUNCH app. */
+ *  `appKind` picks which app to connect — DATA (default), the optional LAUNCH app, or the
+ *  optional Advanced-Access VERIFY app. */
 export async function getAuthUrl(auth: AuthContext, appKind: FbAppKind = 'DATA'): Promise<{ url: string }> {
   if (!isFbConfigured()) {
     throw new AppError(503, 'Facebook integration is not configured on this environment');
   }
   if (appKind === 'LAUNCH' && !hasLaunchApp()) {
     throw new AppError(503, 'The Facebook launch app is not configured on this environment');
+  }
+  if (appKind === 'VERIFY' && !hasVerifyApp()) {
+    throw new AppError(503, 'The Facebook verification app is not configured on this environment');
   }
   const state = await signFbState({ userId: auth.userId, orgId: auth.orgId, appKind });
   return { url: buildAuthUrl(state, appKind) };
@@ -231,9 +236,10 @@ export async function handleCallback(code: string, state: string): Promise<void>
 
   // The LAUNCH connection holds only a token for ad writes — it does NOT own ad
   // accounts/pages/pixels (the DATA connection already synced those for the same person),
-  // so skip the asset sync. For DATA, run the best-effort initial sync: a broken token is
-  // recorded; other transient failures leave it ACTIVE so the buyer can retry from the UI.
-  if (appKind === 'DATA') {
+  // so skip the asset sync. DATA and the Advanced-Access VERIFY app both own + sync assets,
+  // so run the best-effort initial sync: a broken token is recorded; other transient failures
+  // leave it ACTIVE so the buyer can retry from the UI.
+  if (appKind !== 'LAUNCH') {
     try {
       await syncFromFacebook({ connectionId: conn.id, orgId, accessToken: tok.accessToken });
     } catch (err) {

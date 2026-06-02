@@ -291,6 +291,30 @@ describe('launchCampaign (Phase 8)', () => {
     }
   });
 
+  it('three-app (Advanced Access): a VERIFY-owned account publishes with its OWN token — no LAUNCH connection required', async () => {
+    // The Advanced-Access VERIFY app is self-sufficient: its long-lived ads_management token both
+    // syncs assets AND publishes. So a VERIFY-owned ad account launches directly with appKind 'VERIFY'
+    // — even when a separate LAUNCH app is configured and this person has NO launch connection (which
+    // would otherwise 409). Flip the owning connection to VERIFY and prove it bypasses the LAUNCH path.
+    await withSystem((tx) => tx.fbConnection.updateMany({ where: { userId: buyerId, fbUserId: 'fb' }, data: { appKind: 'VERIFY' } }));
+    vi.mocked(fb.hasLaunchApp).mockReturnValue(true); // a launch app exists, but VERIFY must ignore it
+    vi.mocked(fb.createFbCampaign).mockClear();
+    try {
+      const campaignId = await makeCampaign();
+      const result = await launchCampaign(auth(), campaignId, {
+        generateArticle: vi.fn(async () => ({ slug: 'health-2026' })),
+        writeRedirectConfigs: vi.fn(async () => undefined),
+      });
+      expect(result.status).toBe('ACTIVE'); // launched — NOT a "reconnect launch app" 409
+      // 4th arg = appKind. A VERIFY-owned account writes with appKind 'VERIFY' (for appsecret_proof).
+      expect(fb.createFbCampaign).toHaveBeenCalledWith('act_1', 'tok', expect.any(Object), 'VERIFY');
+      expect(fb.createFbAd).toHaveBeenCalledWith('act_1', 'tok', expect.any(Object), 'VERIFY');
+    } finally {
+      vi.mocked(fb.hasLaunchApp).mockReturnValue(false);
+      await withSystem((tx) => tx.fbConnection.updateMany({ where: { userId: buyerId, fbUserId: 'fb' }, data: { appKind: 'DATA' } }));
+    }
+  });
+
   it('parks the campaign in BATCHED on a Facebook rate-limit error', async () => {
     const campaignId = await makeCampaign();
     vi.mocked(fb.createFbCampaign).mockImplementationOnce(async () => {

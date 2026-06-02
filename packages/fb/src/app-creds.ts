@@ -8,11 +8,17 @@ import { env } from '@knn/config';
  *   create/modify ads, because the DATA app's long-lived token trips Facebook's
  *   `31/3858385` ad-publish security checkpoint while a fresh short-lived token from a
  *   separate app does not. Falls back to the DATA app when FB_LAUNCH_* is unset.
+ * - `VERIFY` — an optional THIRD app (FB_VERIFY_*) with **Advanced Access** approved. Behaves
+ *   like DATA (long-lived token, syncs assets) AND publishes ads directly with its own
+ *   `ads_management` token — so a single connection does sync + launch with no LAUNCH detour.
+ *   Used to verify the post-App-Review path (any user, not just Testers, can connect). Falls
+ *   back to the DATA app when FB_VERIFY_* is unset.
  *
- * This is a temporary split (`#two-app`) until the checkpoint is solved at the
- * account/IP level; it's intentionally additive so single-app installs are unaffected.
+ * The DATA/LAUNCH split is a temporary measure (`#two-app`) until the checkpoint is solved at
+ * the account/IP level; VERIFY is the candidate end-state. All of this is intentionally additive
+ * so single-app installs are unaffected.
  */
-export type FbAppKind = 'DATA' | 'LAUNCH';
+export type FbAppKind = 'DATA' | 'LAUNCH' | 'VERIFY';
 
 export interface FbAppCreds {
   appId: string;
@@ -26,10 +32,16 @@ export function hasLaunchApp(): boolean {
   return Boolean(env.FB_LAUNCH_APP_ID && env.FB_LAUNCH_APP_SECRET);
 }
 
+/** True when the Advanced-Access VERIFY app is configured (separate id + secret). */
+export function hasVerifyApp(): boolean {
+  return Boolean(env.FB_VERIFY_APP_ID && env.FB_VERIFY_APP_SECRET);
+}
+
 /**
- * Resolve the app credentials for a given role. `LAUNCH` returns the launch app's creds
- * when configured, otherwise transparently falls back to the DATA app — so a call tagged
- * `LAUNCH` on a single-app install just uses the only app there is.
+ * Resolve the app credentials for a given role. `LAUNCH`/`VERIFY` return their app's creds when
+ * configured, otherwise transparently fall back to the DATA app — so a call tagged for an
+ * unconfigured app just uses the only app there is. `VERIFY` has no Login-config fallback: when
+ * FB_VERIFY_CONFIG_ID is unset, OAuth uses an explicit scope list (configId '').
  */
 export function fbAppCreds(kind: FbAppKind = 'DATA'): FbAppCreds {
   if (kind === 'LAUNCH' && hasLaunchApp()) {
@@ -37,6 +49,13 @@ export function fbAppCreds(kind: FbAppKind = 'DATA'): FbAppCreds {
       appId: env.FB_LAUNCH_APP_ID,
       appSecret: env.FB_LAUNCH_APP_SECRET,
       configId: env.FB_LAUNCH_CONFIG_ID || env.FB_LOGIN_CONFIG_ID,
+    };
+  }
+  if (kind === 'VERIFY' && hasVerifyApp()) {
+    return {
+      appId: env.FB_VERIFY_APP_ID,
+      appSecret: env.FB_VERIFY_APP_SECRET,
+      configId: env.FB_VERIFY_CONFIG_ID,
     };
   }
   return { appId: env.FB_APP_ID, appSecret: env.FB_APP_SECRET, configId: env.FB_LOGIN_CONFIG_ID };

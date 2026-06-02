@@ -21,7 +21,7 @@ import {
   updateFbCampaignStatus,
   uploadFbAdImage,
 } from '@knn/fb';
-import { CAMPAIGN_STATUS, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, canTransitionCampaign, goalRequiresPixel, pxeToCustomEventType } from '@knn/shared';
+import { CAMPAIGN_STATUS, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, goalRequiresPixel, pxeToCustomEventType } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { KvNotConfiguredError, type RedirectConfigPayload, writeRedirectConfigs } from '../../lib/kv-sync.js';
@@ -59,6 +59,9 @@ interface OwningConnection {
   fbUserId: string;
   accessTokenEnc: string;
   status: FbConnectionStatus;
+  /** Which app owns this connection — VERIFY (Advanced Access) publishes directly. */
+  appKind: string;
+  tokenExpiresAt: Date;
 }
 interface WriteAuth {
   token: string;
@@ -81,6 +84,17 @@ interface WriteAuth {
  * connecting KNN user is the stable join key. Pick the freshest LAUNCH connection.
  */
 async function resolveWriteAuth(tx: TxClient, dataConn: OwningConnection): Promise<WriteAuth> {
+  // A VERIFY connection is the Advanced-Access app: its own long-lived ads_management token
+  // both syncs assets AND publishes ads. It is self-sufficient — use it directly, no LAUNCH detour.
+  if (dataConn.appKind === 'VERIFY') {
+    if (dataConn.status === FbConnectionStatus.CONNECTION_BROKEN || dataConn.tokenExpiresAt.getTime() <= Date.now()) {
+      throw new AppError(
+        409,
+        'Your Facebook verification-app connection needs reconnecting — open Settings → Facebook → Connect verification app, then relaunch.',
+      );
+    }
+    return { token: decryptConnectionToken(dataConn.accessTokenEnc), appKind: 'VERIFY', connectionId: dataConn.id };
+  }
   if (hasLaunchApp()) {
     const launch = await tx.fbConnection.findFirst({
       where: { userId: dataConn.userId, appKind: 'LAUNCH' },
@@ -160,7 +174,7 @@ async function resolveLaunchPlan(auth: AuthContext, campaignId: string): Promise
         where: { id: campaign.adAccountId },
         select: {
           fbAccountId: true,
-          connection: { select: { id: true, userId: true, fbUserId: true, accessTokenEnc: true, status: true } },
+          connection: { select: { id: true, userId: true, fbUserId: true, accessTokenEnc: true, status: true, appKind: true, tokenExpiresAt: true } },
         },
       }),
       tx.fbPage.findUnique({ where: { id: campaign.pageId }, select: { fbPageId: true } }),
@@ -229,7 +243,7 @@ export async function setCampaignActive(
         where: { id: campaign.adAccountId },
         select: {
           fbAccountId: true,
-          connection: { select: { id: true, userId: true, fbUserId: true, accessTokenEnc: true, status: true } },
+          connection: { select: { id: true, userId: true, fbUserId: true, accessTokenEnc: true, status: true, appKind: true, tokenExpiresAt: true } },
         },
       });
       if (!acc) throw new AppError(400, 'Selected ad account no longer exists');
@@ -350,7 +364,7 @@ export async function updateCampaignBudget(
     }
     const acc = await tx.fbAdAccount.findUnique({
       where: { id: campaign.adAccountId },
-      select: { fbAccountId: true, connection: { select: { id: true, userId: true, fbUserId: true, accessTokenEnc: true, status: true } } },
+      select: { fbAccountId: true, connection: { select: { id: true, userId: true, fbUserId: true, accessTokenEnc: true, status: true, appKind: true, tokenExpiresAt: true } } },
     });
     if (!acc) throw new AppError(400, 'Selected ad account no longer exists');
 
@@ -450,7 +464,7 @@ export async function updateAdSetBudget(
     if (!set.fbAdSetId || !campaign.adAccountId) throw new AppError(409, 'This ad set isn’t linked to Facebook yet.');
     const acc = await tx.fbAdAccount.findUnique({
       where: { id: campaign.adAccountId },
-      select: { fbAccountId: true, connection: { select: { id: true, userId: true, fbUserId: true, accessTokenEnc: true, status: true } } },
+      select: { fbAccountId: true, connection: { select: { id: true, userId: true, fbUserId: true, accessTokenEnc: true, status: true, appKind: true, tokenExpiresAt: true } } },
     });
     if (!acc) throw new AppError(400, 'Selected ad account no longer exists');
     const writeAuth = await resolveWriteAuth(tx, acc.connection);
