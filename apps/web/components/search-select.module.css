@@ -9,7 +9,8 @@
   gap: 0.5rem;
   width: 100%;
   padding: 0.65rem 0.85rem;
-  border: 1px solid var(--border);
+  /* Interactive boundary (≈3:1) — this combobox trigger's border is its only affordance (SC 1.4.11). */
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--cream);
@@ -18,7 +19,7 @@
   text-align: left;
 }
 .trigger:hover:not(:disabled) {
-  border-color: var(--border-strong);
+  border-color: var(--cream);
 }
 .trigger:disabled {
   opacity: 0.5;

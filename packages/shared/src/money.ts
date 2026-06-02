@@ -28,6 +28,9 @@ export function formatRoi(roi: number): string {
     style: 'percent',
     minimumFractionDigits: 0,
     maximumFractionDigits: 1,
+    // Show an explicit sign (+20% / -20%, 0% at break-even) so profit/loss never relies on
+    // color alone (WCAG 1.4.1 — use-of-color). The sign is the primary cue; red/green reinforces.
+    signDisplay: 'exceptZero',
   }).format(roi);
 }
 

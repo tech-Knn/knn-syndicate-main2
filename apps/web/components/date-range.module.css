@@ -214,3 +214,17 @@
     flex-direction: column;
   }
 }
+
+/* Touch devices: calendar days, month-nav arrows and presets need ≥44px tap targets. */
+@media (pointer: coarse) {
+  .day {
+    min-height: 44px;
+  }
+  .nav {
+    width: 44px;
+    height: 44px;
+  }
+  .preset {
+    min-height: 44px;
+  }
+}

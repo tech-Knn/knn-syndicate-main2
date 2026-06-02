@@ -203,3 +203,17 @@
     padding: 1.5rem var(--space-4) 3rem;
   }
 }
+
+/* Touch devices: primary nav targets meet the ~44px comfortable tap size (WCAG 2.5.8 / iOS HIG). */
+@media (pointer: coarse) {
+  .navLink,
+  .drawerLink {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+  .hamburger {
+    width: 44px;
+    height: 44px;
+  }
+}

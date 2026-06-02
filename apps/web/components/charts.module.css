@@ -167,5 +167,6 @@
   color: var(--green) !important;
 }
 .neg {
-  color: var(--red) !important;
+  /* --red-text (not raw --red) — AA-legible for loss numbers on dark; raw --red is 4.14:1. */
+  color: var(--red-text) !important;
 }

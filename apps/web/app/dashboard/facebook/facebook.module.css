@@ -260,6 +260,27 @@
 .pageRow {
   grid-template-columns: 1.6fr 1fr 0.85fr;
 }
+
+/* Phone: the 4-5 fixed grid columns crush/overlap below ~700px (Account ID + Currency + Status).
+   Stack each row into a label→value card and drop the now-meaningless header row — mirrors the
+   campaigns.module.css @720px reflow. */
+@media (max-width: 700px) {
+  .row,
+  .accountRow,
+  .pageRow {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4rem;
+  }
+  .rowHead {
+    display: none;
+  }
+  .cellMono {
+    font-size: 0.82rem;
+  }
+}
+
 .rowHead {
   font-size: 0.7rem;
   letter-spacing: 0.08em;

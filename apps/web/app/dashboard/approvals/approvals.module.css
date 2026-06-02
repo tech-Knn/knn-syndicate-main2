@@ -214,6 +214,7 @@
 
 .actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.6rem;
   margin-top: 1rem;
   padding-top: 0.9rem;
@@ -329,4 +330,32 @@
   outline: 2px solid var(--rust);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
+}
+
+/* Phone: this page had ZERO breakpoints. Stack the header (title vs. mode switches) and the
+   per-card top row, and let the approve/reject/view actions wrap full-width so destructive
+   controls never overflow or crush together. */
+@media (max-width: 640px) {
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .modes {
+    flex: 1 1 auto;
+  }
+  .cardTop {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  .actions {
+    flex-wrap: wrap;
+  }
+  .actions .spacer {
+    display: none;
+  }
+  .actions > * {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
 }

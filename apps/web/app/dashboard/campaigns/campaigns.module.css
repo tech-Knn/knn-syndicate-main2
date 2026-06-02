@@ -153,3 +153,15 @@
   padding: 2.5rem;
   color: var(--muted);
 }
+
+/* Touch devices: row action buttons (View / Clone / Edit / Delete) need a comfortable tap size. */
+@media (pointer: coarse) {
+  .linkBtn,
+  .linkBtnPrimary,
+  .del,
+  .presetSelect {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+}

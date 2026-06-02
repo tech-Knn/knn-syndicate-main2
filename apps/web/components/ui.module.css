@@ -272,7 +272,7 @@
 }
 .input {
   background: var(--bg);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-interactive);
   border-radius: var(--radius-sm);
   color: var(--cream);
   font-size: 0.95rem;

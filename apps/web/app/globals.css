@@ -5,6 +5,11 @@
   --surface-2: #1c1c22;
   --border: #26262c;
   --border-strong: #34343c;
+  /* Boundary for INTERACTIVE controls (inputs/selects/textarea/combobox triggers). ~3:1 against
+     --bg/--surface to satisfy WCAG 2.2 SC 1.4.11 (non-text contrast) — the resting --border-strong
+     (#34343c) is only ~1.5:1, so a control whose border is its sole affordance was failing. Keep
+     --border/--border-strong for decorative card edges (they pair with fills + shadow). */
+  --border-interactive: #5a5a64;
   --rust: #d9512c;
   --rust-rgb: 217, 81, 44;
   /* Darker rust used for the white-on-rust primary button fill so the label clears WCAG AA
@@ -114,6 +119,18 @@ a {
 
 button {
   font-family: inherit;
+}
+
+/* iOS Safari auto-zooms the page whenever a focused form control has font-size < 16px — jarring
+   on every field tap (the launcher especially). Force a 16px floor on phones for every native
+   control. The `:not()`s raise specificity above the CSS-module .input/.select/.textarea rules so
+   this actually wins (a bare `input{}` element selector would lose to a `.input` class). */
+@media (max-width: 768px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select:not([multiple]),
+  textarea:not([readonly]) {
+    font-size: 16px;
+  }
 }
 
 ::selection {

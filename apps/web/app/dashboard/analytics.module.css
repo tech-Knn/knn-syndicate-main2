@@ -302,3 +302,12 @@
     background: var(--surface);
   }
 }
+
+/* Touch devices: grow the small filter/sort/pager controls to a comfortable tap size. */
+@media (pointer: coarse) {
+  .chip,
+  .sortBtn,
+  .pagerBtn {
+    min-height: 44px;
+  }
+}
