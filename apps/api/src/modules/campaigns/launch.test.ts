@@ -149,9 +149,10 @@ describe('launchCampaign (Phase 8)', () => {
       active: true,
       articleUrl: `${env.ARTICLE_DOMAIN}/a/health-2026`,
       channel: `ch-launch-${suffix}`,
-      rac: 'health insurance',
+      // referrerAdCreative (AFS `rc`) is now the campaign-level Referrer Ad Creative (racValue),
+      // shared by all the campaign's ads — no longer derived from each ad's headline/text.
+      adCreative: 'health insurance',
     });
-    expect(String(entries[0]!.config.adCreative)).toContain('Save on Health');
 
     const campaign = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { status: true, fbCampaignId: true, adSets: { select: { fbAdSetId: true, ads: { select: { fbAdId: true } } } } } }));
     expect(campaign?.status).toBe('ACTIVE');

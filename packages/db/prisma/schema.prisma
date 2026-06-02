@@ -303,9 +303,12 @@ model Campaign {
   budgetMode       BudgetMode @default(AD_SET) @map("budget_mode")
   dailyBudgetCents Int?       @map("daily_budget_cents")
 
-  /// Campaign-level offer config (D5): keywords + Related Ad Category + the
-  /// landing-page query/angle that drives article generation (Phase 5) + fallback.
+  /// Campaign-level offer config (D5): keywords + the landing-page query/angle that drives
+  /// article generation (Phase 5) + fallback.
   keywords    Json    @default("[]")
+  /// Referrer Ad Creative — campaign-level text sent to Google AFS as `referrerAdCreative`
+  /// (the redirect's `rc`; required for paid traffic, shared by all the campaign's ads).
+  /// Column kept as `rac_value` (legacy name) to avoid a rename migration.
   racValue    String? @map("rac_value")
   query       String?
   fallbackUrl String? @map("fallback_url")

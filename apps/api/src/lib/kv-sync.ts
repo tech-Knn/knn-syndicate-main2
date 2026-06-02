@@ -20,7 +20,7 @@ export interface RedirectConfigPayload {
   active: boolean;
   articleUrl: string;
   channel?: string;
-  rac?: string;
+  /** referrerAdCreative (AFS `rc`) — the campaign-level Referrer Ad Creative. */
   adCreative?: string;
   styleId?: string;
   fallbackUrl?: string;

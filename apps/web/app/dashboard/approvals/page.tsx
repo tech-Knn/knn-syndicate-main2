@@ -423,7 +423,7 @@ export default function ApprovalsPage() {
                   </span>
                   {c.racValue && (
                     <span>
-                      RAC <b>{c.racValue}</b>
+                      Referrer ad creative <b>{c.racValue}</b>
                     </span>
                   )}
                   {cc.length > 0 &&

@@ -647,11 +647,6 @@ export async function testLaunchCampaign(auth: AuthContext, campaignId: string):
   return result;
 }
 
-/** Verbatim ad creative for AFS `referrerAdCreative` (required for paid traffic). */
-function buildAdCreativeText(ad: StoredAdSet['ads'][number]): string {
-  return [ad.headline, ad.primaryText, ad.description].filter(Boolean).join('. ');
-}
-
 export interface LaunchDeps {
   generateArticle: (auth: AuthContext, campaignId: string) => Promise<{ slug: string }>;
   writeRedirectConfigs: (entries: { redirectId: string; config: RedirectConfigPayload }[]) => Promise<void>;
@@ -737,8 +732,9 @@ export async function syncCampaignRedirectConfigs(
           articleUrl,
           channel,
           splits,
-          rac: campaign.racValue ?? undefined,
-          adCreative: buildAdCreativeText(ad),
+          // referrerAdCreative (the AFS `rc`) is the campaign-level Referrer Ad Creative — one
+          // value for all the campaign's ads (not derived from each ad's copy). Stored in racValue.
+          adCreative: campaign.racValue ?? undefined,
           fallbackUrl: organicFallbackUrl ?? ad.fallbackUrl ?? campaign.fallbackUrl ?? undefined,
         } satisfies RedirectConfigPayload,
       })),
@@ -852,8 +848,8 @@ export async function launchCampaign(
         articleUrl,
         channel,
         splits,
-        rac: campaign.racValue ?? undefined,
-        adCreative: buildAdCreativeText(ad),
+        // referrerAdCreative (AFS `rc`) = the campaign-level Referrer Ad Creative (racValue).
+        adCreative: campaign.racValue ?? undefined,
         fallbackUrl: organicFallbackUrl ?? ad.fallbackUrl ?? campaign.fallbackUrl ?? undefined,
       } satisfies RedirectConfigPayload,
     })),

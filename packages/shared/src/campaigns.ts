@@ -205,6 +205,9 @@ export const campaignDraftSchema = z.object({
   // Campaign budget (cents) — used under CBO.
   dailyBudgetCents: z.number().int().min(100, 'Minimum daily budget is $1.00').optional(),
   keywords: z.array(z.string().trim().min(1)).max(50).default([]),
+  // Referrer ad creative — campaign-level text sent to Google AFS as `referrerAdCreative`
+  // (required for paid traffic; used for all the campaign's ads). Stored in the legacy
+  // `racValue` field/column.
   racValue: z.string().trim().max(200).optional(),
   // Landing-page angle that drives article generation (Phase 5).
   query: z.string().trim().max(300).optional(),
@@ -222,7 +225,7 @@ export function campaignSubmitIssues(c: CampaignDraft): string[] {
   if (!c.adAccountId) issues.push('Select a Facebook ad account.');
   if (!c.pageId) issues.push('Select a Facebook page.');
   if (c.keywords.length === 0) issues.push('Add at least one keyword.');
-  if (!c.racValue) issues.push('Set the RAC (Related Ad Category) value.');
+  if (!c.racValue) issues.push('Set the Referrer Ad Creative.');
   if (c.budgetMode === 'CAMPAIGN' && !c.dailyBudgetCents) {
     issues.push('Set the campaign daily budget (campaign budget optimization is on).');
   }

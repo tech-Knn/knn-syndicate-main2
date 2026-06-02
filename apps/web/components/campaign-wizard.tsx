@@ -351,7 +351,7 @@ function formIssues(form: CampaignForm): string[] {
   if (!form.adAccountId) issues.push('Select a Facebook ad account.');
   if (!form.pageId) issues.push('Select a Facebook page.');
   if (form.keywords.length === 0) issues.push('Add at least one keyword.');
-  if (!form.racValue.trim()) issues.push('Set the RAC (Related Ad Category) value.');
+  if (!form.racValue.trim()) issues.push('Set the Referrer Ad Creative.');
   if (form.budgetMode === 'CAMPAIGN' && !centsOrUndef(form.dailyBudget)) issues.push('Set the campaign daily budget.');
   if (form.adSets.length === 0) issues.push('Add at least one ad set.');
   form.adSets.forEach((s, i) => {
@@ -973,8 +973,9 @@ function OfferStep({
           )}
         </div>
         <div className={styles.field}>
-          <label className={styles.label} htmlFor={fid('rac')}>RAC (Related Ad Category)<Req /></label>
-          <input id={fid('rac')} className={styles.input} value={form.racValue} onChange={(e) => patch({ racValue: e.target.value })} placeholder="e.g. health insurance" />
+          <label className={styles.label} htmlFor={fid('rac')}>Referrer Ad Creative<Req /></label>
+          <input id={fid('rac')} className={styles.input} value={form.racValue} onChange={(e) => patch({ racValue: e.target.value })} placeholder="e.g. Affordable Health Insurance Plans for Seniors" />
+          <span className={styles.hint}>Sent to Google AFS as the referrer ad creative (required for paid traffic). One value for the whole campaign — used by all its ads.</span>
         </div>
         <div className={`${styles.field} ${styles.full}`}>
           <label className={styles.label} htmlFor={fid('query')}>Landing-page query / angle</label>
