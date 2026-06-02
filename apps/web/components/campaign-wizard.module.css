@@ -1,9 +1,10 @@
 .wrap {
-  /* Responsive: fluid up to a sensible form width, then centered. A form shouldn't grow
-     unbounded (a single input stretched across 2560px reads badly) — instead the inner
-     `.grid` reflows into MORE columns as width grows (see below), filling the space. */
+  /* Responsive: fluid up to a sensible form width, then centered. A 2-column form shouldn't
+     grow unbounded (a single input stretched across the whole screen reads badly) — 1200px
+     keeps the two columns comfortably wide while filling far more space than the old 760px.
+     (The view-mode `.summary` below still reflows into more columns on top of this.) */
   width: 100%;
-  max-width: 1440px;
+  max-width: 1200px;
   margin: 0 auto;
 }
 .head {
@@ -97,9 +98,9 @@
 }
 .grid {
   display: grid;
-  /* Responsive auto-fit: 1 column on phones → 2 → 3 → 4 as the viewport grows, so a wide
-     screen is filled with more fields per row instead of stretching each input. */
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  /* Two even columns — the form is logically paired (Objective|Budget, Ad account|Page).
+     `.full` fields span both; the mobile breakpoint below collapses to one column. */
+  grid-template-columns: 1fr 1fr;
   gap: 1rem 1.25rem;
 }
 .full {
