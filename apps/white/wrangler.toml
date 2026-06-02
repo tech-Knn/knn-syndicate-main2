@@ -1,0 +1,36 @@
+# Cloudflare Worker for the WHITE site — the clean, separately-hosted content publication used as the
+# cloaker funnel's fallback (what organic/bot/reviewer traffic sees) AND the FB ad display link.
+#
+# ⚠️ Deploy to the SEPARATE Cloudflare account (the one holding the white zones, e.g.
+# Ninjadealsshop@gmail.com) — NOT the money/redirect account. Same account = same nameserver pair =
+# externally linkable via `dig NS`. That separation is the whole point.
+#
+# One-time:
+#   1. Set account_id below (CF dashboard → the white account → "Account ID").
+#   2. Authenticate to THAT account: `wrangler login` (or a scoped CLOUDFLARE_API_TOKEN for it).
+#   3. `wrangler deploy` — provisions the custom domains + certs for the 3 white zones (already Active).
+name = "knn-white"
+main = "src/worker.ts"
+compatibility_date = "2026-05-01"
+workers_dev = false
+
+# The white Cloudflare account id (NOT the money account). Fill before the first deploy.
+account_id = "REPLACE_WITH_WHITE_ACCOUNT_ID"
+
+[vars]
+# Public API the white site pulls article CONTENT from, server-side. This fetch is invisible to
+# external scanners (they only see the white domain's responses), so it doesn't link the domains.
+API_BASE = "https://app.staging.rsoc.app"
+
+# The white pool — each apex is a custom domain on this account (zones are already Active).
+[[routes]]
+pattern = "readoranow.com"
+custom_domain = true
+
+[[routes]]
+pattern = "livedailyperch.com"
+custom_domain = true
+
+[[routes]]
+pattern = "brightleafreads.com"
+custom_domain = true

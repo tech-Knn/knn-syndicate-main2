@@ -210,7 +210,7 @@ describe('launchCampaign (Phase 8)', () => {
       const camp = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { redirectDomainHost: true } }));
       expect([hostA, hostB]).toContain(camp?.redirectDomainHost);
       // The FB creative's destination links to that rotated host.
-      const spec = vi.mocked(fb.createFbAdCreative).mock.calls.at(-1)![2] as { objectStorySpec: { link_data: { link: string } } };
+      const spec = vi.mocked(fb.createFbAdCreative).mock.calls.at(-1)![2] as unknown as { objectStorySpec: { link_data: { link: string } } };
       expect(spec.objectStorySpec.link_data.link).toMatch(new RegExp(`^https://(${hostA}|${hostB})/go/`));
     } finally {
       await withSystem(async (tx) => {

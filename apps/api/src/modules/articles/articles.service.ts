@@ -144,6 +144,25 @@ export async function listArticlesForHost(rawHost: string, limit = 6): Promise<P
   });
 }
 
+/**
+ * Recent READY articles platform-wide (NOT host-scoped) — backs the WHITE site's homepage. The
+ * white domains aren't registered money `Domain`s, so `listArticlesForHost` returns [] for them; the
+ * white site is a generic clean publication that simply lists recent content. Public + `withSystem`;
+ * exposes only the already-public slug/title/snippet, hard-capped so it can't enumerate everything.
+ */
+export async function listRecentArticles(limit = 18): Promise<PublicArticleSummary[]> {
+  const take = Math.min(Math.max(limit, 1), 24);
+  return withSystem(async (tx) => {
+    const articles = await tx.article.findMany({
+      where: { status: 'READY' },
+      select: { slug: true, title: true, compliantContent: true },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+    return articles.map((a) => ({ slug: a.slug, title: a.title, snippet: toSnippet(a.compliantContent) }));
+  });
+}
+
 export interface ArticleSitemapEntry {
   slug: string;
   /** Last-modified date (YYYY-MM-DD) for the sitemap <lastmod>. */

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { handleRouteError } from '../../lib/http.js';
-import { getPublicArticleBySlug, listArticleSlugsForHost, listArticlesForHost } from './articles.service.js';
+import { getPublicArticleBySlug, listArticleSlugsForHost, listArticlesForHost, listRecentArticles } from './articles.service.js';
 
 /**
  * Public (unauthenticated) article reads for the article frontend. Mounted at
@@ -17,6 +17,19 @@ export async function publicArticleRoutes(app: FastifyInstance): Promise<void> {
     if (!host) return reply.code(400).send({ error: 'Missing host' });
     try {
       const articles = await listArticlesForHost(host, Number(req.query.limit) || 6);
+      reply.header('cache-control', 'public, max-age=300, stale-while-revalidate=600');
+      return reply.send({ articles });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // Recent READY articles platform-wide (NOT host-scoped) — backs the WHITE site's homepage (its
+  // domains aren't money Domains, so the host-scoped list above returns []). Static route → matched
+  // before `/:slug`. Short public cache.
+  app.get<{ Querystring: { limit?: string } }>('/recent', async (req, reply) => {
+    try {
+      const articles = await listRecentArticles(Number(req.query.limit) || 18);
       reply.header('cache-control', 'public, max-age=300, stale-while-revalidate=600');
       return reply.send({ articles });
     } catch (err) {
