@@ -98,6 +98,74 @@ export default function ApprovalsPage() {
     setPending((prev) => prev?.filter((c) => c.id !== id) ?? prev);
   }
 
+  // ── Bulk selection (clear a 50-card queue in one action, not ~100 clicks) ──
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkRejecting, setBulkRejecting] = useState(false);
+  const [bulkReason, setBulkReason] = useState('');
+
+  const toggleSel = (id: string): void =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const clearSel = (): void => {
+    setSelected(new Set());
+    setBulkRejecting(false);
+    setBulkReason('');
+  };
+
+  async function bulkApproveSelected(ids: string[]): Promise<void> {
+    if (org?.autoLaunch) {
+      const ok = await confirm({
+        title: `Approve ${ids.length} campaign${ids.length === 1 ? '' : 's'}?`,
+        body: (
+          <>
+            Auto-launch is <b>on</b> — these will immediately launch live Facebook ads and start spending budget.
+          </>
+        ),
+        confirmLabel: `Approve ${ids.length}`,
+      });
+      if (!ok) return;
+    }
+    setBulkBusy(true);
+    try {
+      const res = await campaignsApi.bulkApprove(ids);
+      res.succeeded.forEach(drop);
+      clearSel();
+      toast.success(`Approved ${res.succeeded.length}${res.failed.length ? ` · ${res.failed.length} skipped` : ''}.`);
+      if (res.failed.length) load();
+    } catch {
+      toast.error('Bulk approve failed.');
+      load();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function bulkRejectSelected(ids: string[]): Promise<void> {
+    const text = bulkReason.trim();
+    if (text.length < REASON_MIN) {
+      toast.error(`Reason must be at least ${REASON_MIN} characters.`);
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const res = await campaignsApi.bulkReject(ids, text);
+      res.succeeded.forEach(drop);
+      clearSel();
+      toast.success(`Rejected ${res.succeeded.length}${res.failed.length ? ` · ${res.failed.length} skipped` : ''}.`);
+      if (res.failed.length) load();
+    } catch {
+      toast.error('Bulk reject failed.');
+      load();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   async function approve(c: Campaign) {
     const autoLaunch = org?.autoLaunch ?? false;
     const ok = await confirm({
@@ -302,6 +370,16 @@ export default function ApprovalsPage() {
           />
         </Card>
       ) : (
+        <>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: 'var(--muted)', cursor: 'pointer', marginBottom: '0.8rem' }}>
+            <input
+              type="checkbox"
+              checked={pending.length > 0 && pending.every((c) => selected.has(c.id))}
+              onChange={(e) => setSelected(e.target.checked ? new Set(pending.map((c) => c.id)) : new Set())}
+              style={{ width: 16, height: 16, accentColor: 'var(--rust)', cursor: 'pointer' }}
+            />
+            Select all ({pending.length})
+          </label>
         <div className={styles.list}>
           {pending.map((c) => {
             const cc = countries(c);
@@ -312,11 +390,20 @@ export default function ApprovalsPage() {
             return (
               <Card key={c.id} className={`${styles.card} ${restricted ? styles.cardRestricted : ''}`}>
                 <div className={styles.cardTop}>
-                  <div className={styles.cardHead}>
-                    <span className={styles.cardName}>{c.name}</span>
-                    <Link href={`/dashboard/campaigns/${c.id}`} className={styles.viewLink}>
-                      View campaign
-                    </Link>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.7rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(c.id)}
+                      onChange={() => toggleSel(c.id)}
+                      aria-label={`Select ${c.name}`}
+                      style={{ width: 18, height: 18, marginTop: 2, accentColor: 'var(--rust)', flexShrink: 0, cursor: 'pointer' }}
+                    />
+                    <div className={styles.cardHead}>
+                      <span className={styles.cardName}>{c.name}</span>
+                      <Link href={`/dashboard/campaigns/${c.id}`} className={styles.viewLink}>
+                        View campaign
+                      </Link>
+                    </div>
                   </div>
                   {c.submittedAt && (
                     <span className={styles.cardWhen}>Submitted {whenLabel(c.submittedAt)}</span>
@@ -473,6 +560,71 @@ export default function ApprovalsPage() {
               </Card>
             );
           })}
+        </div>
+        </>
+      )}
+
+      {selected.size > 0 && (
+        <div
+          role="region"
+          aria-label="Bulk actions"
+          style={{
+            position: 'fixed',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            bottom: 'calc(1rem + env(safe-area-inset-bottom))',
+            zIndex: 40,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.7rem',
+            flexWrap: 'wrap',
+            maxWidth: 'calc(100vw - 2rem)',
+            background: 'rgba(20,20,24,0.96)',
+            backdropFilter: 'blur(12px)',
+            border: '1px solid var(--border-strong)',
+            borderRadius: 'var(--radius)',
+            boxShadow: 'var(--elevation-3)',
+            padding: '0.7rem 0.9rem',
+          }}
+        >
+          <span style={{ color: 'var(--cream)', fontWeight: 600 }}>{selected.size} selected</span>
+          {bulkRejecting ? (
+            <>
+              <input
+                value={bulkReason}
+                onChange={(e) => setBulkReason(e.target.value)}
+                placeholder={`Rejection reason (≥${REASON_MIN} chars)…`}
+                autoFocus
+                aria-label="Bulk rejection reason"
+                style={{ width: '18rem', maxWidth: '50vw', background: 'var(--bg)', border: '1px solid var(--border-interactive)', borderRadius: 'var(--radius-sm)', color: 'var(--cream)', padding: '0.5rem 0.6rem', fontSize: '0.9rem' }}
+              />
+              <Button variant="danger" onClick={() => void bulkRejectSelected([...selected])} loading={bulkBusy}>
+                Reject {selected.size}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setBulkRejecting(false);
+                  setBulkReason('');
+                }}
+                disabled={bulkBusy}
+              >
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button onClick={() => void bulkApproveSelected([...selected])} loading={bulkBusy}>
+                Approve {selected.size}
+              </Button>
+              <Button variant="danger" onClick={() => setBulkRejecting(true)} disabled={bulkBusy}>
+                Reject…
+              </Button>
+              <Button variant="ghost" onClick={clearSel} disabled={bulkBusy}>
+                Clear
+              </Button>
+            </>
+          )}
         </div>
       )}
     </div>

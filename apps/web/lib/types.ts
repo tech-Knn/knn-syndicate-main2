@@ -348,3 +348,9 @@ export interface UploadResult {
   mimeType: string;
   sizeBytes: number;
 }
+
+/** Result of a bulk queue action — partial success: ids that worked + per-id failures. */
+export interface BulkResult {
+  succeeded: string[];
+  failed: { id: string; error: string }[];
+}

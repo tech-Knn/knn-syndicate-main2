@@ -5,6 +5,7 @@ import {
   type AfsAccountRow,
   type AuditRow,
   type AfsChannelRow,
+  type BulkResult,
   type Campaign,
   type CreateOrgInput,
   type DomainRow,
@@ -348,6 +349,17 @@ export const campaigns = {
     ).campaign,
   pending: async (): Promise<Campaign[]> =>
     (await parse<{ campaigns: Campaign[] }>(await authedFetch('/api/campaigns/pending'))).campaigns,
+  // Bulk queue actions — each returns { succeeded, failed:[{id,error}] } (partial success).
+  bulkApprove: async (ids: string[]): Promise<BulkResult> =>
+    parse(await authedFetch('/api/campaigns/bulk-approve', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ ids }) })),
+  bulkReject: async (ids: string[], reason: string): Promise<BulkResult> =>
+    parse(await authedFetch('/api/campaigns/bulk-reject', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ ids, reason }) })),
+  bulkPause: async (ids: string[]): Promise<BulkResult> =>
+    parse(await authedFetch('/api/campaigns/bulk-pause', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ ids }) })),
+  bulkResume: async (ids: string[]): Promise<BulkResult> =>
+    parse(await authedFetch('/api/campaigns/bulk-resume', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ ids }) })),
+  bulkDelete: async (ids: string[]): Promise<BulkResult> =>
+    parse(await authedFetch('/api/campaigns/bulk-delete', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ ids }) })),
   approve: async (id: string): Promise<Campaign> =>
     (
       await parse<{ campaign: Campaign }>(
