@@ -184,12 +184,14 @@ describe('launchCampaign (Phase 8)', () => {
     await withSystem(async (tx) => {
       await tx.redirectDomain.createMany({
         data: [
-          { host: hostA, mode: 'CLOAKER', isActive: true, healthy: true },
-          { host: hostB, mode: 'CLOAKER', isActive: true, healthy: true },
+          // Company-EXCLUSIVE to this org (ownerOrgId) so the test is isolated from any shared/seeded
+          // CLOAKER domains in the shared dev DB — exclusive wins over shared in resolveRedirectBase.
+          { host: hostA, mode: 'CLOAKER', isActive: true, healthy: true, ownerOrgId: orgId },
+          { host: hostB, mode: 'CLOAKER', isActive: true, healthy: true, ownerOrgId: orgId },
           // These must be IGNORED for a CLOAKER launch: wrong mode / retired / unhealthy.
-          { host: `gonorm-${suffix}.example.com`, mode: 'NORMAL', isActive: true, healthy: true },
-          { host: `goretired-${suffix}.example.com`, mode: 'CLOAKER', isActive: false, healthy: true },
-          { host: `gosick-${suffix}.example.com`, mode: 'CLOAKER', isActive: true, healthy: false },
+          { host: `gonorm-${suffix}.example.com`, mode: 'NORMAL', isActive: true, healthy: true, ownerOrgId: orgId },
+          { host: `goretired-${suffix}.example.com`, mode: 'CLOAKER', isActive: false, healthy: true, ownerOrgId: orgId },
+          { host: `gosick-${suffix}.example.com`, mode: 'CLOAKER', isActive: true, healthy: false, ownerOrgId: orgId },
         ],
       });
       await tx.organization.update({ where: { id: orgId }, data: { cloakingEnabled: true, defaultFunnelMode: 'CLOAKER' } });
@@ -248,12 +250,18 @@ describe('launchCampaign (Phase 8)', () => {
       await launchCampaign(auth(), campaignId, { generateArticle, writeRedirectConfigs });
 
       const camp = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { whiteDomainHost: true } }));
-      expect([wa, wb]).toContain(camp?.whiteDomainHost); // rotated from the healthy+active pool only
-      const white = camp!.whiteDomainHost!;
-      // FB display link (link_data.caption) = the white domain apex.
+      const white = camp?.whiteDomainHost;
+      // A white domain WAS auto-assigned (cloaker), and it's one of the ACTIVE+HEALTHY pool — never the
+      // unhealthy/retired decoys. (The white pool is flat/global, so in a shared dev DB the picked host
+      // may be a seeded one — we assert the invariant, not a specific host.)
+      expect(white).toBeTruthy();
+      expect(white).not.toBe(`wsick-${suffix}.example.com`);
+      expect(white).not.toBe(`wretired-${suffix}.example.com`);
+      const activePool = await withSystem((tx) => tx.whiteDomain.findMany({ where: { isActive: true, healthy: true }, select: { host: true } }));
+      expect(activePool.map((d) => d.host)).toContain(white);
+      // FB display link (caption) AND the KV white fallback consistently use the SAME picked host.
       const spec = vi.mocked(fb.createFbAdCreative).mock.calls.at(-1)![2] as unknown as { objectStorySpec: { link_data: { caption?: string } } };
       expect(spec.objectStorySpec.link_data.caption).toBe(`https://${white}`);
-      // KV fallback (the white page non-ad traffic sees) = the white domain + the article slug.
       expect(writeRedirectConfigs.mock.calls.at(-1)![0][0]!.config.fallbackUrl).toBe(`https://${white}/a/${artSlug}`);
     } finally {
       await withSystem(async (tx) => {
