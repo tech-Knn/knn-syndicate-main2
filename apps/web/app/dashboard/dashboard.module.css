@@ -8,14 +8,21 @@
   position: sticky;
   top: 0;
   z-index: var(--z-sticky);
-  display: flex;
-  align-items: center;
-  gap: var(--space-6);
-  padding: var(--space-3) var(--space-5);
+  /* Full-bleed sticky bar: the background/border span the whole viewport while the inner
+     content (.topbarInner) is centered + width-capped so it aligns with .main at any width. */
   background: rgba(14, 14, 16, 0.8);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
   box-shadow: 0 6px 16px -14px rgba(0, 0, 0, 0.9);
+}
+.topbarInner {
+  width: 100%;
+  max-width: var(--shell-max);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-3) var(--space-5);
 }
 /* Browsers without backdrop-filter (the blur) need an opaque bar so content doesn't bleed through. */
 @supports not ((backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px))) {
@@ -154,9 +161,11 @@
 .main {
   flex: 1;
   width: 100%;
-  max-width: 1040px;
+  max-width: var(--shell-max);
   margin: 0 auto;
-  padding: 2.25rem 1.5rem 4rem;
+  /* Horizontal padding matches .topbarInner (--space-5) so content lines up under the brand
+     and sign-out at every width. */
+  padding: 2.25rem var(--space-5) 4rem;
   animation: knn-rise 0.35s ease both;
 }
 .main:focus {
@@ -178,8 +187,10 @@
 
 /* Tablet/phone: collapse the inline nav + user meta into the hamburger drawer. */
 @media (max-width: 860px) {
-  .topbar {
+  .topbarInner {
     gap: var(--space-3);
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
   }
   .nav,
   .user {
@@ -189,6 +200,6 @@
     display: inline-flex;
   }
   .main {
-    padding: 1.5rem 1.1rem 3rem;
+    padding: 1.5rem var(--space-4) 3rem;
   }
 }

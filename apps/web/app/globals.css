@@ -47,6 +47,11 @@
   --space-6: 32px;
   --space-8: 48px;
 
+  /* Shell content width — the dashboard topbar + main share this so the app uses the full
+     viewport (like a proper data tool) instead of a narrow centered column. Capped only so
+     tables/cards don't stretch unreadably on 4K/ultrawide; full-bleed below the cap. */
+  --shell-max: 2560px;
+
   /* Type scale (rem) + line-heights + weights. */
   --text-xs: 0.72rem;
   --text-sm: 0.82rem;

@@ -101,6 +101,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         Skip to content
       </a>
       <header className={styles.topbar}>
+        <div className={styles.topbarInner}>
         <Link href="/dashboard" className={styles.brand} aria-label="KNN Syndicate — home">
           <span className={styles.brandMark}>KNN</span>
           <span className={styles.brandName}>Syndicate</span>
@@ -145,6 +146,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         >
           <span aria-hidden>{menuOpen ? '✕' : '☰'}</span>
         </button>
+        </div>
       </header>
 
       {menuOpen && (
