@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { type CompanyRollup, addBusinessDays, currentBusinessDay, formatUsd } from '@knn/shared';
 import { Badge, Banner, Button, Card, type DateRange, DateRangePicker, Skeleton, useConfirm } from '@/components/ui';
 import { admin, stats } from '@/lib/api';
-import { type AuditRow, type OrgRow, type PublicUser } from '@/lib/types';
+import { type AuditRow, type FunnelMode, type OrgRow, type PublicUser } from '@/lib/types';
 import { useAuth } from '../../../providers';
 import styles from '../../admin.module.css';
 
@@ -37,6 +37,8 @@ const ACTION_LABEL: Record<string, string> = {
   'org.auto_approve.disabled': 'Auto-approve off',
   'org.auto_launch.enabled': 'Auto-launch on',
   'org.auto_launch.disabled': 'Auto-launch off',
+  'org.cloaking.updated': 'Cloaking updated',
+  'user.funnel_mode.updated': 'Buyer funnel mode set',
 };
 function actionLabel(a: string): string {
   return ACTION_LABEL[a] ?? a.replace(/[._]/g, ' ');
@@ -151,12 +153,41 @@ export default function CompaniesPage() {
     }
   };
 
-  const toggle = async (o: OrgRow, key: 'autoApprove' | 'autoLaunch'): Promise<void> => {
+  const toggle = async (o: OrgRow, key: 'autoApprove' | 'autoLaunch' | 'cloaking'): Promise<void> => {
     setBusy(o.id + key);
     try {
       if (key === 'autoApprove') await admin.setAutoApprove(o.id, !o.autoApprove);
-      else await admin.setAutoLaunch(o.id, !o.autoLaunch);
+      else if (key === 'autoLaunch') await admin.setAutoLaunch(o.id, !o.autoLaunch);
+      else await admin.setCloaking(o.id, { cloakingEnabled: !o.cloakingEnabled });
       load();
+      loadAudit();
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'Could not update');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Cloaking gate is super-admin only; flip the org's DEFAULT funnel mode (buyers inherit it).
+  const setDefaultMode = async (o: OrgRow, mode: FunnelMode): Promise<void> => {
+    setBusy(o.id + 'mode');
+    try {
+      await admin.setCloaking(o.id, { defaultFunnelMode: mode });
+      load();
+      loadAudit();
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'Could not update');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Per-buyer funnel-mode override (super-admin or the buyer's own company admin). null = inherit.
+  const setBuyerMode = async (orgId: string, userId: string, mode: FunnelMode | null): Promise<void> => {
+    setBusy(userId + 'fmode');
+    try {
+      await admin.setUserFunnelMode(userId, mode);
+      loadMembers(orgId);
       loadAudit();
     } catch (err) {
       setNote(err instanceof Error ? err.message : 'Could not update');
@@ -385,9 +416,32 @@ export default function CompaniesPage() {
                           {o.isPlatform ? (
                             <span className={styles.subtle}>—</span>
                           ) : (
-                            <button type="button" className={styles.actionBtn} onClick={() => openAddUser(o)}>
-                              Add user
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                className={styles.actionBtn}
+                                disabled={busy === o.id + 'cloaking'}
+                                onClick={() => void toggle(o, 'cloaking')}
+                                title="Allow this company to run the cloaker funnel (token + ad-id gate, white site)"
+                              >
+                                {o.cloakingEnabled ? '🛡 Cloaking on' : 'Cloaking off'}
+                              </button>
+                              {o.cloakingEnabled && (
+                                <select
+                                  className={styles.actionBtn}
+                                  value={o.defaultFunnelMode}
+                                  disabled={busy === o.id + 'mode'}
+                                  onChange={(e) => void setDefaultMode(o, e.target.value as FunnelMode)}
+                                  title="Default funnel mode the company's buyers inherit (override per-buyer below)"
+                                >
+                                  <option value="NORMAL">Buyers default: Normal</option>
+                                  <option value="CLOAKER">Buyers default: Cloaker</option>
+                                </select>
+                              )}
+                              <button type="button" className={styles.actionBtn} onClick={() => openAddUser(o)}>
+                                Add user
+                              </button>
+                            </>
                           )}
                         </div>
                       </td>
@@ -407,6 +461,7 @@ export default function CompaniesPage() {
                                   <th className={styles.thLeft}>Email</th>
                                   <th className={styles.thLeft}>Role</th>
                                   <th className={styles.thLeft}>Status</th>
+                                  <th className={styles.thLeft}>Funnel</th>
                                   <th></th>
                                 </tr>
                               </thead>
@@ -418,6 +473,23 @@ export default function CompaniesPage() {
                                     <td className={styles.subtle}>{ROLE_LABEL[m.role] ?? m.role}</td>
                                     <td>
                                       <Badge tone={STATUS_TONE[m.status] ?? 'neutral'}>{m.status.toLowerCase()}</Badge>
+                                    </td>
+                                    <td>
+                                      {m.role === 'MEDIA_BUYER' && o.cloakingEnabled ? (
+                                        <select
+                                          className={styles.actionBtn}
+                                          value={m.funnelMode ?? ''}
+                                          disabled={busy === m.id + 'fmode'}
+                                          onChange={(e) => void setBuyerMode(o.id, m.id, (e.target.value || null) as FunnelMode | null)}
+                                          title="Override this buyer's funnel mode (blank = inherit the company default)"
+                                        >
+                                          <option value="">Inherit ({o.defaultFunnelMode === 'CLOAKER' ? 'Cloaker' : 'Normal'})</option>
+                                          <option value="NORMAL">Normal</option>
+                                          <option value="CLOAKER">Cloaker</option>
+                                        </select>
+                                      ) : (
+                                        <span className={styles.subtle}>—</span>
+                                      )}
                                     </td>
                                     <td>
                                       <button

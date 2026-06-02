@@ -16,6 +16,7 @@ import {
   type FbPixel,
   type FbProfile,
   type FbProfileWithOwner,
+  type FunnelMode,
   type LaunchAccessResult,
   type ArticleVariantOption,
   type OfferDomainOption,
@@ -506,14 +507,31 @@ export const admin = {
   },
   redirectDomains: async (): Promise<RedirectDomain[]> =>
     (await parse<{ domains: RedirectDomain[] }>(await authedFetch('/api/admin/redirect-domains'))).domains,
-  addRedirectDomain: async (host: string, label?: string): Promise<RedirectDomain> =>
-    (await parse<{ domain: RedirectDomain }>(await authedFetch('/api/admin/redirect-domains', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ host, label }) }))).domain,
+  addRedirectDomain: async (host: string, label?: string, opts?: { mode?: FunnelMode; ownerOrgId?: string | null }): Promise<RedirectDomain> =>
+    (await parse<{ domain: RedirectDomain }>(await authedFetch('/api/admin/redirect-domains', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ host, label, ...opts }) }))).domain,
+  updateRedirectDomain: async (id: string, input: { label?: string | null; mode?: FunnelMode; ownerOrgId?: string | null; isActive?: boolean }): Promise<RedirectDomain> =>
+    (await parse<{ domain: RedirectDomain }>(await authedFetch(`/api/admin/redirect-domains/${id}`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify(input) }))).domain,
   setDefaultRedirectDomain: async (id: string): Promise<RedirectDomain> =>
     (await parse<{ domain: RedirectDomain }>(await authedFetch(`/api/admin/redirect-domains/${id}/default`, { method: 'POST' }))).domain,
   verifyRedirectDomain: async (id: string): Promise<RedirectDomain> =>
     (await parse<{ domain: RedirectDomain }>(await authedFetch(`/api/admin/redirect-domains/${id}/verify`, { method: 'POST' }))).domain,
   deleteRedirectDomain: async (id: string): Promise<void> => {
     await authedFetch(`/api/admin/redirect-domains/${id}`, { method: 'DELETE' });
+  },
+  setCloaking: async (orgId: string, input: { cloakingEnabled?: boolean; defaultFunnelMode?: FunnelMode }): Promise<AdminOrg> =>
+    (await parse<{ organization: AdminOrg }>(await authedFetch(`/api/admin/organizations/${orgId}/cloaking`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify(input) }))).organization,
+  setUserFunnelMode: async (userId: string, funnelMode: FunnelMode | null): Promise<PublicUser> =>
+    (await parse<{ user: PublicUser }>(await authedFetch(`/api/admin/users/${userId}/funnel-mode`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify({ funnelMode }) }))).user,
+  whiteDomains: async (): Promise<WhiteDomain[]> =>
+    (await parse<{ domains: WhiteDomain[] }>(await authedFetch('/api/admin/white-domains'))).domains,
+  addWhiteDomain: async (host: string, label?: string): Promise<WhiteDomain> =>
+    (await parse<{ domain: WhiteDomain }>(await authedFetch('/api/admin/white-domains', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ host, label }) }))).domain,
+  updateWhiteDomain: async (id: string, input: { label?: string | null; isActive?: boolean }): Promise<WhiteDomain> =>
+    (await parse<{ domain: WhiteDomain }>(await authedFetch(`/api/admin/white-domains/${id}`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify(input) }))).domain,
+  verifyWhiteDomain: async (id: string): Promise<WhiteDomain> =>
+    (await parse<{ domain: WhiteDomain }>(await authedFetch(`/api/admin/white-domains/${id}/verify`, { method: 'POST' }))).domain,
+  deleteWhiteDomain: async (id: string): Promise<void> => {
+    await authedFetch(`/api/admin/white-domains/${id}`, { method: 'DELETE' });
   },
 };
 
@@ -522,6 +540,22 @@ export interface RedirectDomain {
   host: string;
   label: string | null;
   isDefault: boolean;
+  mode: FunnelMode;
+  ownerOrgId: string | null;
+  ownerOrgName: string | null;
+  isActive: boolean;
+  healthy: boolean;
+  lastCheck: string | null;
+  verifiedAt: string | null;
+  createdAt: string;
+}
+
+export interface WhiteDomain {
+  id: string;
+  host: string;
+  label: string | null;
+  isActive: boolean;
+  healthy: boolean;
   lastCheck: string | null;
   verifiedAt: string | null;
   createdAt: string;

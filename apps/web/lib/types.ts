@@ -174,11 +174,15 @@ export interface Campaign {
   adSets: CampaignAdSet[];
 }
 
+export type FunnelMode = 'NORMAL' | 'CLOAKER';
+
 export interface AdminOrg {
   id: string;
   name: string;
   autoApprove: boolean;
   autoLaunch: boolean;
+  cloakingEnabled: boolean;
+  defaultFunnelMode: FunnelMode;
 }
 
 export interface PublicUser {
@@ -188,6 +192,8 @@ export interface PublicUser {
   name: string;
   role: Role;
   status: UserStatus;
+  /** Per-buyer funnel-mode override; null = inherit the org default. */
+  funnelMode: FunnelMode | null;
   createdAt: string;
   approvedAt: string | null;
 }
@@ -267,6 +273,8 @@ export interface OrgRow {
   isPlatform: boolean;
   autoApprove: boolean;
   autoLaunch: boolean;
+  cloakingEnabled: boolean;
+  defaultFunnelMode: FunnelMode;
   buyerCount: number;
   adminCount: number;
   pendingCount: number;
