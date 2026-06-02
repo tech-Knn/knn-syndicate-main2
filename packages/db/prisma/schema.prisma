@@ -31,6 +31,15 @@ enum OrgStatus {
   SUSPENDED
 }
 
+/// Which funnel a buyer's campaigns run. NORMAL = straight monetized redirect (no cloaking,
+/// no white/fallback split, no display-link). CLOAKER = the token + ad-id-verified cloak with a
+/// separate clean white site as the fallback + FB display link. Gated per-company (super-admin),
+/// defaulted per-org, overridable per-buyer.
+enum FunnelMode {
+  NORMAL
+  CLOAKER
+}
+
 enum FbConnectionStatus {
   ACTIVE
   CONNECTION_BROKEN
@@ -52,12 +61,19 @@ model Organization {
   autoLaunch           Boolean   @default(false) @map("auto_launch")
   /// Platform's default revenue cut for this org's buyers (0..1). New companies default to 10%.
   defaultRevenueCutPct Decimal   @default(0.10) @map("default_revenue_cut_pct") @db.Decimal(5, 4)
+  /// Cloaking gate (SUPER-ADMIN only): when true this company MAY run the cloaker funnel; when
+  /// false every buyer here is forced NORMAL regardless of their override. The master switch.
+  cloakingEnabled      Boolean   @default(false) @map("cloaking_enabled")
+  /// The org's default funnel mode for its buyers (only effective when cloakingEnabled). A buyer
+  /// inherits this unless a per-buyer override is set (User.funnelMode).
+  defaultFunnelMode    FunnelMode @default(NORMAL) @map("default_funnel_mode")
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
 
-  users        User[]
-  campaigns    Campaign[]
-  ownedDomains Domain[]   @relation("DomainOwner")
+  users                User[]
+  campaigns            Campaign[]
+  ownedDomains         Domain[]         @relation("DomainOwner")
+  ownedRedirectDomains RedirectDomain[] @relation("RedirectDomainOwner")
 
   @@map("organizations")
 }
@@ -86,6 +102,10 @@ model User {
   fbAccessStatus FbAccessStatus @default(NONE) @map("fb_access_status")
   /// Optional per-buyer override of the org's default revenue cut (0..1).
   revenueCutPct Decimal?    @map("revenue_cut_pct") @db.Decimal(5, 4)
+  /// Per-buyer override of the org's default funnel mode. NULL = inherit Organization.defaultFunnelMode.
+  /// Only effective when the org has cloakingEnabled; otherwise the buyer is always NORMAL. Settable
+  /// by super-admin or the buyer's own COMPANY_ADMIN.
+  funnelMode    FunnelMode? @map("funnel_mode")
   /// Account-level fallback URL for non-ad traffic (spec §5.7.5).
   fallbackUrl   String?     @map("fallback_url")
   approvedById  String?     @map("approved_by_id") @db.Uuid
@@ -324,6 +344,12 @@ model Campaign {
 
   /// Populated on launch (Phase 8).
   fbCampaignId String? @map("fb_campaign_id")
+
+  /// The redirect (go.*) host this campaign was rotated onto at launch, and (cloaker only) the
+  /// white host used for its fallback + FB display link. Stored for blast-radius reporting (which
+  /// campaigns a flagged domain affects) and resync stability. NULL until launched / non-cloaker.
+  redirectDomainHost String? @map("redirect_domain_host")
+  whiteDomainHost    String? @map("white_domain_host")
 
   /// Approval review (Phase 4). `reviewedBy`/`reviewedAt` are set on approve OR
   /// reject (or auto-approval — then `reviewedById` is null = system); a reject
@@ -969,17 +995,53 @@ model Domain {
 /// `domains` (article/offer sites). Global (no org_id) — super-admin managed, accessed via
 /// withSystem. At most one default (partial unique index in the migration).
 model RedirectDomain {
+  id         String     @id @default(uuid()) @db.Uuid
+  host       String     @unique
+  label      String?
+  isDefault  Boolean    @default(false) @map("is_default")
+  /// Which funnel mode's traffic this domain serves. Segregates pools so a flagged CLOAKER host
+  /// never takes down NORMAL buyers (and vice versa). Launch picks only domains matching the buyer.
+  mode       FunnelMode @default(CLOAKER)
+  /// Optional company that EXCLUSIVELY rotates onto this domain. NULL = shared pool (any company of
+  /// the matching mode). Set = blast-radius isolation for one company.
+  ownerOrgId String?    @map("owner_org_id") @db.Uuid
+  /// Selectable for new launches? Retire a flagged domain (isActive=false) without deleting history.
+  isActive   Boolean    @default(true) @map("is_active")
+  /// Last automated health check verdict (true = reachable). Drives the super-admin broken-link alert.
+  healthy    Boolean    @default(true)
+  /// Last reachability check, e.g. "ok 200" or "unreachable: …".
+  lastCheck  String?    @map("last_check")
+  verifiedAt DateTime?  @map("verified_at")
+  createdAt  DateTime   @default(now()) @map("created_at")
+  updatedAt  DateTime   @updatedAt @map("updated_at")
+
+  ownerOrg Organization? @relation("RedirectDomainOwner", fields: [ownerOrgId], references: [id], onDelete: SetNull)
+
+  @@index([mode, ownerOrgId, isActive])
+  @@index([ownerOrgId])
+  @@map("redirect_domains")
+}
+
+/// Platform "white" domains — the CLEAN, separately-hosted content sites used as the cloaker funnel's
+/// fallback (what organic/bot/reviewer traffic sees) AND the FB ad display link. They serve the SAME
+/// articles as plain content (NO AFS / ad code), on infrastructure UNLINKABLE from the money domains
+/// (separate IP/host/registrar/Google-IDs). A small pool, rotated per cloaker campaign so the ads
+/// don't all share one display URL. Global (no org_id) — super-admin managed, accessed via withSystem.
+model WhiteDomain {
   id         String    @id @default(uuid()) @db.Uuid
   host       String    @unique
   label      String?
-  isDefault  Boolean   @default(false) @map("is_default")
-  /// Last reachability check, e.g. "ok 200" or "unreachable: …".
+  /// Selectable for new cloaker campaigns? Retire without deleting.
+  isActive   Boolean   @default(true) @map("is_active")
+  /// Last automated health check verdict (true = reachable). Drives the super-admin broken-link alert.
+  healthy    Boolean   @default(true)
   lastCheck  String?   @map("last_check")
   verifiedAt DateTime? @map("verified_at")
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
 
-  @@map("redirect_domains")
+  @@index([isActive])
+  @@map("white_domains")
 }
 
 enum OfferKind {
