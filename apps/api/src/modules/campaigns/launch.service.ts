@@ -856,12 +856,28 @@ export async function launchCampaign(
     }
   }
 
-  // 4. LAUNCHING → create on FB → ACTIVE (or BATCHED on rate limit).
-  await runScoped(auth, async (tx) => {
-    if (canTransitionCampaign(campaign.status, CAMPAIGN_STATUS.LAUNCHING)) {
-      await tx.campaign.update({ where: { id: campaignId }, data: { status: CAMPAIGN_STATUS.LAUNCHING } });
-    }
-  });
+  // 4. Atomically CLAIM the launch → LAUNCHING, then create on FB → ACTIVE (or BATCHED on rate limit).
+  // SINGLE-WRITER GUARD (D11): two triggers can fire for one campaign — auto-launch (worker) AND a
+  // manual "Launch" click, or a retry. The `fbCampaignId` null-check at the top is check-then-act with
+  // no lock, so two concurrent calls both passed it and each created a SEPARATE Facebook campaign (one
+  // left orphaned + still spending — the duplicate-launch bug). This conditional UPDATE flips
+  // PROCESSING/BATCHED → LAUNCHING only while no FB campaign exists; Postgres row-locks serialize
+  // concurrent claims, so exactly one call wins and the loser bails out HERE — before createFbStructure
+  // — without creating a duplicate. (Article gen + KV above ran while still PROCESSING, so a failure
+  // there never leaves the campaign stuck in LAUNCHING.)
+  const claim = await runScoped(auth, (tx) =>
+    tx.campaign.updateMany({
+      where: { id: campaignId, fbCampaignId: null, status: { in: [CAMPAIGN_STATUS.PROCESSING, CAMPAIGN_STATUS.BATCHED] } },
+      data: { status: CAMPAIGN_STATUS.LAUNCHING },
+    }),
+  );
+  if (claim.count === 0) {
+    // Lost the race (or not in a launchable state). If the winner already finished, return ITS id;
+    // otherwise a launch is in flight — never create a second FB campaign.
+    const cur = await runScoped(auth, (tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { fbCampaignId: true } }));
+    if (cur?.fbCampaignId) return { status: 'ACTIVE', fbCampaignId: cur.fbCampaignId };
+    throw new AppError(409, 'This campaign is already being launched — give it a moment.');
+  }
 
   let plan: LaunchPlan | undefined;
   try {

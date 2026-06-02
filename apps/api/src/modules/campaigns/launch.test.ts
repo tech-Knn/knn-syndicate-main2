@@ -160,6 +160,35 @@ describe('launchCampaign (Phase 8)', () => {
     expect(campaign?.adSets[0]?.ads[0]?.fbAdId).toBe('fbad-1');
   });
 
+  it('does NOT create two FB campaigns when launched CONCURRENTLY (atomic claim — the duplicate-launch bug)', async () => {
+    const campaignId = await makeCampaign();
+    vi.mocked(fb.createFbCampaign).mockClear();
+    const gen = vi.fn(async () => ({ slug: `concur-${suffix}` }));
+    const kv = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {});
+
+    // Two triggers fire at once (auto-launch + a manual click). Exactly ONE FB campaign must be created.
+    const results = await Promise.allSettled([
+      launchCampaign(auth(), campaignId, { generateArticle: gen, writeRedirectConfigs: kv }),
+      launchCampaign(auth(), campaignId, { generateArticle: gen, writeRedirectConfigs: kv }),
+    ]);
+
+    expect(fb.createFbCampaign).toHaveBeenCalledTimes(1); // ← the fix: not twice
+    const camp = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { fbCampaignId: true, status: true } }));
+    expect(camp?.fbCampaignId).toBe('fbcamp-1');
+    expect(camp?.status).toBe('ACTIVE');
+    expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
+  });
+
+  it('refuses to launch a campaign already in LAUNCHING — never a second FB campaign', async () => {
+    const campaignId = await makeCampaign();
+    await withSystem((tx) => tx.campaign.update({ where: { id: campaignId }, data: { status: 'LAUNCHING' } }));
+    vi.mocked(fb.createFbCampaign).mockClear();
+    await expect(
+      launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
+    ).rejects.toMatchObject({ statusCode: 409 });
+    expect(fb.createFbCampaign).not.toHaveBeenCalled();
+  });
+
   it('sets the FB display link (link_data.caption) from the ad displayLink, normalized to https — destination unchanged', async () => {
     const campaignId = await makeCampaign();
     // A bare-domain display link on the ad — the visible URL, separate from the /go redirect.
