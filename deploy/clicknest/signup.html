@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign up — ClickNest</title>
+  <meta name="robots" content="noindex" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%2314a05a'/><text x='16' y='23' font-size='20' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'>C</text></svg>" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="auth-wrap">
+    <div>
+      <div class="auth-card">
+        <a class="brand auth-logo" href="/"><span class="mark">C</span> ClickNest</a>
+        <h1>Create your account</h1>
+        <p class="sub">Launch and measure your Facebook ads in one place.</p>
+
+        <form id="authForm" novalidate>
+          <div class="field">
+            <label for="name">Full name</label>
+            <input id="name" name="name" type="text" placeholder="Jordan Lee" autocomplete="name" required />
+          </div>
+          <div class="field">
+            <label for="email">Work email</label>
+            <input id="email" name="email" type="email" placeholder="you@company.com" autocomplete="email" required />
+          </div>
+          <div class="field">
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" placeholder="Create a password" autocomplete="new-password" required />
+          </div>
+          <button class="btn btn-primary btn-lg" type="submit">Create account</button>
+          <div class="auth-msg" id="msg">Thanks for signing up! ClickNest is in limited early access — we'll email you when your account is ready.</div>
+        </form>
+
+        <p class="auth-note">By creating an account you agree to our <a href="/terms.html">Terms</a> and <a href="/privacy.html">Privacy Policy</a>.</p>
+        <p class="auth-alt">Already have an account? <a href="/login">Log in</a></p>
+      </div>
+      <a class="auth-home" href="/">← Back to ClickNest</a>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('authForm').addEventListener('submit', function (e) {
+      e.preventDefault();
+      document.getElementById('msg').style.display = 'block';
+    });
+  </script>
+</body>
+</html>
