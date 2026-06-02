@@ -45,9 +45,23 @@ async function main(): Promise<void> {
     },
   });
 
+  // Bootstrap the white-domain pool (cloaker fallback + FB display link) on FIRST run only — once any
+  // exist they're managed in the super-admin domain manager, so retired ones are never resurrected.
+  // Override the initial hosts with SEED_WHITE_DOMAINS (comma-separated); defaults to the live pool.
+  let whiteSeeded = 0;
+  if ((await prisma.whiteDomain.count()) === 0) {
+    const hosts = (process.env.SEED_WHITE_DOMAINS ?? 'readoranow.com,livedailyperch.com,brightleafreads.com')
+      .split(',')
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean);
+    if (hosts.length) {
+      whiteSeeded = (await prisma.whiteDomain.createMany({ data: hosts.map((host) => ({ host })), skipDuplicates: true })).count;
+    }
+  }
+
   // eslint-disable-next-line no-console
   console.log(
-    `Seeded ${DEFAULT_SETTINGS.length} settings, platform org, and super admin (${email}).`,
+    `Seeded ${DEFAULT_SETTINGS.length} settings, platform org, super admin (${email}), and ${whiteSeeded} white domain(s).`,
   );
 }
 
