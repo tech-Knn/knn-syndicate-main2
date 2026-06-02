@@ -34,24 +34,37 @@ import styles from '../analytics.module.css';
  * Editable only when live (ACTIVE/PAUSED) and CBO or a single ad set — matching the server's rule;
  * the save pushes to Facebook without releasing the channel. Read-only ("$X.XX" / "—") otherwise.
  */
-function BudgetCell({ row, onSaved, onError }: { row: CampaignPerf; onSaved: (cents: number) => void; onError: (msg: string) => void }) {
-  const live = row.status === 'ACTIVE' || row.status === 'PAUSED';
-  const editable = live && (row.budgetMode === 'CAMPAIGN' || row.adSetCount === 1);
-  const cents = row.dailyBudgetCents;
+function BudgetCell({
+  cents: centsProp,
+  editable,
+  label,
+  save,
+  onSaved,
+  onError,
+}: {
+  cents: number | null;
+  editable: boolean;
+  label: string;
+  save: (cents: number) => Promise<{ dailyBudgetCents: number }>;
+  onSaved?: (cents: number) => void;
+  onError: (msg: string) => void;
+}) {
+  const [current, setCurrent] = useState(centsProp);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  useEffect(() => setCurrent(centsProp), [centsProp]);
 
-  const display = cents != null ? formatUsd(cents / 100) : '—';
+  const display = current != null ? formatUsd(current / 100) : '—';
   if (!editable) return <span>{display}</span>;
 
   const start = (): void => {
-    setDraft(((cents ?? 0) / 100).toFixed(2));
+    setDraft(((current ?? 0) / 100).toFixed(2));
     setEditing(true);
   };
-  const save = async (): Promise<void> => {
+  const commit = async (): Promise<void> => {
     const c = Math.round(Number(draft) * 100);
-    if (!Number.isFinite(c) || c === cents) {
+    if (!Number.isFinite(c) || c === current) {
       setEditing(false);
       return;
     }
@@ -61,8 +74,9 @@ function BudgetCell({ row, onSaved, onError }: { row: CampaignPerf; onSaved: (ce
     }
     setBusy(true);
     try {
-      const res = await campaignApi.setBudget(row.id, c);
-      onSaved(res.dailyBudgetCents);
+      const res = await save(c);
+      setCurrent(res.dailyBudgetCents);
+      onSaved?.(res.dailyBudgetCents);
       setEditing(false);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Could not update the budget.');
@@ -84,11 +98,11 @@ function BudgetCell({ row, onSaved, onError }: { row: CampaignPerf; onSaved: (ce
           disabled={busy}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') void save();
+            if (e.key === 'Enter') void commit();
             if (e.key === 'Escape') setEditing(false);
           }}
-          onBlur={() => void save()}
-          aria-label={`Daily budget for ${row.name}`}
+          onBlur={() => void commit()}
+          aria-label={`Daily budget for ${label}`}
           style={{ width: '4.6rem', background: 'var(--bg)', border: '1px solid var(--rust)', borderRadius: 'var(--radius-sm)', color: 'var(--cream)', padding: '0.25rem 0.4rem', fontSize: '0.85rem', textAlign: 'right' }}
         />
       </span>
@@ -519,7 +533,10 @@ export default function AnalyticsPage() {
                         <td className={admin.num}>{num(r.spendUsd)}</td>
                         <td className={admin.num}>
                           <BudgetCell
-                            row={r}
+                            cents={r.dailyBudgetCents}
+                            editable={(r.status === 'ACTIVE' || r.status === 'PAUSED') && (r.budgetMode === 'CAMPAIGN' || r.adSetCount === 1)}
+                            label={r.name}
+                            save={(c) => campaignApi.setBudget(r.id, c)}
                             onSaved={(c) => setRows((prev) => (prev ? prev.map((x) => (x.id === r.id ? { ...x, dailyBudgetCents: c } : x)) : prev))}
                             onError={setError}
                           />
@@ -551,7 +568,7 @@ export default function AnalyticsPage() {
                       {open && (
                         <tr id={detailId}>
                           <td colSpan={colSpan}>
-                            <CampaignDetail campaignId={r.id} bd={bd} range={range} />
+                            <CampaignDetail campaignId={r.id} bd={bd} range={range} onError={setError} />
                           </td>
                         </tr>
                       )}
@@ -609,7 +626,7 @@ const dCpc = (r: Metricable): string => (r.clicks ? formatUsd(r.spendUsd / r.cli
 const dCtr = (r: Metricable): string => `${(r.impressions ? (r.clicks / r.impressions) * 100 : 0).toFixed(2)}%`;
 
 /** The expandable campaign panel: a Campaign→AdSet→Ad tree + a per-offer/domain view. */
-function CampaignDetail({ campaignId, bd, range }: { campaignId: string; bd: CampaignBreakdown | undefined; range: DateRange }): React.ReactNode {
+function CampaignDetail({ campaignId, bd, range, onError }: { campaignId: string; bd: CampaignBreakdown | undefined; range: DateRange; onError: (msg: string) => void }): React.ReactNode {
   const [tab, setTab] = useState<'structure' | 'offers' | 'country' | 'hour'>('structure');
   const [offers, setOffers] = useState<OfferStat[] | null>(null);
   const [dim, setDim] = useState<{ country: DimStat[] | null; hour: DimStat[] | null }>({ country: null, hour: null });
@@ -706,6 +723,7 @@ function CampaignDetail({ campaignId, bd, range }: { campaignId: string; bd: Cam
                 <th className={admin.thLeft}>CPA</th>
                 <th className={admin.thLeft}>CPC</th>
                 <th className={admin.thLeft}>CTR</th>
+                <th className={admin.thLeft}>Budget</th>
               </tr>
             </thead>
             <tbody>
@@ -721,6 +739,15 @@ function CampaignDetail({ campaignId, bd, range }: { campaignId: string; bd: Cam
                     <td>{dCpa(set)}</td>
                     <td>{dCpc(set)}</td>
                     <td>{dCtr(set)}</td>
+                    <td>
+                      <BudgetCell
+                        cents={set.dailyBudgetCents}
+                        editable={set.editableBudget}
+                        label={set.name}
+                        save={(c) => campaignApi.setAdSetBudget(campaignId, set.id, c)}
+                        onError={onError}
+                      />
+                    </td>
                   </tr>
                   {set.ads.map((ad) => (
                     <tr key={ad.id}>
@@ -733,6 +760,7 @@ function CampaignDetail({ campaignId, bd, range }: { campaignId: string; bd: Cam
                       <td>{dCpa(ad)}</td>
                       <td>{dCpc(ad)}</td>
                       <td>{dCtr(ad)}</td>
+                      <td className={admin.subtle}>—</td>
                     </tr>
                   ))}
                 </FragmentRow>

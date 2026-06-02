@@ -16,7 +16,7 @@ import {
   submitCampaign,
   updateCampaign,
 } from './campaigns.service.js';
-import { launchCampaign, setCampaignActive, testLaunchCampaign, updateCampaignBudget } from './launch.service.js';
+import { launchCampaign, setCampaignActive, testLaunchCampaign, updateAdSetBudget, updateCampaignBudget } from './launch.service.js';
 import { bulkApprove, bulkDelete, bulkReject, bulkSetActive } from './bulk.service.js';
 import { listArticleVariants, listOfferDomains, listOffers, setOffers, updateLiveOffers } from './offers.service.js';
 import { applyPreset, deletePreset, listPresets, savePreset } from './presets.service.js';
@@ -210,6 +210,21 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
       try {
         const cents = Number(req.body?.dailyBudgetCents);
         return reply.send({ campaign: await updateCampaignBudget(req.auth, req.params.id, { dailyBudgetCents: cents }) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Per-ad-set budget edit (multi-ad-set ABO): change ONE ad set's daily budget, pushed to FB.
+  app.patch<{ Params: { id: string; adSetId: string }; Body: { dailyBudgetCents?: number } }>(
+    '/:id/adsets/:adSetId/budget',
+    { preHandler: [authenticate] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const cents = Number(req.body?.dailyBudgetCents);
+        return reply.send({ adSet: await updateAdSetBudget(req.auth, req.params.id, req.params.adSetId, { dailyBudgetCents: cents }) });
       } catch (err) {
         return handleRouteError(err, reply);
       }

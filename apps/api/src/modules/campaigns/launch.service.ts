@@ -290,6 +290,24 @@ export async function setCampaignActive(
  *  check in `campaignSubmitIssues` so a live edit can't drop a campaign below the launchable floor. */
 const MIN_DAILY_BUDGET_CENTS = 200;
 
+/** Map a Facebook write error → an actionable AppError (shared by the budget edits). Always throws.
+ *  Budget is a "modify", so the account security hold (code 368) applies, same as pause/resume. */
+async function throwFbWriteError(err: unknown, connectionId: string): Promise<never> {
+  if (err instanceof FbRateLimitError) throw new AppError(429, 'Facebook is rate-limiting — try again in a moment');
+  if (err instanceof FbAccountRestrictedError) {
+    throw new AppError(
+      409,
+      'Facebook has temporarily restricted this ad account for security ("authenticate your account in Ads Manager"). The account owner must complete the prompt in Ads Manager, then try again.' +
+        (err.checkpointUrl ? ` Authenticate here: ${err.checkpointUrl}` : ''),
+    );
+  }
+  if (err instanceof FbConnectionBrokenError) {
+    await markConnectionBroken(connectionId, err.message).catch(() => undefined);
+    throw new AppError(409, 'This Facebook connection has expired or been revoked — reconnect the profile in Settings → Facebook, then try again.');
+  }
+  throw err;
+}
+
 /**
  * LIVE BUDGET EDIT (the daily-driver action) — change a launched campaign's daily budget and push
  * it to Facebook WITHOUT releasing its AdSense channel or re-queuing for approval. This is the
@@ -372,19 +390,7 @@ export async function updateCampaignBudget(
       await updateFbAdSetBudget(plan.target.fbId, plan.fbAccountId, plan.token, cents, plan.appKind);
     }
   } catch (err) {
-    if (err instanceof FbRateLimitError) throw new AppError(429, 'Facebook is rate-limiting — try again in a moment');
-    if (err instanceof FbAccountRestrictedError) {
-      throw new AppError(
-        409,
-        'Facebook has temporarily restricted this ad account for security ("authenticate your account in Ads Manager"). The account owner must complete the prompt in Ads Manager, then try again.' +
-          (err.checkpointUrl ? ` Authenticate here: ${err.checkpointUrl}` : ''),
-      );
-    }
-    if (err instanceof FbConnectionBrokenError) {
-      await markConnectionBroken(plan.connectionId, err.message).catch(() => undefined);
-      throw new AppError(409, 'This Facebook connection has expired or been revoked — reconnect the profile in Settings → Facebook, then try again.');
-    }
-    throw err;
+    await throwFbWriteError(err, plan.connectionId);
   }
 
   // Write phase: persist the new budget + audit. NO channel release, NO edge-KV resync —
@@ -406,6 +412,72 @@ export async function updateCampaignBudget(
   });
 
   return { id: campaignId, dailyBudgetCents: cents };
+}
+
+/**
+ * LIVE PER-AD-SET BUDGET EDIT — change ONE ad set's daily budget on a launched ABO campaign and push
+ * it to Facebook, without releasing the channel. This is how a multi-ad-set ABO campaign's budget is
+ * managed (each ad set carries its own budget under ABO); `updateCampaignBudget` only covers CBO +
+ * single-ad-set ABO. Same conservative scope + error policy as `updateCampaignBudget`.
+ */
+export async function updateAdSetBudget(
+  auth: AuthContext,
+  campaignId: string,
+  adSetId: string,
+  input: { dailyBudgetCents: number },
+): Promise<{ id: string; adSetId: string; dailyBudgetCents: number }> {
+  const cents = input.dailyBudgetCents;
+  if (!Number.isInteger(cents) || cents < MIN_DAILY_BUDGET_CENTS) {
+    throw new AppError(422, `Daily budget must be at least $${(MIN_DAILY_BUDGET_CENTS / 100).toFixed(2)} (Facebook minimum).`);
+  }
+
+  const plan = await runScoped(auth, async (tx) => {
+    const campaign = await tx.campaign.findUnique({
+      where: { id: campaignId },
+      select: { id: true, buyerId: true, orgId: true, status: true, budgetMode: true, adAccountId: true },
+    });
+    if (!campaign) throw new AppError(404, 'Campaign not found');
+    if (auth.role === ROLES.MEDIA_BUYER && campaign.buyerId !== auth.userId) throw new AppError(404, 'Campaign not found');
+    if (campaign.status !== CAMPAIGN_STATUS.ACTIVE && campaign.status !== CAMPAIGN_STATUS.PAUSED) {
+      throw new AppError(409, 'Only a live (active or paused) campaign’s budget can be edited here.');
+    }
+    if (campaign.budgetMode !== 'AD_SET') {
+      throw new AppError(409, 'This campaign uses a single campaign budget (CBO) — edit the campaign budget instead.');
+    }
+    // The ad set must belong to THIS campaign (prevents cross-campaign id tampering) and be launched.
+    const set = await tx.adSet.findFirst({ where: { id: adSetId, campaignId }, select: { id: true, fbAdSetId: true, dailyBudgetCents: true } });
+    if (!set) throw new AppError(404, 'Ad set not found');
+    if (!set.fbAdSetId || !campaign.adAccountId) throw new AppError(409, 'This ad set isn’t linked to Facebook yet.');
+    const acc = await tx.fbAdAccount.findUnique({
+      where: { id: campaign.adAccountId },
+      select: { fbAccountId: true, connection: { select: { id: true, userId: true, fbUserId: true, accessTokenEnc: true, status: true } } },
+    });
+    if (!acc) throw new AppError(400, 'Selected ad account no longer exists');
+    const writeAuth = await resolveWriteAuth(tx, acc.connection);
+    return { orgId: campaign.orgId, fbAccountId: acc.fbAccountId, token: writeAuth.token, appKind: writeAuth.appKind, connectionId: writeAuth.connectionId, fbAdSetId: set.fbAdSetId, oldCents: set.dailyBudgetCents };
+  });
+
+  if (plan.oldCents === cents) return { id: campaignId, adSetId, dailyBudgetCents: cents };
+
+  try {
+    await updateFbAdSetBudget(plan.fbAdSetId, plan.fbAccountId, plan.token, cents, plan.appKind);
+  } catch (err) {
+    await throwFbWriteError(err, plan.connectionId);
+  }
+
+  await runScoped(auth, async (tx) => {
+    await tx.adSet.update({ where: { id: adSetId }, data: { dailyBudgetCents: cents } });
+    await writeAudit(tx, {
+      orgId: plan.orgId,
+      actorId: auth.userId,
+      action: 'campaign.budget_updated',
+      entityType: 'campaign',
+      entityId: campaignId,
+      details: { adSetId, fromCents: plan.oldCents, toCents: cents },
+    });
+  });
+
+  return { id: campaignId, adSetId, dailyBudgetCents: cents };
 }
 
 /** FB write phase — campaign → ad sets → (image, creative, ad), all at `status`. */

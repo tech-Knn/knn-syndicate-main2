@@ -347,6 +347,13 @@ export const campaigns = {
         await authedFetch(`/api/campaigns/${id}/budget`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify({ dailyBudgetCents }) }),
       )
     ).campaign,
+  // Per-ad-set budget (multi-ad-set ABO) — edits ONE ad set's daily budget on a live campaign.
+  setAdSetBudget: async (id: string, adSetId: string, dailyBudgetCents: number): Promise<{ id: string; adSetId: string; dailyBudgetCents: number }> =>
+    (
+      await parse<{ adSet: { id: string; adSetId: string; dailyBudgetCents: number } }>(
+        await authedFetch(`/api/campaigns/${id}/adsets/${adSetId}/budget`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify({ dailyBudgetCents }) }),
+      )
+    ).adSet,
   pending: async (): Promise<Campaign[]> =>
     (await parse<{ campaigns: Campaign[] }>(await authedFetch('/api/campaigns/pending'))).campaigns,
   // Bulk queue actions — each returns { succeeded, failed:[{id,error}] } (partial success).

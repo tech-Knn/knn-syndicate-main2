@@ -142,6 +142,10 @@ export interface AdSetPerf {
   impressions: number;
   clicks: number;
   conversions: number;
+  /** This ad set's own daily budget in cents (set under ABO; null under CBO). */
+  dailyBudgetCents: number | null;
+  /** True when this ad set's budget can be edited inline here (live ABO campaign, ad set is on FB). */
+  editableBudget: boolean;
   ads: AdPerf[];
 }
 

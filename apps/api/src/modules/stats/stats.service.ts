@@ -230,9 +230,10 @@ export async function getCampaignBreakdown(
         name: true,
         status: true,
         buyerId: true,
+        budgetMode: true,
         adSets: {
           orderBy: { createdAt: 'asc' },
-          select: { id: true, name: true, ads: { orderBy: { createdAt: 'asc' }, select: { id: true, name: true } } },
+          select: { id: true, name: true, dailyBudgetCents: true, fbAdSetId: true, ads: { orderBy: { createdAt: 'asc' }, select: { id: true, name: true } } },
         },
       },
     });
@@ -308,6 +309,10 @@ export async function getCampaignBreakdown(
         impressions: ads.reduce((a, x) => a + x.impressions, 0),
         clicks: ads.reduce((a, x) => a + x.clicks, 0),
         conversions: ads.reduce((a, x) => a + x.conversions, 0),
+        dailyBudgetCents: set.dailyBudgetCents,
+        // Editable only for a live ABO campaign whose ad set is on Facebook (mirrors updateAdSetBudget).
+        editableBudget:
+          (campaign.status === 'ACTIVE' || campaign.status === 'PAUSED') && campaign.budgetMode === 'AD_SET' && set.fbAdSetId != null,
         ads,
       };
     });

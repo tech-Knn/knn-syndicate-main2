@@ -31,7 +31,7 @@ vi.mock('@knn/fb', async (importOriginal) => {
 });
 
 const fb = await import('@knn/fb');
-const { launchCampaign, setCampaignActive, updateCampaignBudget } = await import('./launch.service.js');
+const { launchCampaign, setCampaignActive, updateCampaignBudget, updateAdSetBudget } = await import('./launch.service.js');
 const { reopenCampaign } = await import('./campaigns.service.js');
 const { bulkSetActive } = await import('./bulk.service.js');
 
@@ -606,6 +606,43 @@ describe('updateCampaignBudget — live budget edit (M1 ceiling-breaker)', () =>
       return camp;
     });
     await expect(updateCampaignBudget(auth(), c.id, { dailyBudgetCents: 500 })).rejects.toMatchObject({ statusCode: 409 });
+  });
+});
+
+describe('updateAdSetBudget — per-ad-set live budget (multi-ad-set ABO)', () => {
+  it('pushes the new budget to the specific FB ad set + persists it', async () => {
+    const { campId, setId } = await withSystem(async (tx) => {
+      const camp = await tx.campaign.create({ data: { orgId, buyerId, name: 'ABO per-set', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-as1', budgetMode: 'AD_SET' } });
+      const setA = await tx.adSet.create({ data: { orgId, campaignId: camp.id, name: 'A', fbAdSetId: 'fbadset-as-a', dailyBudgetCents: 300 } });
+      await tx.adSet.create({ data: { orgId, campaignId: camp.id, name: 'B', fbAdSetId: 'fbadset-as-b', dailyBudgetCents: 400 } });
+      return { campId: camp.id, setId: setA.id };
+    });
+    vi.mocked(fb.updateFbAdSetBudget).mockClear();
+
+    const res = await updateAdSetBudget(auth(), campId, setId, { dailyBudgetCents: 1200 });
+    expect(res).toMatchObject({ id: campId, adSetId: setId, dailyBudgetCents: 1200 });
+    expect(fb.updateFbAdSetBudget).toHaveBeenCalledWith('fbadset-as-a', 'act_1', 'tok', 1200, 'DATA');
+    const sets = await withSystem((tx) => tx.adSet.findMany({ where: { campaignId: campId }, orderBy: { createdAt: 'asc' }, select: { dailyBudgetCents: true } }));
+    expect(sets.map((s) => s.dailyBudgetCents)).toEqual([1200, 400]); // only set A changed
+  });
+
+  it('refuses on a CBO campaign (use the campaign budget instead) (409)', async () => {
+    const { campId, setId } = await withSystem(async (tx) => {
+      const camp = await tx.campaign.create({ data: { orgId, buyerId, name: 'CBO not per-set', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-as2', budgetMode: 'CAMPAIGN', dailyBudgetCents: 500 } });
+      const set = await tx.adSet.create({ data: { orgId, campaignId: camp.id, name: 'A', fbAdSetId: 'fbadset-as-c' } });
+      return { campId: camp.id, setId: set.id };
+    });
+    await expect(updateAdSetBudget(auth(), campId, setId, { dailyBudgetCents: 800 })).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it('rejects an ad set that does not belong to the campaign (404)', async () => {
+    const { campId, otherSetId } = await withSystem(async (tx) => {
+      const camp = await tx.campaign.create({ data: { orgId, buyerId, name: 'ABO scope', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-as3', budgetMode: 'AD_SET' } });
+      const other = await tx.campaign.create({ data: { orgId, buyerId, name: 'Other', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-as4', budgetMode: 'AD_SET' } });
+      const otherSet = await tx.adSet.create({ data: { orgId, campaignId: other.id, name: 'X', fbAdSetId: 'fbadset-as-x', dailyBudgetCents: 300 } });
+      return { campId: camp.id, otherSetId: otherSet.id };
+    });
+    await expect(updateAdSetBudget(auth(), campId, otherSetId, { dailyBudgetCents: 800 })).rejects.toMatchObject({ statusCode: 404 });
   });
 });
 
