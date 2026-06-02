@@ -21,7 +21,7 @@ import {
   updateFbCampaignStatus,
   uploadFbAdImage,
 } from '@knn/fb';
-import { CAMPAIGN_STATUS, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, goalRequiresPixel, pxeToCustomEventType } from '@knn/shared';
+import { CAMPAIGN_STATUS, type FunnelMode, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, effectiveFunnelMode, goalRequiresPixel, pxeToCustomEventType } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { KvNotConfiguredError, type RedirectConfigPayload, writeRedirectConfigs } from '../../lib/kv-sync.js';
@@ -120,6 +120,8 @@ async function resolveWriteAuth(tx: TxClient, dataConn: OwningConnection): Promi
 export interface FbStructureResult {
   fbCampaignId: string;
   adSets: { id: string; fbAdSetId: string; ads: { id: string; fbAdId: string }[] }[];
+  /** The redirect (go.*) host this launch rotated onto — recorded on the campaign for blast-radius. */
+  redirectDomainHost?: string;
 }
 export type TestLaunchResult = FbStructureResult;
 
@@ -496,13 +498,62 @@ export async function updateAdSetBudget(
 
 /** FB write phase — campaign → ad sets → (image, creative, ad), all at `status`. */
 /**
- * The base URL ad creatives link to: `https://{default redirect domain}`. Super-admin
- * manages these in the Redirect Domains panel; falls back to env `REDIRECT_DOMAIN` when
- * none is marked default (e.g. fresh install). The host must point at the edge Worker.
+ * The buyer's effective funnel mode (org gate + org default + per-buyer override), resolved by the
+ * shared `effectiveFunnelMode`. CLOAKER buyers rotate onto CLOAKER redirect domains (and, Phase 2,
+ * get the white-site fallback + display link); NORMAL buyers run the straight monetized redirect.
  */
-async function resolveRedirectBase(): Promise<string> {
+async function resolveBuyerFunnelMode(orgId: string, buyerId: string): Promise<FunnelMode> {
+  const [org, user] = await withSystem((tx) =>
+    Promise.all([
+      tx.organization.findUnique({ where: { id: orgId }, select: { cloakingEnabled: true, defaultFunnelMode: true } }),
+      tx.user.findUnique({ where: { id: buyerId }, select: { funnelMode: true } }),
+    ]),
+  );
+  return effectiveFunnelMode({
+    cloakingEnabled: org?.cloakingEnabled ?? false,
+    defaultFunnelMode: org?.defaultFunnelMode ?? 'NORMAL',
+    userFunnelMode: user?.funnelMode ?? null,
+  });
+}
+
+/**
+ * Pick the redirect (go.*) base URL for a launch, ROTATING across the eligible pool. Eligible =
+ * domains whose `mode` matches the buyer, that are active + healthy, and either company-exclusive to
+ * this org or in the shared pool (exclusive wins). Chooses the LEAST-loaded host (fewest campaigns
+ * already on it) so a flagged domain has minimal blast radius. Falls back to the legacy default, then
+ * env `REDIRECT_DOMAIN`, so launches never break before the super-admin has populated the pool.
+ * Returns both the base URL and the bare host (recorded on the campaign).
+ */
+async function resolveRedirectBase(mode: FunnelMode, orgId: string): Promise<{ base: string; host: string }> {
+  const eligible = await withSystem((tx) =>
+    tx.redirectDomain.findMany({
+      where: { mode, isActive: true, healthy: true, OR: [{ ownerOrgId: orgId }, { ownerOrgId: null }] },
+      select: { host: true, ownerOrgId: true },
+    }),
+  );
+  const exclusive = eligible.filter((d) => d.ownerOrgId === orgId);
+  const pool = (exclusive.length ? exclusive : eligible).map((d) => d.host);
+  if (pool.length > 0) {
+    // Least-loaded rotation: spread campaigns evenly so one flagged host affects the fewest.
+    const loads = await withSystem((tx) =>
+      tx.campaign.groupBy({ by: ['redirectDomainHost'], where: { redirectDomainHost: { in: pool } }, _count: { _all: true } }),
+    );
+    const loadByHost = new Map(loads.map((l) => [l.redirectDomainHost, l._count._all]));
+    pool.sort((a, b) => (loadByHost.get(a) ?? 0) - (loadByHost.get(b) ?? 0));
+    const host = pool[0]!;
+    return { base: `https://${host}`, host };
+  }
+  // Backward-compat fallback: the legacy default domain, then env REDIRECT_DOMAIN.
   const def = await withSystem((tx) => tx.redirectDomain.findFirst({ where: { isDefault: true }, select: { host: true } }));
-  return def?.host ? `https://${def.host}` : env.REDIRECT_DOMAIN;
+  if (def?.host) return { base: `https://${def.host}`, host: def.host };
+  const base = env.REDIRECT_DOMAIN;
+  let host = base;
+  try {
+    host = new URL(base).host;
+  } catch {
+    /* env may already be a bare host */
+  }
+  return { base, host };
 }
 
 /**
@@ -535,7 +586,9 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
   console.log(`[launch] building FB structure for campaign ${campaign.id} via the ${appKind} app (act_${fbAccountId})`);
   // Catch a launch-app asset-grant gap BEFORE creating any FB objects (no orphans).
   await assertLaunchAssetsAccessible(plan);
-  const redirectBase = await resolveRedirectBase();
+  // Rotate onto a redirect domain from the buyer's eligible pool (mode-segregated, company-isolated).
+  const funnelMode = await resolveBuyerFunnelMode(campaign.orgId, campaign.buyerId);
+  const { base: redirectBase, host: redirectDomainHost } = await resolveRedirectBase(funnelMode, campaign.orgId);
 
   // Automatic bidding (no cap → no bid_amount needed). The bid strategy lives at the
   // budget level: on the CAMPAIGN for CBO, on the AD SET for ABO — never both.
@@ -625,7 +678,7 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
     adSets.push({ id: set.id, fbAdSetId: fbAdSet.id, ads: adResults });
   }
 
-  return { fbCampaignId: fbCampaign.id, adSets };
+  return { fbCampaignId: fbCampaign.id, adSets, redirectDomainHost };
 }
 
 /** Persist the returned FB ids onto the campaign/adsets/ads. */
@@ -901,7 +954,10 @@ export async function launchCampaign(
     const result = await createFbStructure(plan, 'ACTIVE');
     await persistFbIds(auth, campaignId, result);
     await runScoped(auth, async (tx) => {
-      await tx.campaign.update({ where: { id: campaignId }, data: { status: CAMPAIGN_STATUS.ACTIVE } });
+      await tx.campaign.update({
+        where: { id: campaignId },
+        data: { status: CAMPAIGN_STATUS.ACTIVE, redirectDomainHost: result.redirectDomainHost ?? undefined },
+      });
       await writeAudit(tx, {
         orgId: campaign.orgId,
         actorId: auth.userId,

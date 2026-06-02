@@ -178,6 +178,48 @@ describe('launchCampaign (Phase 8)', () => {
     expect(campaign?.adSets[0]?.ads[0]?.fbAdId).toBe('fbad-1');
   });
 
+  it('rotates the redirect domain from the buyer’s eligible pool (mode + active + healthy), records the host', async () => {
+    const hostA = `goa-${suffix}.example.com`;
+    const hostB = `gob-${suffix}.example.com`;
+    await withSystem(async (tx) => {
+      await tx.redirectDomain.createMany({
+        data: [
+          { host: hostA, mode: 'CLOAKER', isActive: true, healthy: true },
+          { host: hostB, mode: 'CLOAKER', isActive: true, healthy: true },
+          // These must be IGNORED for a CLOAKER launch: wrong mode / retired / unhealthy.
+          { host: `gonorm-${suffix}.example.com`, mode: 'NORMAL', isActive: true, healthy: true },
+          { host: `goretired-${suffix}.example.com`, mode: 'CLOAKER', isActive: false, healthy: true },
+          { host: `gosick-${suffix}.example.com`, mode: 'CLOAKER', isActive: true, healthy: false },
+        ],
+      });
+      await tx.organization.update({ where: { id: orgId }, data: { cloakingEnabled: true, defaultFunnelMode: 'CLOAKER' } });
+    });
+    try {
+      const campaignId = await makeCampaign();
+      const artSlug = `rot-${suffix}`;
+      const generateArticle = vi.fn(async () => {
+        const art = await withSystem((tx) =>
+          tx.article.create({ data: { orgId, slug: artSlug, title: 'Rot', rawContent: 'r', compliantContent: 'c', status: 'READY' } }),
+        );
+        await withSystem((tx) => tx.campaign.update({ where: { id: campaignId }, data: { articleId: art.id } }));
+        return { slug: artSlug };
+      });
+      await launchCampaign(auth(), campaignId, { generateArticle, writeRedirectConfigs: vi.fn(async () => undefined) });
+
+      // Recorded host is one of the two eligible pool hosts (never the NORMAL/retired/unhealthy ones).
+      const camp = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { redirectDomainHost: true } }));
+      expect([hostA, hostB]).toContain(camp?.redirectDomainHost);
+      // The FB creative's destination links to that rotated host.
+      const spec = vi.mocked(fb.createFbAdCreative).mock.calls.at(-1)![2] as { objectStorySpec: { link_data: { link: string } } };
+      expect(spec.objectStorySpec.link_data.link).toMatch(new RegExp(`^https://(${hostA}|${hostB})/go/`));
+    } finally {
+      await withSystem(async (tx) => {
+        await tx.redirectDomain.deleteMany({ where: { host: { contains: suffix } } });
+        await tx.organization.update({ where: { id: orgId }, data: { cloakingEnabled: false, defaultFunnelMode: 'NORMAL' } });
+      });
+    }
+  });
+
   it('does NOT create two FB campaigns when launched CONCURRENTLY (atomic claim — the duplicate-launch bug)', async () => {
     const campaignId = await makeCampaign();
     vi.mocked(fb.createFbCampaign).mockClear();
