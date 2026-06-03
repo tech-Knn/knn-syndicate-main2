@@ -12,6 +12,7 @@ import {
   releaseChannelForCampaign,
   rolloverChannels,
 } from './channel-pool/channel.service.js';
+import { sweepDomainHealth } from './jobs/domain-health.js';
 import { checkMetaRejections } from './jobs/meta-rejection.js';
 import { refreshFbTokens } from './jobs/token-refresh.js';
 import { type FbLaunchJob, resyncOffersToKv, runFbLaunch, triggerAutoLaunch } from './launch-trigger.js';
@@ -223,6 +224,17 @@ async function main(): Promise<void> {
     { timezone: env.BUSINESS_TIMEZONE },
   );
 
+  // Redirect/white domain health sweep every 10 min: probe each active host, record healthy +
+  // lastCheck (the launch rotation skips unhealthy ones; super-admin panels surface it), and alert
+  // on a healthy→down transition. Runs directly (fire-and-forget; the next sweep retries).
+  const domainHealthCron = cron.schedule(
+    '*/10 * * * *',
+    () => {
+      void sweepDomainHealth().catch((e) => console.error('[domain-health] sweep failed:', e instanceof Error ? e.message : String(e)));
+    },
+    { timezone: env.BUSINESS_TIMEZONE },
+  );
+
   console.log(
     `[worker] started — processing ${QUEUES.HEALTH}; business tz=${env.BUSINESS_TIMEZONE}`,
   );
@@ -234,6 +246,7 @@ async function main(): Promise<void> {
     tokenRefreshCron.stop();
     attributionCron.stop();
     finalizationCron.stop();
+    domainHealthCron.stop();
     await healthWorker.close();
     await tokenRefreshWorker.close();
     await channelWorker.close();
