@@ -16,6 +16,7 @@ import {
   fetchPixels,
   fetchPromotePages,
   getMe,
+  graphRequest,
   hasLaunchApp,
   hasVerifyApp,
   isFbConfigured,
@@ -461,6 +462,55 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
 export async function listPixels(auth: AuthContext, adAccountId: string) {
   const account = await loadOwnedAccount(auth, adAccountId);
   return runScoped(auth, (tx) => tx.fbPixel.findMany({ where: { adAccountId: account.id }, orderBy: { name: 'asc' } }));
+}
+
+/**
+ * TEMP super-admin diagnostic (remove after use): for ad accounts whose name matches `q`, ask Facebook
+ * directly — via the owning connection's token — what `promote_pages` returns vs the account's Business
+ * Manager + the user's own pages. Used to explain why a restricted account (e.g. quiroxa-35) shows pages
+ * Ads Manager rejects. Never returns the token. System-context (cross-org) — super-admin only at the route.
+ */
+export async function debugAdAccountPages(q: string) {
+  const accounts = await withSystem((tx) =>
+    tx.fbAdAccount.findMany({
+      where: q ? { name: { contains: q, mode: 'insensitive' } } : undefined,
+      include: { connection: { select: { appKind: true, status: true, accessTokenEnc: true } } },
+      take: 8,
+    }),
+  );
+  const safe = async <T>(fn: () => Promise<T>): Promise<{ ok: true; data: T } | { ok: false; error: string }> => {
+    try {
+      return { ok: true, data: await fn() };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  };
+  const results = [];
+  for (const a of accounts) {
+    const appKind = a.connection.appKind as FbAppKind;
+    const token = decryptToken(a.connection.accessTokenEnc);
+    const promote = await safe(() =>
+      graphRequest<{ data?: { id: string; name?: string }[] }>({ path: `/act_${a.fbAccountId}/promote_pages`, params: { fields: 'id,name', limit: '200' }, accessToken: token, accountId: a.fbAccountId, appKind }),
+    );
+    const info = await safe(() =>
+      graphRequest<{ name?: string; account_status?: number; business?: { id: string; name: string } }>({ path: `/act_${a.fbAccountId}`, params: { fields: 'name,account_status,business' }, accessToken: token, accountId: a.fbAccountId, appKind }),
+    );
+    const mine = await safe(() =>
+      graphRequest<{ data?: { id: string }[] }>({ path: '/me/accounts', params: { fields: 'id', limit: '200' }, accessToken: token, appKind }),
+    );
+    results.push({
+      name: a.name,
+      fbAccountId: a.fbAccountId,
+      connStatus: a.connection.status,
+      appKind,
+      business: info.ok ? info.data.business ?? null : `ERR: ${info.error}`,
+      accountStatus: info.ok ? info.data.account_status : undefined,
+      promotePagesCount: promote.ok ? promote.data.data?.length ?? 0 : `ERR: ${promote.error}`,
+      promotePagesSample: promote.ok ? (promote.data.data ?? []).slice(0, 12).map((p) => p.name ?? p.id) : undefined,
+      meAccountsCount: mine.ok ? mine.data.data?.length ?? 0 : `ERR: ${mine.error}`,
+    });
+  }
+  return { count: results.length, results };
 }
 
 export interface LaunchAccessResult {
