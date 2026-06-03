@@ -72,6 +72,8 @@ export const redirectDomainCreateSchema = z.object({
   label: z.string().trim().max(120).optional(),
   mode: funnelModeEnum.optional(),
   ownerOrgId: z.string().uuid().nullable().optional(),
+  /** false = add the host but hold it OUT of rotation (parked / "not in use" until assigned). */
+  isActive: z.boolean().optional(),
 });
 export type RedirectDomainCreateInput = z.infer<typeof redirectDomainCreateSchema>;
 

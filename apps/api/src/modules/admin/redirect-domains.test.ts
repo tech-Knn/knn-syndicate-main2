@@ -11,9 +11,10 @@ import {
 const suffix = Date.now().toString(36);
 const hostA = `go-a-${suffix}.example.com`;
 const hostB = `go-b-${suffix}.example.com`;
+const hostC = `go-c-${suffix}.example.com`;
 
 afterAll(async () => {
-  await withSystem((tx) => tx.redirectDomain.deleteMany({ where: { host: { in: [hostA, hostB] } } }));
+  await withSystem((tx) => tx.redirectDomain.deleteMany({ where: { host: { in: [hostA, hostB, hostC] } } }));
   await prisma.$disconnect();
 });
 
@@ -25,6 +26,12 @@ describe('redirect domains service', () => {
     expect(a.mode).toBe('CLOAKER'); // pool segregation defaults to the cloaker pool
     expect(a.isActive).toBe(true);
     expect(a.ownerOrgId).toBeNull(); // shared pool by default
+  });
+
+  it('can add a domain HELD out of rotation (isActive=false → "not in use" until assigned)', async () => {
+    const c = await createRedirectDomain({ host: hostC, label: 'held', isActive: false });
+    expect(c.isActive).toBe(false); // parked — launch rotation skips it
+    expect(c.ownerOrgId).toBeNull();
   });
 
   it('keeps at most one default + switches it', async () => {

@@ -14,6 +14,9 @@ const inputStyle: React.CSSProperties = {
   color: 'var(--cream)',
 };
 
+/** Owner-select sentinel for "held, not used by anyone" (maps to isActive=false + ownerOrgId=null). */
+const UNASSIGNED = '__none__';
+
 /**
  * Super-admin Redirect Domains panel. Each `go.*` host belongs to a funnel-mode pool (NORMAL vs
  * CLOAKER) and is either shared or company-exclusive; launch rotates least-loaded across the eligible,
@@ -57,14 +60,22 @@ export function RedirectDomainsPanel(): React.ReactElement {
   const add = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
     if (!host.trim()) return;
+    const unassigned = ownerOrgId === UNASSIGNED;
     await run(
       'add',
       async () => {
-        await admin.addRedirectDomain(host.trim(), label.trim() || undefined, { mode, ownerOrgId: ownerOrgId || null });
+        await admin.addRedirectDomain(host.trim(), label.trim() || undefined, {
+          mode,
+          ownerOrgId: unassigned ? null : ownerOrgId || null,
+          isActive: !unassigned,
+        });
         setHost('');
         setLabel('');
+        setOwnerOrgId('');
       },
-      'Domain added. Point its DNS at the redirect Worker, then Verify.',
+      unassigned
+        ? 'Domain added but held (not in use). Point its DNS at the Worker + Verify, then assign it when ready.'
+        : 'Domain added. Point its DNS at the redirect Worker, then Verify.',
     );
   };
 
@@ -113,10 +124,10 @@ export function RedirectDomainsPanel(): React.ReactElement {
                     <Badge tone={d.mode === 'CLOAKER' ? 'brand' : 'neutral'}>{d.mode === 'CLOAKER' ? 'Cloaker' : 'Normal'}</Badge>
                     <Badge tone={d.healthy ? 'success' : 'danger'}>{d.healthy ? 'healthy' : 'down'}</Badge>
                     {d.isDefault && <Badge tone="warning">Default</Badge>}
-                    {!d.isActive && <Badge tone="neutral">retired</Badge>}
+                    {!d.isActive && <Badge tone="neutral">not in use</Badge>}
                   </div>
                   <div style={{ color: 'var(--muted)', fontSize: '0.78rem', marginTop: '0.2rem' }}>
-                    {d.ownerOrgName ? `${d.ownerOrgName} only · ` : 'shared pool · '}
+                    {!d.isActive ? 'not in use · ' : d.ownerOrgName ? `${d.ownerOrgName} only · ` : 'shared pool · '}
                     {d.label ? `${d.label} · ` : ''}
                     {d.lastCheck ? `check: ${d.lastCheck}` : 'not verified yet'}
                   </div>
@@ -133,20 +144,25 @@ export function RedirectDomainsPanel(): React.ReactElement {
                     <option value="CLOAKER">Cloaker pool</option>
                   </select>
                   <select
-                    aria-label="Owner"
-                    value={d.ownerOrgId ?? ''}
+                    aria-label="Owner / use"
+                    value={d.isActive ? (d.ownerOrgId ?? '') : UNASSIGNED}
                     disabled={busy === `o-${d.id}`}
-                    onChange={(e) => void run(`o-${d.id}`, () => admin.updateRedirectDomain(d.id, { ownerOrgId: e.target.value || null }))}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      void run(`o-${d.id}`, () =>
+                        v === UNASSIGNED
+                          ? admin.updateRedirectDomain(d.id, { isActive: false, ownerOrgId: null })
+                          : admin.updateRedirectDomain(d.id, { isActive: true, ownerOrgId: v || null }),
+                      );
+                    }}
                     style={{ ...inputStyle, width: 'auto', padding: '0.35rem 0.5rem', fontSize: '0.8rem' }}
                   >
+                    <option value={UNASSIGNED}>Unassigned — not in use</option>
                     <option value="">Shared pool</option>
                     {orgs.map((o) => (
                       <option key={o.id} value={o.id}>{o.name} only</option>
                     ))}
                   </select>
-                  <Button variant="ghost" onClick={() => void run(`a-${d.id}`, () => admin.updateRedirectDomain(d.id, { isActive: !d.isActive }))} loading={busy === `a-${d.id}`}>
-                    {d.isActive ? 'Retire' : 'Activate'}
-                  </Button>
                   {!d.isDefault && (
                     <Button variant="ghost" onClick={() => void run(d.id, () => admin.setDefaultRedirectDomain(d.id), 'Default updated (the launch fallback).')} loading={busy === d.id}>
                       Set default
@@ -194,6 +210,7 @@ export function RedirectDomainsPanel(): React.ReactElement {
             <label htmlFor="rd-owner" style={{ display: 'block', fontSize: '0.78rem', color: 'var(--muted)', marginBottom: '0.25rem' }}>Owner</label>
             <select id="rd-owner" value={ownerOrgId} onChange={(e) => setOwnerOrgId(e.target.value)} style={inputStyle}>
               <option value="">Shared</option>
+              <option value={UNASSIGNED}>Unassigned — hold</option>
               {orgs.map((o) => (
                 <option key={o.id} value={o.id}>{o.name}</option>
               ))}
@@ -215,9 +232,10 @@ export function RedirectDomainsPanel(): React.ReactElement {
             <p style={{ margin: 0 }}>
               <strong>DNS setup:</strong> add the domain to Cloudflare → in the redirect Worker (<code>apps/redirect</code>),
               add it as a custom domain (<code>wrangler.toml</code> route) → <code>wrangler deploy</code>. Then click
-              <em> Verify</em> here to confirm the Worker answers <code>/health/live</code>. <em>Retire</em> a flagged host
-              (stops new launches) without deleting its history; the marked <em>default</em> is the fallback when a
-              buyer&rsquo;s pool is empty.
+              <em> Verify</em> here to confirm the Worker answers <code>/health/live</code>. Set a host&rsquo;s owner to
+              <em> Unassigned — not in use</em> to hold it out of rotation (a freshly-added or flagged host) without
+              deleting its history; assign it to <em>Shared</em> or a company to put it live. The marked <em>default</em>
+              is the fallback when a buyer&rsquo;s pool is empty.
             </p>
           </div>
         </details>

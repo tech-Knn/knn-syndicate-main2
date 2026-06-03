@@ -91,6 +91,8 @@ export interface CreateRedirectDomainInput {
   label?: string;
   mode?: FunnelMode;
   ownerOrgId?: string | null;
+  /** false = add but hold out of rotation ("not in use" until assigned). Defaults to true. */
+  isActive?: boolean;
 }
 
 /** Add a redirect domain. The FIRST one added becomes the default automatically. */
@@ -114,6 +116,7 @@ export async function createRedirectDomain(input: CreateRedirectDomainInput): Pr
         isDefault: count === 0,
         mode: input.mode ?? 'CLOAKER',
         ownerOrgId: input.ownerOrgId ?? null,
+        isActive: input.isActive ?? true,
       },
       select,
     });

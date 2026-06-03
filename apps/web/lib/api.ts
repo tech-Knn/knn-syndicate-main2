@@ -507,7 +507,7 @@ export const admin = {
   },
   redirectDomains: async (): Promise<RedirectDomain[]> =>
     (await parse<{ domains: RedirectDomain[] }>(await authedFetch('/api/admin/redirect-domains'))).domains,
-  addRedirectDomain: async (host: string, label?: string, opts?: { mode?: FunnelMode; ownerOrgId?: string | null }): Promise<RedirectDomain> =>
+  addRedirectDomain: async (host: string, label?: string, opts?: { mode?: FunnelMode; ownerOrgId?: string | null; isActive?: boolean }): Promise<RedirectDomain> =>
     (await parse<{ domain: RedirectDomain }>(await authedFetch('/api/admin/redirect-domains', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ host, label, ...opts }) }))).domain,
   updateRedirectDomain: async (id: string, input: { label?: string | null; mode?: FunnelMode; ownerOrgId?: string | null; isActive?: boolean }): Promise<RedirectDomain> =>
     (await parse<{ domain: RedirectDomain }>(await authedFetch(`/api/admin/redirect-domains/${id}`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify(input) }))).domain,
