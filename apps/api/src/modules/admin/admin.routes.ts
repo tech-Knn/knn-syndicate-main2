@@ -59,6 +59,7 @@ import {
 } from './platform.service.js';
 import { getCloakStats } from '../telemetry/cloak-telemetry.service.js';
 import { getTermPerformance } from '../telemetry/term-telemetry.service.js';
+import { debugAdAccountPages } from '../facebook/facebook.service.js';
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
   app.post(
@@ -351,6 +352,16 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
   // Redirect domains (super-admin): the go.* hosts the edge Worker serves; the default is
   // what new ad creatives link to. Reachability check via /verify.
   const superOnly = { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] };
+
+  // TEMP diagnostic (remove after use): is promote_pages complete now that the token has pages_manage_ads?
+  app.get<{ Querystring: { q?: string } }>('/fb-page-debug', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await debugAdAccountPages(req.query.q ?? ''));
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
 
   app.get('/redirect-domains', superOnly, async (req, reply) => {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
