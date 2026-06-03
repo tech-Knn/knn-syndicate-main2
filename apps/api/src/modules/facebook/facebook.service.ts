@@ -498,6 +498,13 @@ export async function debugAdAccountPages(q: string) {
     const mine = await safe(() =>
       graphRequest<{ data?: { id: string }[] }>({ path: '/me/accounts', params: { fields: 'id', limit: '200' }, accessToken: token, appKind }),
     );
+    const bizId = info.ok ? info.data.business?.id : undefined;
+    const owned = bizId
+      ? await safe(() => graphRequest<{ data?: { id: string; name?: string }[] }>({ path: `/${bizId}/owned_pages`, params: { fields: 'id,name', limit: '200' }, accessToken: token, appKind }))
+      : null;
+    const client = bizId
+      ? await safe(() => graphRequest<{ data?: { id: string; name?: string }[] }>({ path: `/${bizId}/client_pages`, params: { fields: 'id,name', limit: '200' }, accessToken: token, appKind }))
+      : null;
     results.push({
       name: a.name,
       fbAccountId: a.fbAccountId,
@@ -507,6 +514,10 @@ export async function debugAdAccountPages(q: string) {
       accountStatus: info.ok ? info.data.account_status : undefined,
       promotePagesCount: promote.ok ? promote.data.data?.length ?? 0 : `ERR: ${promote.error}`,
       promotePagesSample: promote.ok ? (promote.data.data ?? []).slice(0, 12).map((p) => p.name ?? p.id) : undefined,
+      bmOwnedPagesCount: owned ? (owned.ok ? owned.data.data?.length ?? 0 : `ERR: ${owned.error}`) : 'no-bm',
+      bmOwnedSample: owned && owned.ok ? (owned.data.data ?? []).slice(0, 12).map((p) => p.name ?? p.id) : undefined,
+      bmClientPagesCount: client ? (client.ok ? client.data.data?.length ?? 0 : `ERR: ${client.error}`) : 'no-bm',
+      bmClientSample: client && client.ok ? (client.data.data ?? []).slice(0, 12).map((p) => p.name ?? p.id) : undefined,
       meAccountsCount: mine.ok ? mine.data.data?.length ?? 0 : `ERR: ${mine.error}`,
     });
   }
