@@ -37,16 +37,18 @@ CLOAK_TELEMETRY_URL = "https://app.staging.rsoc.app/api/telemetry/cloak"
 pattern = "go.10linesabout.com"
 custom_domain = true
 
-# Clean redirect roots — separate registrable roots from the money root 10linesabout.com, fixing the
-# linkage leak. Zones are Active on the haren@knnsyndicate.com CF account; `custom_domain = true` makes
-# wrangler provision each go.* DNS record + cert on deploy. go.10linesabout.com stays until these
-# verify in production, then it's retired.
+# Clean redirect roots — separate registrable roots from the money root 10linesabout.com. Host shape is
+# deliberately VARIED (one apex + two distinct subdomains) so they don't read as a uniform "go.*" fleet
+# the way a recognizable redirect subdomain would. Zones are Active on the haren@knnsyndicate.com CF
+# account; custom_domain=true provisions each record + cert on deploy. (These replaced the earlier
+# go.clkroute.com / go.gotrackr.net / go.trackpulsetoday.com; the old go.* custom domains are orphaned —
+# remove them in the CF dashboard if desired, harmless either way since the pool points only here.)
 [[routes]]
-pattern = "go.clkroute.com"
+pattern = "clkroute.com"
 custom_domain = true
 [[routes]]
-pattern = "go.gotrackr.net"
+pattern = "r.gotrackr.net"
 custom_domain = true
 [[routes]]
-pattern = "go.trackpulsetoday.com"
+pattern = "link.trackpulsetoday.com"
 custom_domain = true
