@@ -18,6 +18,7 @@ const SUB_NAV: { href: string; label: string; external?: boolean }[] = [
   { href: '/dashboard/platform/companies', label: 'Companies' },
   { href: '/dashboard/platform/domains', label: 'Domains' },
   { href: '/dashboard/platform/channels', label: 'Channels' },
+  { href: '/dashboard/platform/cloaker', label: 'Cloaker' },
   { href: '/dashboard/platform/articles', label: 'Articles' },
   { href: '/dashboard/facebook', label: 'Facebook', external: true },
 ];

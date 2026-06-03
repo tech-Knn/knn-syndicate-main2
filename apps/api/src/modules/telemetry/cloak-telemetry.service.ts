@@ -71,21 +71,40 @@ export async function getCloakStats(opts: { from?: string; to?: string } = {}): 
   );
 
   const ids = grouped.map((g) => g.campaignId);
-  const names = ids.length
-    ? await withSystem((tx) => tx.campaign.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }))
+  // Resolve campaign name + its owning media buyer + company in one pass, so the Cloaker page can
+  // break the split down per buyer (and label each campaign with who owns it).
+  const meta = ids.length
+    ? await withSystem((tx) =>
+        tx.campaign.findMany({
+          where: { id: { in: ids } },
+          select: {
+            id: true,
+            name: true,
+            buyerId: true,
+            buyer: { select: { name: true } },
+            organization: { select: { name: true } },
+          },
+        }),
+      )
     : [];
-  const nameById = new Map(names.map((c) => [c.id, c.name]));
+  const metaById = new Map(meta.map((c) => [c.id, c]));
 
   const rows: CloakStatRow[] = grouped
-    .map((g): CloakStatRow => ({
-      campaignId: g.campaignId,
-      name: nameById.get(g.campaignId) ?? '(deleted campaign)',
-      money: g._sum.money ?? 0,
-      white: g._sum.white ?? 0,
-      verifiedMatch: g._sum.verifiedMatch ?? 0,
-      verifiedMismatch: g._sum.verifiedMismatch ?? 0,
-      macroMissing: g._sum.macroMissing ?? 0,
-    }))
+    .map((g): CloakStatRow => {
+      const m = metaById.get(g.campaignId);
+      return {
+        campaignId: g.campaignId,
+        name: m?.name ?? '(deleted campaign)',
+        buyerId: m?.buyerId ?? '',
+        buyerName: m?.buyer?.name ?? '—',
+        companyName: m?.organization?.name ?? '—',
+        money: g._sum.money ?? 0,
+        white: g._sum.white ?? 0,
+        verifiedMatch: g._sum.verifiedMatch ?? 0,
+        verifiedMismatch: g._sum.verifiedMismatch ?? 0,
+        macroMissing: g._sum.macroMissing ?? 0,
+      };
+    })
     .sort((a, b) => b.money + b.white - (a.money + a.white));
 
   const totals = rows.reduce(

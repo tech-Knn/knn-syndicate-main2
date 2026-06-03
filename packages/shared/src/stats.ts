@@ -72,6 +72,10 @@ export interface TermPerf {
 export interface CloakStatRow {
   campaignId: string;
   name: string;
+  /** The owning media buyer + company — drives the per-buyer breakdown on the Cloaker page. */
+  buyerId: string;
+  buyerName: string;
+  companyName: string;
   /** Clicks routed to the money/article page vs the white/fallback page (actual routing). */
   money: number;
   white: number;
@@ -79,12 +83,14 @@ export interface CloakStatRow {
   verifiedMatch: number;
   /** …had the macro but the WRONG id (spoof/bot → safe to block on enforce)… */
   verifiedMismatch: number;
-  /** …or had NO {{ad.id}} macro (enforcing would white-page these = revenue-loss signal). */
+  /** …or had NO {{ad.id}} macro (under enforce these route to the white page = revenue-loss signal). */
   macroMissing: number;
 }
+/** Counts-only shape (no identity) — used for the totals row and the per-buyer rollup. */
+export type CloakCounts = Omit<CloakStatRow, 'campaignId' | 'name' | 'buyerId' | 'buyerName' | 'companyName'>;
 export interface CloakStats {
   range: { from: string; to: string };
-  totals: Omit<CloakStatRow, 'campaignId' | 'name'>;
+  totals: CloakCounts;
   rows: CloakStatRow[];
 }
 
