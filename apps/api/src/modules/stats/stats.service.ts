@@ -219,24 +219,57 @@ export async function getCampaignPerformance(
 }
 
 /** Ad-set → ad performance breakdown for one campaign (404 if out of scope). */
+export interface CampaignSyncReport {
+  /** Launched (ACTIVE/PAUSED, fbCampaignId set) campaigns in the requester's scope. */
+  total: number;
+  /** Eligible campaigns enqueued for the scoped reconcile (healthy connection + ad account). */
+  queued: number;
+  /** Skipped: the ad account's Facebook connection is broken/expired (needs reconnect). */
+  brokenConnections: number;
+  /** Skipped: the campaign has no ad account attached. */
+  noAdAccount: number;
+}
+
 /**
  * On-demand FB→DB status refresh ("Sync from Facebook"). Enqueues a SCOPED reconcile for the
  * requester's launched (ACTIVE/PAUSED) campaigns so a buyer can pull the latest Facebook status
  * (campaign + ad set + ad) without waiting for the 30-min poll. Reuses the worker reconcile job
  * (one source of truth); RLS via runScoped means a buyer only ever syncs their own campaigns.
+ *
+ * Returns a report so the UI can explain a no-op: a campaign whose FB connection is broken (or has
+ * no ad account) CAN'T be synced — that's the usual reason "nothing updated" (the same reason the
+ * 30-min cron can't update it either). Those are surfaced so the buyer knows to reconnect.
  */
-export async function requestCampaignStatusSync(auth: AuthContext): Promise<{ campaigns: number }> {
-  const ids = await runScoped(auth, (tx) =>
-    tx.campaign.findMany({
+export async function requestCampaignStatusSync(auth: AuthContext): Promise<CampaignSyncReport> {
+  const { total, eligible, broken, noAcct } = await runScoped(auth, async (tx) => {
+    const campaigns = await tx.campaign.findMany({
       where: { status: { in: [CAMPAIGN_STATUS.ACTIVE, CAMPAIGN_STATUS.PAUSED] }, fbCampaignId: { not: null } },
-      select: { id: true },
-    }),
-  );
-  const campaignIds = ids.map((c) => c.id);
-  if (campaignIds.length > 0) {
-    await getQueue(QUEUES.META_REJECTION_CHECK).add('sync', { campaignIds }, { removeOnComplete: 50, removeOnFail: 50 });
+      select: { id: true, adAccountId: true },
+    });
+    const acctIds = [...new Set(campaigns.map((c) => c.adAccountId).filter((x): x is string => Boolean(x)))];
+    const accounts = acctIds.length
+      ? await tx.fbAdAccount.findMany({ where: { id: { in: acctIds } }, select: { id: true, connection: { select: { status: true } } } })
+      : [];
+    const connStatus = new Map(accounts.map((a) => [a.id, a.connection.status]));
+    const ids: string[] = [];
+    let brokenN = 0;
+    let noAcctN = 0;
+    for (const c of campaigns) {
+      if (!c.adAccountId) {
+        noAcctN += 1;
+      } else if (connStatus.get(c.adAccountId) === 'CONNECTION_BROKEN') {
+        brokenN += 1;
+      } else {
+        ids.push(c.id);
+      }
+    }
+    return { total: campaigns.length, eligible: ids, broken: brokenN, noAcct: noAcctN };
+  });
+
+  if (eligible.length > 0) {
+    await getQueue(QUEUES.META_REJECTION_CHECK).add('sync', { campaignIds: eligible }, { removeOnComplete: 50, removeOnFail: 50 });
   }
-  return { campaigns: campaignIds.length };
+  return { total, queued: eligible.length, brokenConnections: broken, noAdAccount: noAcct };
 }
 
 export async function getCampaignBreakdown(

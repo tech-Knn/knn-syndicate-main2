@@ -185,6 +185,7 @@ export default function AnalyticsPage() {
   const [breakdowns, setBreakdowns] = useState<Record<string, CampaignBreakdown>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
 
   const load = useCallback(async (r: DateRange, silent = false) => {
     if (!silent) setRows(null);
@@ -202,12 +203,25 @@ export default function AnalyticsPage() {
   const syncFromFacebook = useCallback(async () => {
     setSyncing(true);
     setError(null);
+    setSyncNote(null);
     try {
-      await stats.syncStatuses();
-      await new Promise((r) => setTimeout(r, 2500));
-      await load(range, true);
-      await new Promise((r) => setTimeout(r, 3000));
-      await load(range, true);
+      const res = await stats.syncStatuses();
+      if (res.total === 0) {
+        setSyncNote('No launched (active/paused) campaigns to sync.');
+      } else {
+        const parts = [`Pulling Facebook status for ${res.queued} of ${res.total} campaign${res.total === 1 ? '' : 's'}…`];
+        if (res.brokenConnections > 0)
+          parts.push(`${res.brokenConnections} skipped — Facebook connection expired; reconnect it in the Facebook tab.`);
+        if (res.noAdAccount > 0) parts.push(`${res.noAdAccount} skipped — no ad account attached.`);
+        setSyncNote(parts.join(' '));
+      }
+      // The reconcile runs in the worker (a few seconds for a buyer's set, each campaign is a
+      // sequential Facebook call), so poll a few times over ~15s to land the fresh status.
+      for (const delay of [3000, 3000, 4000, 5000]) {
+        await new Promise((r) => setTimeout(r, delay));
+        await load(range, true);
+      }
+      if (res.queued > 0) setSyncNote(`Synced ${res.queued} campaign${res.queued === 1 ? '' : 's'} from Facebook.`);
     } catch {
       setError('Couldn’t sync from Facebook just now — try again in a moment.');
     } finally {
@@ -459,6 +473,11 @@ export default function AnalyticsPage() {
             Export CSV
           </button>
         </div>
+        {syncNote && (
+          <p className={admin.subtle} aria-live="polite">
+            {syncNote}
+          </p>
+        )}
         {statuses.length > 0 && (
           <div className={styles.chips}>
             {statuses.map((s) => (
