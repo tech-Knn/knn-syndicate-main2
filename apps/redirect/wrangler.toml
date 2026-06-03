@@ -36,3 +36,18 @@ CLOAK_TELEMETRY_URL = "https://app.staging.rsoc.app/api/telemetry/cloak"
 [[routes]]
 pattern = "go.10linesabout.com"
 custom_domain = true
+
+# Clean redirect roots (separate from the money root 10linesabout.com) — fixes the linkage leak.
+# UNCOMMENT each block ONLY AFTER its zone is Active in the haren@knnsyndicate.com Cloudflare account
+# (Add site → set the registrar nameservers to the CF pair → wait for "Active"). Deploying a
+# custom_domain for a zone not yet on the account FAILS. Once active: uncomment → `pnpm dlx wrangler
+# deploy` → CF auto-provisions each go.* DNS record + cert. Retire go.10linesabout.com after these verify.
+# [[routes]]
+# pattern = "go.clkroute.com"
+# custom_domain = true
+# [[routes]]
+# pattern = "go.gotrackr.net"
+# custom_domain = true
+# [[routes]]
+# pattern = "go.trackpulsetoday.com"
+# custom_domain = true
