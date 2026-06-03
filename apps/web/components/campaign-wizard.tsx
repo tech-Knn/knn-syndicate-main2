@@ -36,8 +36,20 @@ import {
 } from '@knn/shared';
 import { ApiError, auth, campaigns as campaignsApi, facebook, getStoredUser, uploads as uploadsApi } from '@/lib/api';
 import { type Campaign, type FbAccount, type FbPage, type FbPixel, type OfferDomainOption } from '@/lib/types';
-import { Banner, Button, Card, SearchSelect, Spinner } from './ui';
+import { Banner, Button, Card, DateTimePicker, SearchSelect, Spinner } from './ui';
 import styles from './campaign-wizard.module.css';
+
+/**
+ * A stored UTC ISO instant → the LOCAL wall-clock string the datetime picker uses ("YYYY-MM-DDTHH:mm").
+ * The inverse of the submit path's `new Date(local).toISOString()`, so editing a draft shows the SAME
+ * local time the buyer entered (the old `iso.slice(0,16)` showed the raw UTC clock — off by the tz offset).
+ */
+function isoToLocalInput(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 interface AdForm {
   key: string;
@@ -201,8 +213,8 @@ function toForm(c?: Campaign): CampaignForm {
       costCap: s.costCapCents ? (s.costCapCents / 100).toString() : '',
       roasFactor: s.roasFactor ? String(s.roasFactor) : '',
       attributionWindow: (s.attributionWindow as AttributionWindow) ?? '',
-      startTime: s.startTime ? s.startTime.slice(0, 16) : '',
-      endTime: s.endTime ? s.endTime.slice(0, 16) : '',
+      startTime: s.startTime ? isoToLocalInput(s.startTime) : '',
+      endTime: s.endTime ? isoToLocalInput(s.endTime) : '',
       timezone: s.timezone ?? '',
       ads: s.ads.map((a) => ({
         key: uuid(),
@@ -1338,12 +1350,23 @@ function AdSetsStep({
                 </select>
               </div>
               <div className={styles.field}>
-                <label className={styles.label} htmlFor={`${set.key}-start`}>Start (optional)</label>
-                <input id={`${set.key}-start`} className={styles.input} type="datetime-local" value={set.startTime} onChange={(e) => patchAdSet(set.key, { startTime: e.target.value })} />
+                <label className={styles.label}>Start (optional)</label>
+                <DateTimePicker
+                  value={set.startTime}
+                  onChange={(v) => patchAdSet(set.key, { startTime: v })}
+                  ariaLabel="Ad set start date & time"
+                  placeholder="Starts immediately"
+                />
               </div>
               <div className={styles.field}>
-                <label className={styles.label} htmlFor={`${set.key}-end`}>End (optional)</label>
-                <input id={`${set.key}-end`} className={styles.input} type="datetime-local" value={set.endTime} onChange={(e) => patchAdSet(set.key, { endTime: e.target.value })} />
+                <label className={styles.label}>End (optional)</label>
+                <DateTimePicker
+                  value={set.endTime}
+                  onChange={(v) => patchAdSet(set.key, { endTime: v })}
+                  min={set.startTime || undefined}
+                  ariaLabel="Ad set end date & time"
+                  placeholder="Runs until paused"
+                />
               </div>
             </div>
           </div>

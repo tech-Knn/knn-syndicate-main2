@@ -18,6 +18,7 @@ import { createPortal } from 'react-dom';
 import styles from './ui.module.css';
 
 export { DateRangePicker, type DateRange } from './date-range';
+export { DateTimePicker } from './date-time';
 export { SearchSelect, type SearchOption } from './search-select';
 
 export function Spinner({ className }: { className?: string }) {

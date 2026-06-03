@@ -1,0 +1,114 @@
+/* DateTimePicker — a single date + time picker. Reuses the calendar internals from
+   date-range.module.css (cal.*); this module owns the full-width trigger, popover position,
+   and the time row. Theme vars are global (same as date-range). */
+
+.wrap {
+  position: relative;
+  display: block;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--cream);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.trigger:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+.trigger:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: -1px;
+}
+.left {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+.calIcon {
+  color: var(--rust);
+  font-size: 0.95rem;
+}
+.placeholder {
+  color: var(--muted);
+}
+.value {
+  font-family: var(--font-mono);
+}
+/* In-trigger clear (×) — only shown when a value is set. */
+.clearX {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.15rem;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.clearX:hover {
+  color: var(--cream);
+}
+
+.panel {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 0.4rem);
+  z-index: 50;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--elevation-3);
+  overflow: hidden;
+}
+
+.timeRow {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.7rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border);
+}
+.timeLabel {
+  font-size: 0.8rem;
+  color: var(--muted-2);
+}
+.timeInput {
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--cream);
+  font-size: 0.85rem;
+  font-family: var(--font-mono);
+}
+.timeInput:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: -2px;
+}
+
+.hint {
+  margin: 0.55rem 0 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+@media (pointer: coarse) {
+  .timeInput {
+    min-height: 44px;
+  }
+}
