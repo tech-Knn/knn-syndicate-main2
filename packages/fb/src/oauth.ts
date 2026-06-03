@@ -7,6 +7,11 @@ export const FB_SCOPES = [
   'ads_management',
   'ads_read',
   'pages_show_list',
+  // Required (with pages_show_list) for /act_<id>/promote_pages to return the FULL set of pages an ad
+  // account can advertise — without it FB only returns pages already wired for ads, so the wizard's
+  // page picker under-reports. NOTE: when a Facebook Login for Business config is used (FB_*_CONFIG_ID),
+  // scopes come from that saved config — add `pages_manage_ads` to it in the Meta dashboard too.
+  'pages_manage_ads',
   'pages_read_engagement',
   'business_management',
 ] as const;
