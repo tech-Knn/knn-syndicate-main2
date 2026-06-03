@@ -16,7 +16,6 @@ import {
   fetchPixels,
   fetchPromotePages,
   getMe,
-  graphRequest,
   hasLaunchApp,
   hasVerifyApp,
   isFbConfigured,
@@ -465,39 +464,6 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
 export async function listPixels(auth: AuthContext, adAccountId: string) {
   const account = await loadOwnedAccount(auth, adAccountId);
   return runScoped(auth, (tx) => tx.fbPixel.findMany({ where: { adAccountId: account.id }, orderBy: { name: 'asc' } }));
-}
-
-/** TEMP super-admin diagnostic (remove after use): does promote_pages return the FULL set now that the
- *  token has pages_manage_ads? Compares promote_pages count to the connection's synced page count. */
-export async function debugAdAccountPages(q: string) {
-  const accounts = await withSystem((tx) =>
-    tx.fbAdAccount.findMany({
-      where: q ? { name: { contains: q, mode: 'insensitive' } } : undefined,
-      include: { connection: { select: { appKind: true, scopes: true, accessTokenEnc: true } } },
-      take: 8,
-    }),
-  );
-  const out = [];
-  for (const a of accounts) {
-    const appKind = a.connection.appKind as FbAppKind;
-    const token = decryptToken(a.connection.accessTokenEnc);
-    const g = async <T>(path: string): Promise<T | string> => {
-      try {
-        return await graphRequest<T>({ path, params: { fields: 'id,name', limit: '200' }, accessToken: token, accountId: path.startsWith('/act_') ? a.fbAccountId : undefined, appKind });
-      } catch (e) {
-        return `ERR: ${e instanceof Error ? e.message : String(e)}`;
-      }
-    };
-    const promote = await g<{ data?: unknown[] }>(`/act_${a.fbAccountId}/promote_pages`);
-    const me = await g<{ data?: unknown[] }>('/me/accounts');
-    out.push({
-      name: a.name,
-      hasPagesManageAds: (a.connection.scopes ?? '').includes('pages_manage_ads'),
-      promoteCount: typeof promote === 'string' ? promote : promote.data?.length ?? 0,
-      meAccountsCount: typeof me === 'string' ? me : me.data?.length ?? 0,
-    });
-  }
-  return { results: out };
 }
 
 export interface LaunchAccessResult {
