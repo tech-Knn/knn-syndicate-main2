@@ -124,19 +124,37 @@ export interface AdStatusDTO {
   effectiveStatus: string;
 }
 
-/** Effective status of every ad under a campaign — drives meta-rejection polling (D14). */
-export async function fetchCampaignAdStatuses(
+/** A campaign's live delivery state from Facebook: its own `effective_status` plus the
+ *  effective_status of every ad under it. Drives campaign-status reconciliation (so a
+ *  pause/resume done directly in Ads Manager is mirrored into our DB) AND meta-rejection
+ *  (a DISAPPROVED ad). One Graph node read with a nested `ads` edge = a single call. */
+export interface CampaignDeliveryDTO {
+  /** Campaign FB effective_status: ACTIVE | PAUSED | CAMPAIGN_PAUSED | ARCHIVED | DELETED | … */
+  effectiveStatus: string;
+  /** effective_status of every ad under the campaign. */
+  ads: AdStatusDTO[];
+}
+export async function fetchCampaignDelivery(
   fbAccountId: string,
   accessToken: string,
   fbCampaignId: string,
-): Promise<AdStatusDTO[]> {
-  const data = await fetchAllPages<{ id: string; effective_status?: string }>({
-    path: `/${fbCampaignId}/ads`,
-    params: { fields: 'id,effective_status', limit: '200' },
+): Promise<CampaignDeliveryDTO> {
+  const node = await graphRequest<{
+    effective_status?: string;
+    ads?: { data?: { id: string; effective_status?: string }[] };
+  }>({
+    path: `/${fbCampaignId}`,
+    params: { fields: 'effective_status,ads.limit(200){id,effective_status}' },
     accessToken,
     accountId: fbAccountId,
   });
-  return data.map((a) => ({ fbAdId: a.id, effectiveStatus: a.effective_status ?? '' }));
+  return {
+    effectiveStatus: node.effective_status ?? '',
+    ads: (node.ads?.data ?? []).map((a) => ({
+      fbAdId: a.id,
+      effectiveStatus: a.effective_status ?? '',
+    })),
+  };
 }
 
 /** Pages that a specific ad account can promote (owned + client pages). Scopes the

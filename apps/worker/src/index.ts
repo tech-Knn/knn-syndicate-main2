@@ -13,7 +13,7 @@ import {
   rolloverChannels,
 } from './channel-pool/channel.service.js';
 import { sweepDomainHealth } from './jobs/domain-health.js';
-import { checkMetaRejections } from './jobs/meta-rejection.js';
+import { reconcileCampaigns } from './jobs/meta-rejection.js';
 import { refreshFbTokens } from './jobs/token-refresh.js';
 import { type FbLaunchJob, resyncOffersToKv, runFbLaunch, triggerAutoLaunch } from './launch-trigger.js';
 
@@ -137,11 +137,13 @@ async function main(): Promise<void> {
     console.error(`[worker] ${QUEUES.CAPI_DISPATCH} job ${job?.id} failed:`, err.message);
   });
 
-  // Meta-rejection polling (D14): FB has no reliable disapproval webhook, so poll
-  // effective_status; a disapproved ad → META_REJECTED + release channel + notify.
+  // Campaign reconciliation (D14 + status sync): FB has no reliable webhook for disapproval
+  // OR pause/resume, so poll each launched campaign's effective_status. A disapproved ad →
+  // META_REJECTED + release channel + notify; a pause/resume done in Ads Manager → mirror
+  // ACTIVE↔PAUSED into Campaign.status so Analytics reflects reality.
   const metaRejectionWorker = new Worker(
     QUEUES.META_REJECTION_CHECK,
-    async () => checkMetaRejections(),
+    async () => reconcileCampaigns(),
     { connection, concurrency: 1 },
   );
   metaRejectionWorker.on('failed', (job, err) => {
@@ -183,7 +185,7 @@ async function main(): Promise<void> {
     { timezone: env.BUSINESS_TIMEZONE },
   );
 
-  // Meta-rejection check every 30 min (D14).
+  // Campaign reconciliation every 30 min (D14 + FB→DB status sync: rejection, pause/resume).
   const metaRejectionCron = cron.schedule(
     '*/30 * * * *',
     () => {
