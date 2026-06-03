@@ -34,7 +34,7 @@ import {
   goalRequiresPixel,
   isValidPerformanceGoal,
 } from '@knn/shared';
-import { ApiError, campaigns as campaignsApi, facebook, uploads as uploadsApi } from '@/lib/api';
+import { ApiError, auth, campaigns as campaignsApi, facebook, getStoredUser, uploads as uploadsApi } from '@/lib/api';
 import { type Campaign, type FbAccount, type FbPage, type FbPixel, type OfferDomainOption } from '@/lib/types';
 import { Banner, Button, Card, SearchSelect, Spinner } from './ui';
 import styles from './campaign-wizard.module.css';
@@ -378,6 +378,12 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
   const readOnly = Boolean(campaign && campaign.status !== 'DRAFT');
 
   const [form, setForm] = useState<CampaignForm>(() => toForm(campaign));
+  // Cloaker buyers never set fallback/display — the launch auto-fills both from the rotated white pool.
+  // Hide those fields for them (read the stored mode, then refresh from /me so it's current).
+  const [isCloaker, setIsCloaker] = useState<boolean>(() => getStoredUser()?.funnelMode === 'CLOAKER');
+  useEffect(() => {
+    void auth.me().then((u) => setIsCloaker(u.funnelMode === 'CLOAKER')).catch(() => undefined);
+  }, []);
   const [step, setStep] = useState(0);
   const [savedId, setSavedId] = useState<string | null>(campaign?.id ?? null);
 
@@ -616,9 +622,10 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
             setOffers={setOffers}
             offerDomains={offerDomains}
             readOnly={readOnly}
+            isCloaker={isCloaker}
           />
         ) : step === 1 ? (
-          <AdSetsStep form={form} pixels={pixels} patchAdSet={patchAdSet} patchAd={patchAd} setForm={setForm} uploadingKey={uploadingKey} uploadCreative={uploadCreative} />
+          <AdSetsStep form={form} pixels={pixels} patchAdSet={patchAdSet} patchAd={patchAd} setForm={setForm} uploadingKey={uploadingKey} uploadCreative={uploadCreative} isCloaker={isCloaker} />
         ) : (
           <ReviewStep form={form} accounts={accounts} pages={pages} offers={offers} issues={[...serverIssues, ...issues]} />
         )}
@@ -801,6 +808,7 @@ function OfferStep({
   setOffers,
   offerDomains,
   readOnly,
+  isCloaker,
 }: {
   form: CampaignForm;
   patch: (p: Partial<CampaignForm>) => void;
@@ -811,6 +819,7 @@ function OfferStep({
   setOffers: (updater: (o: OfferDraft[]) => OfferDraft[]) => void;
   offerDomains: OfferDomainOption[];
   readOnly: boolean;
+  isCloaker: boolean;
 }) {
   const [keywordDraft, setKeywordDraft] = useState('');
   const [keywordNote, setKeywordNote] = useState('');
@@ -1032,10 +1041,12 @@ function OfferStep({
           <label className={styles.label} htmlFor={fid('adset-tpl')}>Ad set name template</label>
           <input id={fid('adset-tpl')} className={styles.input} value={form.adsetNameTemplate} onChange={(e) => patch({ adsetNameTemplate: e.target.value })} placeholder="{country} - {age} - {id}" />
         </div>
-        <div className={`${styles.field} ${styles.full}`}>
-          <label className={styles.label} htmlFor={fid('fallback')}>Fallback URL (non-ad traffic)</label>
-          <input id={fid('fallback')} className={styles.input} value={form.fallbackUrl} onChange={(e) => patch({ fallbackUrl: e.target.value })} placeholder="https://…" />
-        </div>
+        {!isCloaker && (
+          <div className={`${styles.field} ${styles.full}`}>
+            <label className={styles.label} htmlFor={fid('fallback')}>Fallback URL (non-ad traffic)</label>
+            <input id={fid('fallback')} className={styles.input} value={form.fallbackUrl} onChange={(e) => patch({ fallbackUrl: e.target.value })} placeholder="https://…" />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1066,6 +1077,7 @@ function AdSetsStep({
   setForm,
   uploadingKey,
   uploadCreative,
+  isCloaker,
 }: {
   form: CampaignForm;
   pixels: FbPixel[];
@@ -1074,6 +1086,7 @@ function AdSetsStep({
   setForm: (updater: (f: CampaignForm) => CampaignForm) => void;
   uploadingKey: string | null;
   uploadCreative: (setKey: string, ad: AdForm, file: File) => void;
+  isCloaker: boolean;
 }) {
   const cbo = form.budgetMode === 'CAMPAIGN';
   const hasAccount = Boolean(form.adAccountId);
@@ -1390,17 +1403,19 @@ function AdSetsStep({
                       ))}
                     </select>
                   </div>
-                  <div className={styles.field}>
-                    <label className={styles.label} htmlFor={`${ad.key}-displaylink`}>Display link</label>
-                    <input
-                      id={`${ad.key}-displaylink`}
-                      className={styles.input}
-                      value={ad.displayLink}
-                      onChange={(e) => patchAd(set.key, ad.key, { displayLink: e.target.value })}
-                      placeholder="yourbrand.com (optional)"
-                    />
-                    <span className={styles.hint}>The visible URL shown in the ad. Should plausibly match where people land; ignored on Instagram. Leave blank to use the destination domain.</span>
-                  </div>
+                  {!isCloaker && (
+                    <div className={styles.field}>
+                      <label className={styles.label} htmlFor={`${ad.key}-displaylink`}>Display link</label>
+                      <input
+                        id={`${ad.key}-displaylink`}
+                        className={styles.input}
+                        value={ad.displayLink}
+                        onChange={(e) => patchAd(set.key, ad.key, { displayLink: e.target.value })}
+                        placeholder="yourbrand.com (optional)"
+                      />
+                      <span className={styles.hint}>The visible URL shown in the ad. Should plausibly match where people land; ignored on Instagram. Leave blank to use the destination domain.</span>
+                    </div>
+                  )}
                   <div className={`${styles.field} ${styles.full}`}>
                     <span className={styles.label}>Creative<Req /></span>
                     <div className={styles.creative}>

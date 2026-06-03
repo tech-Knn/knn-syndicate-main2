@@ -9,6 +9,8 @@ export interface SessionUser {
   name: string;
   role: Role;
   status: UserStatus;
+  /** The buyer's effective funnel mode — the wizard hides fallback/display for CLOAKER buyers. */
+  funnelMode?: FunnelMode;
 }
 
 export type FbStatus = 'ACTIVE' | 'CONNECTION_BROKEN';

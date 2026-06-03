@@ -1,6 +1,6 @@
 import { env } from '@knn/config';
 import { withSystem, type TxClient } from '@knn/db';
-import { ROLES, USER_STATUS, type Role, type UserStatus } from '@knn/shared';
+import { ROLES, USER_STATUS, effectiveFunnelMode, type FunnelMode, type Role, type UserStatus } from '@knn/shared';
 import { AppError } from '../../lib/errors.js';
 import { signAccessToken } from '../../lib/jwt.js';
 import { hashPassword, verifyPassword } from '../../lib/password.js';
@@ -14,6 +14,8 @@ export interface AuthUser {
   name: string;
   role: Role;
   status: UserStatus;
+  /** The buyer's EFFECTIVE funnel mode (set by getMe so the wizard can gate cloaker-only fields). */
+  funnelMode?: FunnelMode;
 }
 
 export interface TokenPair {
@@ -124,6 +126,15 @@ export async function logout(token: string): Promise<void> {
 export async function getMe(userId: string): Promise<AuthUser | null> {
   return withSystem(async (tx) => {
     const user = (await tx.user.findUnique({ where: { id: userId } })) as DbUser | null;
-    return user ? toAuthUser(user) : null;
+    if (!user) return null;
+    // The effective funnel mode (org gate + default + per-buyer override) — the wizard hides the
+    // fallback/display fields for cloaker buyers (the launch auto-fills those for them).
+    const org = await tx.organization.findUnique({ where: { id: user.orgId }, select: { cloakingEnabled: true, defaultFunnelMode: true } });
+    const funnelMode = effectiveFunnelMode({
+      cloakingEnabled: org?.cloakingEnabled ?? false,
+      defaultFunnelMode: org?.defaultFunnelMode ?? 'NORMAL',
+      userFunnelMode: (user as unknown as { funnelMode: FunnelMode | null }).funnelMode,
+    });
+    return { ...toAuthUser(user), funnelMode };
   });
 }
