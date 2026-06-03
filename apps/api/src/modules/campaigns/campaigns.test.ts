@@ -259,6 +259,61 @@ describe('campaigns + uploads', () => {
     expect(cloneOffers[0]?.domainId).toBe(domainId);
   });
 
+  it('clone drops an ad account / pixel whose Facebook connection is broken (#2 — independence)', async () => {
+    const t = await bearer(buyerEmail);
+    // A source campaign bound to assets of a BROKEN connection (e.g. the token expired after launch).
+    const campaignId = await withSystem(async (tx) => {
+      const buyer = await tx.user.findFirstOrThrow({ where: { email: buyerEmail } });
+      const broken = await tx.fbConnection.create({
+        data: {
+          orgId,
+          userId: buyer.id,
+          fbUserId: 'fb-broken',
+          accessTokenEnc: 'enc',
+          tokenExpiresAt: new Date(Date.now() + 60 * 86_400_000),
+          status: 'CONNECTION_BROKEN',
+        },
+      });
+      const brokenAcc = await tx.fbAdAccount.create({
+        data: { orgId, connectionId: broken.id, fbAccountId: 'act_broken', name: 'Broken', currency: 'USD', timezone: 'Asia/Kolkata', status: '1' },
+      });
+      const brokenPixel = await tx.fbPixel.create({ data: { orgId, adAccountId: brokenAcc.id, fbPixelId: 'px_broken', name: 'BrokenPixel' } });
+      const camp = await tx.campaign.create({
+        data: {
+          orgId,
+          buyerId: buyer.id,
+          name: 'Broken-conn source',
+          status: 'DRAFT',
+          keywords: [],
+          adAccountId: brokenAcc.id,
+          adSets: {
+            create: [
+              {
+                orgId,
+                name: 'set',
+                pixelId: brokenPixel.id,
+                ads: { create: [{ orgId, name: 'ad', headline: 'H', primaryText: 'P', redirectId: `rb-${slug}` }] },
+              },
+            ],
+          },
+        },
+      });
+      return camp.id;
+    });
+
+    const res = await app.inject({ method: 'POST', url: `/api/campaigns/${campaignId}/clone`, headers: authHeaders(t) });
+    expect(res.statusCode).toBe(201);
+    const cloneId = res.json<{ campaign: { id: string } }>().campaign.id;
+
+    // The clone is a clean, independent draft: the dead account + pixel refs are dropped (the buyer
+    // re-selects a live ad account in the wizard), not carried over as broken dependencies.
+    const cloned = await withSystem((tx) =>
+      tx.campaign.findUnique({ where: { id: cloneId }, select: { adAccountId: true, adSets: { select: { pixelId: true } } } }),
+    );
+    expect(cloned?.adAccountId).toBeNull();
+    expect(cloned?.adSets[0]?.pixelId).toBeNull();
+  });
+
   it("won't clone another buyer's campaign (404)", async () => {
     const tokenB = await bearer(buyerBEmail);
     const res = await app.inject({ method: 'POST', url: `/api/campaigns/${draftId}/clone`, headers: authHeaders(tokenB) });

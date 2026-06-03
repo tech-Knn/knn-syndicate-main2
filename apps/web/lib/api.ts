@@ -567,11 +567,9 @@ export const stats = {
   campaigns: async (range?: RangeArg): Promise<CampaignPerf[]> =>
     (await parse<{ campaigns: CampaignPerf[] }>(await authedFetch(`/api/stats/campaigns${rangeQs(range)}`)))
       .campaigns,
-  /** Force an on-demand FB→DB status sync of the requester's launched campaigns. Returns a
-   *  report: total in scope, how many were queued, and how many were skipped (broken FB
-   *  connection / no ad account) — so the UI can explain a no-op. */
-  syncStatuses: async (): Promise<{ total: number; queued: number; brokenConnections: number; noAdAccount: number }> =>
-    parse(await authedFetch('/api/stats/sync', { method: 'POST' })),
+  /** Freshness of the scheduled syncs (no manual refresh) — drives the "last updated" indicator. */
+  syncStatus: async (): Promise<{ fbStatus: { at: string | null; everySec: number }; metrics: { at: string | null; everySec: number } }> =>
+    parse(await authedFetch('/api/stats/sync-status')),
   campaignBreakdown: async (id: string, range?: RangeArg): Promise<CampaignBreakdown> =>
     parse(await authedFetch(`/api/stats/campaigns/${id}${rangeQs(range)}`)),
   byBuyer: async (range?: RangeArg): Promise<BuyerRollup[]> =>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   type CampaignBreakdown,
   type CampaignPerf,
@@ -24,7 +25,7 @@ import {
   Skeleton,
 } from '@/components/ui';
 import { FbStatusBadge } from '@/components/fb-status-badge';
-import { campaigns as campaignApi, stats } from '@/lib/api';
+import { campaigns as campaignApi, facebook, stats } from '@/lib/api';
 import { useAuth } from '../../providers';
 import admin from '../admin.module.css';
 import styles from '../analytics.module.css';
@@ -136,6 +137,33 @@ const STATUS_TONE: Record<string, 'neutral' | 'brand' | 'success' | 'warning' | 
 };
 const statusLabel = (s: string): string => s.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 
+/** Relative "x ago" for the sync-freshness indicator (recomputed on each ~60s re-render). */
+function timeAgo(iso: string | null): string {
+  if (!iso) return '—';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return 'just now';
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ${mins % 60}m ago`;
+}
+
+/** Compact, always-on freshness indicator (replaces the old manual refresh). Data lands on the
+ *  worker crons — status ~30 min, spend hourly — and Meta/AdSense only refresh their own reporting
+ *  every ~15–30 min, so this just tells the buyer how fresh each feed is. */
+function SyncIndicator({ sync }: { sync: Awaited<ReturnType<typeof stats.syncStatus>> | null }): React.ReactNode {
+  if (!sync) return null;
+  return (
+    <span
+      className={styles.syncIndicator}
+      title="Facebook status and spend/revenue update automatically on a schedule. There’s no manual refresh — Facebook and AdSense only refresh this data every ~15–30 minutes."
+    >
+      <span className={styles.syncDot} aria-hidden />
+      Auto-updates · status {timeAgo(sync.fbStatus.at)} · spend {timeAgo(sync.metrics.at)}
+    </span>
+  );
+}
+
 // Derived per-row optimization metrics.
 const ctr = (r: CampaignPerf): number => (r.impressions ? (r.clicks / r.impressions) * 100 : 0);
 const cpc = (r: CampaignPerf): number => (r.clicks ? r.spendUsd / r.clicks : 0);
@@ -184,8 +212,11 @@ export default function AnalyticsPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [breakdowns, setBreakdowns] = useState<Record<string, CampaignBreakdown>>({});
   const [busy, setBusy] = useState<string | null>(null);
-  const [syncing, setSyncing] = useState(false);
-  const [syncNote, setSyncNote] = useState<string | null>(null);
+  // Sync freshness + connection health for the header indicator + banner. There is NO manual
+  // refresh: data lands on the worker crons (status every 30 min, spend hourly); these reads are
+  // cheap and refreshed alongside the 60s data poll.
+  const [sync, setSync] = useState<Awaited<ReturnType<typeof stats.syncStatus>> | null>(null);
+  const [brokenConns, setBrokenConns] = useState<{ id: string; name: string }[]>([]);
 
   const load = useCallback(async (r: DateRange, silent = false) => {
     if (!silent) setRows(null);
@@ -197,43 +228,31 @@ export default function AnalyticsPage() {
     }
   }, []);
 
-  // "Sync from Facebook": force the FB→DB status reconcile for this user's launched campaigns now,
-  // instead of waiting for the 30-min poll. The reconcile runs in the worker (a few seconds for one
-  // buyer's set), so refetch a couple of times to land the fresh status without the 60s poll lag.
-  const syncFromFacebook = useCallback(async () => {
-    setSyncing(true);
-    setError(null);
-    setSyncNote(null);
+  const loadSyncMeta = useCallback(async () => {
     try {
-      const res = await stats.syncStatuses();
-      if (res.total === 0) {
-        setSyncNote('No launched (active/paused) campaigns to sync.');
-      } else {
-        const parts = [`Pulling Facebook status for ${res.queued} of ${res.total} campaign${res.total === 1 ? '' : 's'}…`];
-        if (res.brokenConnections > 0)
-          parts.push(`${res.brokenConnections} skipped — Facebook connection expired; reconnect it in the Facebook tab.`);
-        if (res.noAdAccount > 0) parts.push(`${res.noAdAccount} skipped — no ad account attached.`);
-        setSyncNote(parts.join(' '));
-      }
-      // The reconcile runs in the worker (a few seconds for a buyer's set, each campaign is a
-      // sequential Facebook call), so poll a few times over ~15s to land the fresh status.
-      for (const delay of [3000, 3000, 4000, 5000]) {
-        await new Promise((r) => setTimeout(r, delay));
-        await load(range, true);
-      }
-      if (res.queued > 0) setSyncNote(`Synced ${res.queued} campaign${res.queued === 1 ? '' : 's'} from Facebook.`);
+      const [s, profiles] = await Promise.all([stats.syncStatus(), facebook.profiles()]);
+      setSync(s);
+      // Only DATA/VERIFY connections feed status+spend sync; a broken LAUNCH token is expected
+      // (it's reconnected right before launching) and doesn't stall Analytics, so don't alarm on it.
+      setBrokenConns(
+        profiles
+          .filter((p) => p.status === 'CONNECTION_BROKEN' && p.appKind !== 'LAUNCH')
+          .map((p) => ({ id: p.id, name: p.name })),
+      );
     } catch {
-      setError('Couldn’t sync from Facebook just now — try again in a moment.');
-    } finally {
-      setSyncing(false);
+      /* non-fatal — the indicator/banner just won't update this tick */
     }
-  }, [range, load]);
+  }, []);
 
   useEffect(() => {
     void load(range);
-    const id = setInterval(() => void load(range, true), 60_000);
+    void loadSyncMeta();
+    const id = setInterval(() => {
+      void load(range, true);
+      void loadSyncMeta();
+    }, 60_000);
     return () => clearInterval(id);
-  }, [range, load]);
+  }, [range, load, loadSyncMeta]);
 
   // Debounce the free-text search (~200ms) so filtering/paging doesn't churn on every keystroke.
   useEffect(() => {
@@ -425,6 +444,17 @@ export default function AnalyticsPage() {
         </Banner>
       )}
 
+      {brokenConns.length > 0 && (
+        <Banner tone="warning">
+          {brokenConns.length === 1
+            ? `Your Facebook connection “${brokenConns[0]!.name}” needs reconnecting — campaign status and spend have stopped updating for its campaigns.`
+            : `${brokenConns.length} Facebook connections need reconnecting — campaign status and spend have stopped updating for their campaigns.`}{' '}
+          <Link href="/dashboard/facebook" className={styles.bannerLink}>
+            Reconnect →
+          </Link>
+        </Banner>
+      )}
+
       {/* Toolbar: search + filters */}
       <div className={styles.toolbar}>
         <div className={styles.toolbarRow}>
@@ -466,18 +496,11 @@ export default function AnalyticsPage() {
               {filtered.length.toLocaleString()} {filtered.length === 1 ? 'campaign' : 'campaigns'}
             </span>
           )}
-          <button type="button" className={admin.actionBtn} onClick={syncFromFacebook} disabled={syncing}>
-            {syncing ? 'Syncing…' : 'Sync from Facebook'}
-          </button>
+          <SyncIndicator sync={sync} />
           <button type="button" className={admin.actionBtn} onClick={exportCsv} disabled={filtered.length === 0}>
             Export CSV
           </button>
         </div>
-        {syncNote && (
-          <p className={admin.subtle} aria-live="polite">
-            {syncNote}
-          </p>
-        )}
         {statuses.length > 0 && (
           <div className={styles.chips}>
             {statuses.map((s) => (

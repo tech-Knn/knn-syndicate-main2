@@ -1,4 +1,4 @@
-import { type Prisma, type TxClient, withSystem } from '@knn/db';
+import { FbConnectionStatus, type Prisma, type TxClient, withSystem } from '@knn/db';
 import {
   type AttributionWindow,
   CAMPAIGN_STATUS,
@@ -33,9 +33,15 @@ export const campaignInclude = {
 async function ownedAssetIds(
   tx: TxClient,
   userId: string,
+  opts: { healthyOnly?: boolean } = {},
 ): Promise<{ accounts: Set<string>; pages: Set<string>; pixels: Set<string> }> {
   // A user may have several connected FB profiles — their usable assets span all of them.
-  const conns = await tx.fbConnection.findMany({ where: { userId }, select: { id: true } });
+  // `healthyOnly` restricts to ACTIVE connections (used by clone, so a clone never inherits a
+  // reference bound to a broken/expired connection).
+  const conns = await tx.fbConnection.findMany({
+    where: { userId, ...(opts.healthyOnly ? { status: FbConnectionStatus.ACTIVE } : {}) },
+    select: { id: true },
+  });
   if (conns.length === 0) return { accounts: new Set(), pages: new Set(), pixels: new Set() };
   const connIds = conns.map((c) => c.id);
   const [accounts, pages] = await Promise.all([
@@ -198,8 +204,26 @@ async function buildCloneSource(
       orderBy: { createdAt: 'asc' },
       select: { domainId: true, weightPct: true, kind: true, articleId: true },
     });
+
+    // #2: a clone must be INDEPENDENT of the source's account-bound references. The source's
+    // ad account / page / pixel are copied only if they still belong to a HEALTHY (active)
+    // connection; anything bound to a broken/expired/removed connection is dropped so the clone
+    // never carries a dead dependency — the buyer re-selects a live asset in the wizard. (FB
+    // campaign/ad-set/ad ids, channel, and status are already not copied — clone is a fresh DRAFT.)
+    const draftRaw = toDraft(source);
+    const healthy = await ownedAssetIds(tx, auth.userId, { healthyOnly: true });
+    const draft: CampaignDraft = {
+      ...draftRaw,
+      adAccountId: draftRaw.adAccountId && healthy.accounts.has(draftRaw.adAccountId) ? draftRaw.adAccountId : undefined,
+      pageId: draftRaw.pageId && healthy.pages.has(draftRaw.pageId) ? draftRaw.pageId : undefined,
+      adSets: draftRaw.adSets.map((set) => ({
+        ...set,
+        pixelId: set.pixelId && healthy.pixels.has(set.pixelId) ? set.pixelId : undefined,
+      })),
+    };
+
     return {
-      draft: toDraft(source),
+      draft,
       offerInputs: offers.map(
         (o): OfferInput => ({ domainId: o.domainId, weightPct: o.weightPct, kind: o.kind, articleId: o.articleId }),
       ),

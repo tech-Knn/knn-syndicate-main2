@@ -14,6 +14,7 @@ import {
 } from './channel-pool/channel.service.js';
 import { sweepDomainHealth } from './jobs/domain-health.js';
 import { reconcileCampaigns } from './jobs/meta-rejection.js';
+import { SYNC_KEYS, markSyncRun } from './lib/sync-state.js';
 import { refreshFbTokens } from './jobs/token-refresh.js';
 import { type FbLaunchJob, resyncOffersToKv, runFbLaunch, triggerAutoLaunch } from './launch-trigger.js';
 
@@ -143,9 +144,11 @@ async function main(): Promise<void> {
   // ACTIVE↔PAUSED into Campaign.status so Analytics reflects reality.
   const metaRejectionWorker = new Worker(
     QUEUES.META_REJECTION_CHECK,
-    // No payload = the global cron sweep; `{ campaignIds }` = the on-demand "Sync from Facebook"
-    // button (scoped to one buyer's campaigns) so a manual refresh doesn't re-scan every tenant.
-    async (job: Job<{ campaignIds?: string[] }>) => reconcileCampaigns({}, { campaignIds: job.data?.campaignIds }),
+    async () => {
+      const result = await reconcileCampaigns();
+      await markSyncRun(SYNC_KEYS.FB_STATUS); // freshness signal for the Analytics "last updated" indicator
+      return result;
+    },
     { connection, concurrency: 1 },
   );
   metaRejectionWorker.on('failed', (job, err) => {
@@ -158,8 +161,11 @@ async function main(): Promise<void> {
   // daily buckets via idempotent upserts, so re-runs never double-count.
   const attributionWorker = new Worker(
     QUEUES.ATTRIBUTION,
-    async (job: Job<{ kind: 'hourly' | 'finalize' }>) =>
-      job.data.kind === 'finalize' ? runFinalization() : runHourlyAttribution(),
+    async (job: Job<{ kind: 'hourly' | 'finalize' }>) => {
+      const result = job.data.kind === 'finalize' ? await runFinalization() : await runHourlyAttribution();
+      await markSyncRun(SYNC_KEYS.METRICS); // freshness signal for spend/revenue
+      return result;
+    },
     { connection, concurrency: 1 },
   );
   attributionWorker.on('failed', (job, err) => {

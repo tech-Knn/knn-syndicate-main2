@@ -126,7 +126,6 @@ async function syncSubEntityStatuses(campaignId: string, delivery: CampaignDeliv
 
 export async function reconcileCampaigns(
   deps: ReconcileDeps = {},
-  scope: { campaignIds?: string[] } = {},
 ): Promise<{ checked: number; rejected: number; statusSynced: number; subSynced: number }> {
   const fetchDelivery = deps.fetchDelivery ?? defaultFetchDelivery;
   const releaseChannel = deps.releaseChannel ?? releaseChannelForCampaign;
@@ -135,15 +134,13 @@ export async function reconcileCampaigns(
 
   // Both ACTIVE and PAUSED launched campaigns are in scope: ACTIVE ones can be rejected or
   // paused-in-FB; PAUSED ones can be resumed-in-FB (or rejected). Pre-launch/terminal states
-  // have no live FB delivery to reconcile against. `scope.campaignIds` narrows the scan to a
-  // specific set (the on-demand "Sync from Facebook" button enqueues just the requester's
-  // campaigns); omitted = the global cron sweep.
+  // have no live FB delivery to reconcile against. Runs on the 30-min cron sweep (no manual
+  // trigger — that would breach the per-account rate limits).
   const campaigns = (await withSystem((tx) =>
     tx.campaign.findMany({
       where: {
         status: { in: [CAMPAIGN_STATUS.ACTIVE, CAMPAIGN_STATUS.PAUSED] },
         fbCampaignId: { not: null },
-        ...(scope.campaignIds ? { id: { in: scope.campaignIds } } : {}),
       },
       select: { id: true, orgId: true, buyerId: true, name: true, fbCampaignId: true, adAccountId: true },
     }),

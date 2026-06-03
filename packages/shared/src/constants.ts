@@ -66,6 +66,26 @@ export const FINALIZATION = {
   REPULL_INTERVAL_HOURS: 6,
 } as const;
 
+/**
+ * Scheduled-sync freshness contract between the worker (writer) and the API/UI (reader).
+ * There is NO manual refresh — Meta's per-ad-account BUC limits and AdSense's project-wide
+ * 500/min + 10k/day caps make on-demand fan-out unsafe with many buyers, and the platforms'
+ * own reporting only refreshes every ~15 min (Meta insights) / 15–30 min (AdSense) anyway.
+ */
+export const SYNC_STATE_KEYS = {
+  /** platform_settings key: last FB status reconcile (campaign/ad-set/ad effective_status). */
+  FB_STATUS: 'sync.fb_status.at',
+  /** platform_settings key: last spend/revenue attribution run (FB insights + AdSense). */
+  METRICS: 'sync.metrics.at',
+} as const;
+
+/** Buyer-facing cadence (seconds) for each scheduled sync — drives the "next update in Y" hint.
+ *  Keep in lockstep with the worker crons: status every 30 min; metrics hourly (at :15). */
+export const SYNC_INTERVALS_SEC = {
+  FB_STATUS: 30 * 60,
+  METRICS: 60 * 60,
+} as const;
+
 /** FB error codes that signal a broken/expired connection (verified vs Meta docs). */
 export const FB_TOKEN_ERROR_SUBCODES = [458, 459, 460, 463, 466, 467] as const;
 export const FB_RATE_LIMIT_ERROR_CODES = [4, 17, 32, 613, 80004, 80000, 80003] as const;

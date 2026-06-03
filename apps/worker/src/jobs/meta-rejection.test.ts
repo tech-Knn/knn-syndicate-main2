@@ -303,25 +303,4 @@ describe('reconcileCampaigns', () => {
     expect(got.set).toBe('ACTIVE');
     expect(got.ad).toBe('DISAPPROVED');
   });
-
-  // ── Scoped reconcile (the on-demand "Sync from Facebook" button) ─────────────────
-  it('honours scope.campaignIds — only the listed campaigns are scanned', async () => {
-    const inScope = await makeCampaign('fbcamp-scope-1', 'ACTIVE');
-    await makeCampaign('fbcamp-scope-2', 'ACTIVE'); // exists, ACTIVE, but NOT in scope
-    const fetchDelivery = vi.fn(async () => ({ effectiveStatus: 'ACTIVE', adSets: [], ads: [] }));
-
-    const res = await reconcileCampaigns(
-      {
-        fetchDelivery,
-        releaseChannel: vi.fn(async () => ({ released: false })),
-        resync: vi.fn(async () => undefined),
-        notify: vi.fn(),
-      },
-      { campaignIds: [inScope] },
-    );
-
-    // The id filter pins the scan to exactly the one campaign (not a global aggregate).
-    expect(res.checked).toBe(1);
-    expect(fetchDelivery).toHaveBeenCalledTimes(1);
-  });
 });

@@ -335,3 +335,29 @@
     min-height: 44px;
   }
 }
+
+/* Sync-freshness indicator (replaces the old manual refresh button). */
+.syncIndicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  cursor: default;
+}
+.syncDot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(var(--green-rgb), 0.18);
+}
+.bannerLink {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  white-space: nowrap;
+}
