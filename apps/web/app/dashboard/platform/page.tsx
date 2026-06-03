@@ -8,6 +8,7 @@ import { adsense, admin } from '@/lib/api';
 import { type AdsenseRevenuePreview, type AfsAccountRow } from '@/lib/types';
 import { useAuth } from '../../providers';
 import { RedirectDomainsPanel } from './redirect-domains-panel';
+import { WhiteDomainsPanel } from './white-domains-panel';
 import styles from '../admin.module.css';
 
 export default function PlatformPage() {
@@ -285,8 +286,11 @@ export default function PlatformPage() {
         </p>
       </Card>
 
-      {/* Redirect domains — the go.* hosts the edge Worker serves (default = ad link target) */}
+      {/* Redirect domains — the go.* hosts the edge Worker serves, rotated per funnel-mode pool */}
       <RedirectDomainsPanel />
+
+      {/* White domains — the clean fallback + FB display-link pool for cloaker campaigns */}
+      <WhiteDomainsPanel />
 
       {/* Settings */}
       <Card className={styles.section}>
