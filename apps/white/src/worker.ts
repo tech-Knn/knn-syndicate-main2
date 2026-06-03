@@ -153,6 +153,7 @@ function page(host: string, title: string, inner: string): string {
   const year = '2026';
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
 <title>${esc(title)} — ${esc(brand)}</title>
 <meta name="description" content="${esc(brand)} — independent writing on the things worth a closer look.">
 <style>${CSS}</style></head>
@@ -177,6 +178,36 @@ async function fetchJson<T>(url: string): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+/** FNV-1a hash of the host → a stable per-domain seed. */
+function hashStr(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+/** Deterministic shuffle (mulberry32, host-seeded) so each white domain presents a DIFFERENT homepage
+ *  ordering — an identical recent-list across the white domains would itself fingerprint them as one
+ *  operator. Same host → same order (stable across requests + crawls). Pure; no Date/Math.random state. */
+function shuffleSeeded<T>(arr: readonly T[], seed: number): T[] {
+  let a = seed >>> 0;
+  const rng = (): number => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const out = arr.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = out[i]!;
+    out[i] = out[j]!;
+    out[j] = tmp;
+  }
+  return out;
 }
 
 const LEGAL: Record<string, { title: string; body: (brand: string) => string }> = {
@@ -211,16 +242,30 @@ const LEGAL: Record<string, { title: string; body: (brand: string) => string }> 
 
 export const white = new Hono<{ Bindings: Env }>();
 
+// Keep the white sites OUT of search indexes. They serve the SAME article TEXT as the money pages, so an
+// indexed white page lets a quoted ("…") Google search correlate the white domain with the money domain
+// (and with the other white domains). This header + the <meta name="robots"> in page() drop them from
+// results, while crawling stays ALLOWED (robots.txt below) so the directive is actually seen and honored.
+// The site still looks fully real on a direct visit — it just won't appear in / be findable via search.
+white.use('*', async (c, next) => {
+  await next();
+  c.header('X-Robots-Tag', 'noindex, nofollow');
+});
+
 white.get('/health/live', (c) => c.json({ status: 'ok' }));
 
+// Allow crawl (so the noindex directive is seen → pages get de-indexed); the noindex does the hiding.
 white.get('/robots.txt', (c) => c.text('User-agent: *\nAllow: /\n'));
 
-// Homepage — a clean magazine index of recent articles (so the domain root looks like a real site).
+// Homepage — a clean magazine index. The recent pool is the same platform-wide list, but each white
+// domain renders a DIFFERENT per-host ordering/subset (deterministic, host-seeded) so the white sites
+// don't all show an identical index — that uniformity would itself link them. Stable per host.
 white.get('/', async (c) => {
   const host = hostOf(c);
   const brand = brandFor(host);
-  const data = await fetchJson<{ articles: ArticleSummary[] }>(`${c.env.API_BASE}/api/public/articles/recent?limit=18`);
-  const items = (data?.articles ?? [])
+  const data = await fetchJson<{ articles: ArticleSummary[] }>(`${c.env.API_BASE}/api/public/articles/recent?limit=24`);
+  const items = shuffleSeeded(data?.articles ?? [], hashStr(host))
+    .slice(0, 12)
     .map(
       (a) =>
         `<a class="card" href="/a/${encodeURIComponent(a.slug)}"><h3>${esc(a.title)}</h3><p>${esc(a.snippet)}</p></a>`,
