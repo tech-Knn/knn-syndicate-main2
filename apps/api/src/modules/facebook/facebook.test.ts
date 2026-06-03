@@ -185,7 +185,11 @@ describe('facebook integration', () => {
     const accountId = accounts.json<{ accounts: { id: string }[] }>().accounts[0]?.id ?? '';
     const res = await app.inject({ method: 'GET', url: `/api/facebook/accounts/${accountId}/pages`, headers: h(token) });
     expect(res.statusCode).toBe(200);
-    expect(res.json<{ pages: { fbPageId: string }[] }>().pages.some((p) => p.fbPageId === 'pg_promote')).toBe(true);
+    const pages = res.json<{ pages: { fbPageId: string }[] }>().pages;
+    expect(pages.some((p) => p.fbPageId === 'pg_promote')).toBe(true); // the account's promotable page is offered
+    // …and the connection's managed page_1, which THIS account can't promote, is EXCLUDED — the fix for
+    // restricted (BM/agency) accounts like quiroxa-35, where the whole connection pool used to leak through.
+    expect(pages.some((p) => p.fbPageId === 'page_1')).toBe(false);
   });
 
   it('still offers the managed pages when promote_pages is empty (avoids false negatives)', async () => {

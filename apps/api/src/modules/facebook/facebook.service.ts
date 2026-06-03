@@ -444,9 +444,14 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
         update: { name: p.name },
       });
     }
-    // …then return the union (the synced managed pages now include the promote pages).
+    // …then return the pages eligible for THIS ad account. When `promote_pages` lists pages, that IS
+    // the account's eligible set — restrict to it, so a Business-Manager/agency account that can only
+    // promote a subset (e.g. quiroxa-35) doesn't offer pages Facebook rejects at launch. When it comes
+    // back EMPTY (a known FB quirk — an account can still advertise a managed page Ads Manager offers),
+    // fall back to the connection's managed pages rather than wrongly showing nothing.
+    const eligibleFbPageIds = pages.map((p) => p.fbPageId);
     return tx.fbPage.findMany({
-      where: { connectionId },
+      where: eligibleFbPageIds.length ? { connectionId, fbPageId: { in: eligibleFbPageIds } } : { connectionId },
       orderBy: { name: 'asc' },
       select: { id: true, fbPageId: true, name: true, instagramId: true },
     });
