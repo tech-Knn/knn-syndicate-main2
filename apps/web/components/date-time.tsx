@@ -64,13 +64,17 @@ export function DateTimePicker({
   value,
   onChange,
   min,
+  timezone,
   ariaLabel,
   placeholder = 'Pick a date & time',
 }: {
   value: string;
   onChange: (v: string) => void;
-  /** Earliest allowed value (local "YYYY-MM-DDTHH:mm"); earlier days are disabled. */
+  /** Earliest allowed value ("YYYY-MM-DDTHH:mm"); earlier days are disabled. */
   min?: string;
+  /** IANA timezone the wall-clock is interpreted in (e.g. the ad account's). Shown as a hint;
+   *  empty → the buyer's browser-local zone. The caller owns the actual UTC conversion. */
+  timezone?: string;
   ariaLabel?: string;
   placeholder?: string;
 }): React.ReactNode {
@@ -264,7 +268,7 @@ export function DateTimePicker({
                 onChange={(e) => setSel((prev) => ({ ...prev, time: e.target.value }))}
               />
             </div>
-            <p className={s.hint}>Your local timezone.</p>
+            <p className={s.hint}>{timezone ? `Ad account timezone · ${timezone}` : 'Your local timezone.'}</p>
 
             <div className={cal.footer}>
               <button type="button" className={cal.cancel} onClick={clear}>Clear</button>

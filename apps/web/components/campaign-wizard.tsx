@@ -39,16 +39,58 @@ import { type Campaign, type FbAccount, type FbPage, type FbPixel, type OfferDom
 import { Banner, Button, Card, DateTimePicker, SearchSelect, Spinner } from './ui';
 import styles from './campaign-wizard.module.css';
 
-/**
- * A stored UTC ISO instant → the LOCAL wall-clock string the datetime picker uses ("YYYY-MM-DDTHH:mm").
- * The inverse of the submit path's `new Date(local).toISOString()`, so editing a draft shows the SAME
- * local time the buyer entered (the old `iso.slice(0,16)` showed the raw UTC clock — off by the tz offset).
- */
+/* ── Schedule time zones ───────────────────────────────────────────────────────────────────────
+ * Facebook reckons ad-set scheduling (start/end, daily-budget reset, dayparting) in the AD ACCOUNT's
+ * timezone — that's the wall-clock Ads Manager shows, and what a buyer means when they type "9 AM".
+ * So the picker's wall-clock ("YYYY-MM-DDTHH:mm") is interpreted in the ad account's IANA timezone,
+ * converted to a UTC instant for storage + the FB API (which schedules that absolute time). When the
+ * tz is unknown (no account picked yet / legacy rows) we fall back to the browser's local zone. */
+
+/** A stored UTC instant → "YYYY-MM-DDTHH:mm" in the BROWSER's local zone (the no-timezone fallback). */
 function isoToLocalInput(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   const pad = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** UTC offset (ms, + east of UTC) of an IANA `tz` at a given UTC instant — DST-aware. */
+function tzOffsetMs(utcMs: number, tz: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(utcMs));
+  const get = (t: string): number => Number(parts.find((p) => p.type === t)?.value);
+  const hour = get('hour') % 24; // some engines render midnight as 24
+  return Date.UTC(get('year'), get('month') - 1, get('day'), hour, get('minute'), get('second')) - utcMs;
+}
+
+/** A wall-clock "YYYY-MM-DDTHH:mm" interpreted in IANA `tz` → the UTC ISO instant (DST-aware). */
+function zonedToUtcIso(wall: string, tz: string): string {
+  if (!tz) return new Date(wall).toISOString(); // fallback: browser-local
+  const [date = '', time = ''] = wall.split('T');
+  const [y, mo, d] = date.split('-').map(Number);
+  const [h, mi] = time.split(':').map(Number);
+  const guess = Date.UTC(y ?? 1970, (mo ?? 1) - 1, d ?? 1, h ?? 0, mi ?? 0);
+  let offset = tzOffsetMs(guess, tz);
+  offset = tzOffsetMs(guess - offset, tz); // second pass settles DST transitions
+  return new Date(guess - offset).toISOString();
+}
+
+/** A UTC ISO instant → the wall-clock "YYYY-MM-DDTHH:mm" shown in IANA `tz`. */
+function utcToZoned(iso: string, tz: string): string {
+  if (!tz) return isoToLocalInput(iso); // fallback: browser-local
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).formatToParts(d);
+  const get = (t: string): string => parts.find((p) => p.type === t)?.value ?? '';
+  const hh = get('hour') === '24' ? '00' : get('hour');
+  return `${get('year')}-${get('month')}-${get('day')}T${hh}:${get('minute')}`;
 }
 
 interface AdForm {
@@ -213,8 +255,10 @@ function toForm(c?: Campaign): CampaignForm {
       costCap: s.costCapCents ? (s.costCapCents / 100).toString() : '',
       roasFactor: s.roasFactor ? String(s.roasFactor) : '',
       attributionWindow: (s.attributionWindow as AttributionWindow) ?? '',
-      startTime: s.startTime ? isoToLocalInput(s.startTime) : '',
-      endTime: s.endTime ? isoToLocalInput(s.endTime) : '',
+      // Display the stored UTC instant in the ad account's timezone it was saved against (so editing
+      // shows the same wall-clock the buyer scheduled). Legacy rows w/o a stored tz fall back to local.
+      startTime: s.startTime ? utcToZoned(s.startTime, s.timezone ?? '') : '',
+      endTime: s.endTime ? utcToZoned(s.endTime, s.timezone ?? '') : '',
       timezone: s.timezone ?? '',
       ads: s.ads.map((a) => ({
         key: uuid(),
@@ -234,7 +278,7 @@ function toForm(c?: Campaign): CampaignForm {
   };
 }
 
-function toDraft(form: CampaignForm): CampaignDraftInput {
+function toDraft(form: CampaignForm, tz: string): CampaignDraftInput {
   const cbo = form.budgetMode === 'CAMPAIGN';
   return {
     name: form.name.trim(),
@@ -272,9 +316,11 @@ function toDraft(form: CampaignForm): CampaignDraftInput {
       costCapCents: centsOrUndef(s.costCap),
       roasFactor: s.roasFactor ? Number(s.roasFactor) : undefined,
       attributionWindow: s.attributionWindow || undefined,
-      startTime: s.startTime ? new Date(s.startTime).toISOString() : undefined,
-      endTime: s.endTime ? new Date(s.endTime).toISOString() : undefined,
-      timezone: s.timezone || undefined,
+      // The picker wall-clock is in the ad account's timezone → convert to the correct UTC instant
+      // (DST-aware) for storage + the FB ad-set start_time/end_time. Persist the tz so an edit round-trips.
+      startTime: s.startTime ? zonedToUtcIso(s.startTime, tz) : undefined,
+      endTime: s.endTime ? zonedToUtcIso(s.endTime, tz) : undefined,
+      timezone: tz || s.timezone || undefined,
       ads: s.ads.map((a) => ({
         name: a.name.trim(),
         headline: a.headline.trim(),
@@ -508,7 +554,8 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
     setBannerError(null);
     setSuccess(null);
     try {
-      const draft = toDraft(form);
+      const acctTz = accounts.find((a) => a.id === form.adAccountId)?.timezone ?? '';
+      const draft = toDraft(form, acctTz);
       const saved = savedId ? await campaignsApi.update(savedId, draft) : await campaignsApi.create(draft);
       if (!savedId) {
         setSavedId(saved.id);
@@ -637,7 +684,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
             isCloaker={isCloaker}
           />
         ) : step === 1 ? (
-          <AdSetsStep form={form} pixels={pixels} patchAdSet={patchAdSet} patchAd={patchAd} setForm={setForm} uploadingKey={uploadingKey} uploadCreative={uploadCreative} isCloaker={isCloaker} />
+          <AdSetsStep form={form} pixels={pixels} patchAdSet={patchAdSet} patchAd={patchAd} setForm={setForm} uploadingKey={uploadingKey} uploadCreative={uploadCreative} isCloaker={isCloaker} adAccountTz={accounts.find((a) => a.id === form.adAccountId)?.timezone ?? ''} />
         ) : (
           <ReviewStep form={form} accounts={accounts} pages={pages} offers={offers} issues={[...serverIssues, ...issues]} />
         )}
@@ -1090,6 +1137,7 @@ function AdSetsStep({
   uploadingKey,
   uploadCreative,
   isCloaker,
+  adAccountTz,
 }: {
   form: CampaignForm;
   pixels: FbPixel[];
@@ -1099,6 +1147,8 @@ function AdSetsStep({
   uploadingKey: string | null;
   uploadCreative: (setKey: string, ad: AdForm, file: File) => void;
   isCloaker: boolean;
+  /** The selected ad account's IANA timezone — start/end wall-clocks are shown/scheduled in it. */
+  adAccountTz: string;
 }) {
   const cbo = form.budgetMode === 'CAMPAIGN';
   const hasAccount = Boolean(form.adAccountId);
@@ -1354,6 +1404,7 @@ function AdSetsStep({
                 <DateTimePicker
                   value={set.startTime}
                   onChange={(v) => patchAdSet(set.key, { startTime: v })}
+                  timezone={adAccountTz}
                   ariaLabel="Ad set start date & time"
                   placeholder="Starts immediately"
                 />
@@ -1364,6 +1415,7 @@ function AdSetsStep({
                   value={set.endTime}
                   onChange={(v) => patchAdSet(set.key, { endTime: v })}
                   min={set.startTime || undefined}
+                  timezone={adAccountTz}
                   ariaLabel="Ad set end date & time"
                   placeholder="Runs until paused"
                 />
