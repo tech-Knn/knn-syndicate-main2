@@ -186,10 +186,10 @@ describe('facebook integration', () => {
     const res = await app.inject({ method: 'GET', url: `/api/facebook/accounts/${accountId}/pages`, headers: h(token) });
     expect(res.statusCode).toBe(200);
     const pages = res.json<{ pages: { fbPageId: string }[] }>().pages;
-    expect(pages.some((p) => p.fbPageId === 'pg_promote')).toBe(true); // the account's promotable page is offered
-    // …and the connection's managed page_1, which THIS account can't promote, is EXCLUDED — the fix for
-    // restricted (BM/agency) accounts like quiroxa-35, where the whole connection pool used to leak through.
-    expect(pages.some((p) => p.fbPageId === 'page_1')).toBe(false);
+    // promote_pages is non-empty → the account lets this user advertise → Facebook offers ALL their pages
+    // (promote_pages itself under-reports), so both the promote-only page and the synced managed page show.
+    expect(pages.some((p) => p.fbPageId === 'pg_promote')).toBe(true);
+    expect(pages.some((p) => p.fbPageId === 'page_1')).toBe(true);
   });
 
   it('returns NO pages when promote_pages is empty (restricted account — matches Ads Manager, no leak)', async () => {

@@ -16,7 +16,6 @@ import {
   fetchPixels,
   fetchPromotePages,
   getMe,
-  graphRequest,
   hasLaunchApp,
   hasVerifyApp,
   isFbConfigured,
@@ -445,16 +444,17 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
         update: { name: p.name },
       });
     }
-    // …then return ONLY the pages Facebook says this ad account can promote (`promote_pages`). Verified
-    // live against FB: it's the authoritative per-(account, user) eligible set — a restricted BM/agency
-    // account returns a tiny set or NONE (e.g. quiroxa-35 → 1 or 0), exactly matching what Ads Manager
-    // offers. If it's empty, the account has NO page this user can run ads with → return none. (We do NOT
-    // fall back to the connection's whole page pool — that leaked 30+ unusable pages onto restricted
-    // accounts. The buyer authorises a page for the account in Business Manager to make it appear.)
-    const eligibleFbPageIds = pages.map((p) => p.fbPageId);
-    if (eligibleFbPageIds.length === 0) return [];
+    // Decide what the buyer can actually use, matching Ads Manager (verified live against FB — every other
+    // signal, incl. user_tasks + BM membership + BM owned/client_pages, was identical between an account
+    // that can use all pages and one that can use none; `promote_pages` was the ONLY differentiator):
+    //   • promote_pages EMPTY      → the account authorises NO page for this user (e.g. quiroxa-35) → none.
+    //   • promote_pages NON-EMPTY  → the account lets this user advertise; Facebook's own picker then
+    //     offers ALL the user's pages (Adgenix shows ~35), even though `promote_pages` lists only the few
+    //     already promoted (it UNDER-reports). So use it as a yes/no gate and return the full page pool.
+    // FB validates the final page at ad creation, so an unusable pick is rejected there with a clear error.
+    if (pages.length === 0) return [];
     return tx.fbPage.findMany({
-      where: { connectionId, fbPageId: { in: eligibleFbPageIds } },
+      where: { connectionId },
       orderBy: { name: 'asc' },
       select: { id: true, fbPageId: true, name: true, instagramId: true },
     });
@@ -464,56 +464,6 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
 export async function listPixels(auth: AuthContext, adAccountId: string) {
   const account = await loadOwnedAccount(auth, adAccountId);
   return runScoped(auth, (tx) => tx.fbPixel.findMany({ where: { adAccountId: account.id }, orderBy: { name: 'asc' } }));
-}
-
-/** TEMP super-admin diagnostic (remove after use): probe MANY FB edges for matching ad accounts to find
- *  the one that matches Ads Manager (quiroxa-35 → 0 usable pages; Adgenix → all). Never returns the token. */
-export async function debugAdAccountPages(q: string) {
-  const accounts = await withSystem((tx) =>
-    tx.fbAdAccount.findMany({
-      where: q ? { name: { contains: q, mode: 'insensitive' } } : undefined,
-      include: { connection: { select: { appKind: true, status: true, accessTokenEnc: true } } },
-      take: 8,
-    }),
-  );
-  const safe = async <T>(fn: () => Promise<T>): Promise<{ ok: true; data: T } | { ok: false; error: string }> => {
-    try {
-      return { ok: true, data: await fn() };
-    } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
-  };
-  const out = [];
-  for (const a of accounts) {
-    const appKind = a.connection.appKind as FbAppKind;
-    const token = decryptToken(a.connection.accessTokenEnc);
-    const g = <T>(path: string, params: Record<string, string> = {}): Promise<T> =>
-      graphRequest<T>({ path, params, accessToken: token, accountId: path.startsWith('/act_') ? a.fbAccountId : undefined, appKind });
-    const info = await safe(() => g<{ account_status?: number; business?: { id: string; name: string }; owner?: string; user_tasks?: string[] }>(`/act_${a.fbAccountId}`, { fields: 'account_status,business{id,name},owner,user_tasks' }));
-    const promote = await safe(() => g<{ data?: { id: string; name?: string }[] }>(`/act_${a.fbAccountId}/promote_pages`, { fields: 'id,name', limit: '200' }));
-    const meBiz = await safe(() => g<{ data?: { id: string; name: string }[] }>('/me/businesses', { fields: 'id,name', limit: '200' }));
-    const meAcc = await safe(() => g<{ data?: { id: string }[] }>('/me/accounts', { fields: 'id', limit: '200' }));
-    const bizId = info.ok ? info.data.business?.id : undefined;
-    const owned = bizId ? await safe(() => g<{ data?: { id: string }[] }>(`/${bizId}/owned_pages`, { fields: 'id', limit: '200' })) : null;
-    const client = bizId ? await safe(() => g<{ data?: { id: string }[] }>(`/${bizId}/client_pages`, { fields: 'id', limit: '200' })) : null;
-    const meBizList = meBiz.ok ? (meBiz.data.data ?? []).map((b) => ({ id: b.id, name: b.name })) : `ERR: ${meBiz.error}`;
-    out.push({
-      name: a.name,
-      fbAccountId: a.fbAccountId,
-      business: info.ok ? info.data.business ?? null : `ERR: ${info.error}`,
-      owner: info.ok ? info.data.owner : undefined,
-      userTasks: info.ok ? info.data.user_tasks : undefined,
-      accountStatus: info.ok ? info.data.account_status : undefined,
-      accountBmInMyBusinesses: info.ok && Array.isArray(meBizList) ? meBizList.some((b) => b.id === bizId) : 'unknown',
-      promoteCount: promote.ok ? promote.data.data?.length ?? 0 : `ERR: ${promote.error}`,
-      promoteSample: promote.ok ? (promote.data.data ?? []).slice(0, 15).map((p) => p.name ?? p.id) : undefined,
-      meBusinesses: meBizList,
-      meAccountsCount: meAcc.ok ? meAcc.data.data?.length ?? 0 : `ERR: ${meAcc.error}`,
-      bmOwnedCount: owned ? (owned.ok ? owned.data.data?.length ?? 0 : `ERR: ${owned.error}`) : 'no-bm',
-      bmClientCount: client ? (client.ok ? client.data.data?.length ?? 0 : `ERR: ${client.error}`) : 'no-bm',
-    });
-  }
-  return { results: out };
 }
 
 export interface LaunchAccessResult {
