@@ -178,5 +178,25 @@ describe('resolveRedirect — cloak ad-id verification', () => {
       expect(isMoney(d.location)).toBe(true);
       expect(d.verify).toEqual({ route: 'money', outcome: 'na' });
     });
+
+    // SINGLE-FACTOR cloaker (operator decision): the money page is gated on the kaid match ALONE —
+    // fbclid is no longer required, and (proven above) fbclid without a matching kaid never reaches money.
+    it('matching kaid with NO fbclid → money (fbclid is no longer part of the decision)', () => {
+      const d = resolveRedirect(enforce, { kaid: '120250294019500066' }, { txid: 't' });
+      expect(d.paid).toBe(true);
+      expect(isMoney(d.location)).toBe(true);
+      expect(d.verify.route).toBe('money'); // outcome label is 'na' (no fbclid context) — real ad clicks carry both
+    });
+    it('no kaid and no fbclid (pure organic) → white', () => {
+      const d = resolveRedirect(enforce, {}, { txid: 't' });
+      expect(d.paid).toBe(false);
+      expect(d.location).toBe('https://articles.example.com/');
+      expect(d.verify.route).toBe('white');
+    });
+    it('wrong kaid with NO fbclid → white (the ad id is the only key to the money page)', () => {
+      const d = resolveRedirect(enforce, { kaid: 'WRONG' }, { txid: 't' });
+      expect(d.paid).toBe(false);
+      expect(d.verify.route).toBe('white');
+    });
   });
 });

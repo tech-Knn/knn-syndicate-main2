@@ -17,10 +17,11 @@ id = "0480a994b3e1469cb3d9fc966139ad41"
 
 [vars]
 ARTICLE_FALLBACK = "https://articles.10linesabout.com/"
-# Cloak ad-id verification. ENFORCE (per operator decision): a paid click must carry kaid={{ad.id}}
-# matching the ad's stored id, or it goes to the white page. NOTE: observe showed a non-zero
-# "macro missing" count — those clicks now route to white (accepted tradeoff). Revert = set "observe"
-# + `pnpm dlx wrangler deploy`.
+# Cloak ad-id verification. ENFORCE (per operator decision): the money page is gated SOLELY on the
+# kaid={{ad.id}} macro matching the ad's stored id — fbclid is NOT part of the decision (single-factor
+# cloaker, 2026-06-03). Any click without the matching ad id (organic, bot, spoof, or a paid click
+# whose macro was stripped) goes to the white page. Revert routing to the legacy fbclid signal = set
+# "observe" + `pnpm dlx wrangler deploy`.
 CLOAK_VERIFY_MODE = "enforce"
 # Beacon each decision to the API so the split is visible. Empty disables telemetry.
 CLOAK_TELEMETRY_URL = "https://app.staging.rsoc.app/api/telemetry/cloak"

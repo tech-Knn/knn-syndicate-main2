@@ -44,8 +44,9 @@ export interface RedirectConfig {
   /** Weighted destinations: A/B splits or the campaign's PAID offers (Phase E).
    *  Weights need not sum to 100 (normalized at pick time). */
   splits?: RedirectSplit[];
-  /** Expected FB ad id (ad.fbAdId). When present + verifyMode 'enforce', a paid click must carry a
-   *  matching `kaid` ({{ad.id}} macro) to reach the money page. Absent → legacy (base paid logic). */
+  /** Expected FB ad id (ad.fbAdId). When present + verifyMode 'enforce', the money page is gated SOLELY
+   *  on a matching `kaid` ({{ad.id}} macro) — fbclid is NOT consulted (single-factor cloaker). Absent →
+   *  legacy base paid logic (only the brief pre-resync window). */
   expectedAdId?: string;
   /** 'observe' (default): route exactly as today, only RECORD what verification would decide (zero
    *  revenue risk). 'enforce': require the ad-id match for paid traffic. Set globally by the Worker. */
@@ -55,7 +56,12 @@ export interface RedirectConfig {
 /** The cloak ad-id verification outcome for a click (observe-first telemetry). */
 export type VerifyOutcome = 'match' | 'mismatch' | 'missing' | 'na';
 
-/** Pure: did this paid click prove it came from the expected ad? `na` when not paid / no expected id. */
+/**
+ * Telemetry LABEL for a click — NOT the routing gate (routing is kaid-only under enforce; see
+ * resolveRedirect). Kept paid-aware so the 'missing' bucket means "a real ad click (fbclid/utm) that
+ * lost its {{ad.id}} macro" — the revenue-loss signal — while harmless organic stays 'na'. `na` = not
+ * paid / no expected id.
+ */
 function verifyOutcome(config: RedirectConfig, query: QueryParams, basePaid: boolean): VerifyOutcome {
   if (!basePaid || !config.expectedAdId) return 'na';
   const kaid = query.kaid; // FB {{ad.id}} macro, stamped on real ad clicks via url_tags
@@ -110,10 +116,15 @@ export function resolveRedirect(
   const basePaid = isPaidTraffic(query);
   const outcome = verifyOutcome(config, query, basePaid);
 
-  // Final routing. ENFORCE (only when an expected ad id is configured) requires the macro to match;
-  // OBSERVE / legacy (no expected id) routes exactly as the base paid signal → zero revenue risk.
+  // SINGLE-FACTOR cloaker (operator decision 2026-06-03): under ENFORCE the money page is gated SOLELY
+  // on the `kaid` ({{ad.id}}) matching this ad's id — fbclid / utm_source is NO LONGER part of the
+  // routing decision. So a click reaches money iff it carries the right ad-id macro, full stop.
+  // (fbclid is still read above, but ONLY to LABEL telemetry: a paid click that lost its macro is the
+  // 'missing' revenue-loss signal vs harmless organic 'na'.) OBSERVE / legacy (no expected id yet)
+  // still routes by the base paid signal — a safe rollback and zero risk in the brief window before the
+  // post-launch resync writes expectedAdId.
   const enforce = config.verifyMode === 'enforce' && Boolean(config.expectedAdId);
-  const paid = enforce ? basePaid && outcome === 'match' : basePaid;
+  const paid = enforce ? query.kaid === config.expectedAdId : basePaid;
 
   if (!paid || !config.active) {
     return { location: config.fallbackUrl || config.articleUrl, paid, txid: opts.txid, verify: { route: 'white', outcome } };
