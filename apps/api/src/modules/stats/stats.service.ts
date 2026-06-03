@@ -15,12 +15,14 @@ import {
   ROLES,
   type StatDim,
   type StatsSummary,
+  CAMPAIGN_STATUS,
   addBusinessDays,
   allocateByWeights,
   businessDaysInRange,
   centsToDollars,
   currentBusinessDay,
 } from '@knn/shared';
+import { QUEUES, getQueue } from '@knn/queue';
 import { AppError } from '../../lib/errors.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
@@ -217,6 +219,26 @@ export async function getCampaignPerformance(
 }
 
 /** Ad-set → ad performance breakdown for one campaign (404 if out of scope). */
+/**
+ * On-demand FB→DB status refresh ("Sync from Facebook"). Enqueues a SCOPED reconcile for the
+ * requester's launched (ACTIVE/PAUSED) campaigns so a buyer can pull the latest Facebook status
+ * (campaign + ad set + ad) without waiting for the 30-min poll. Reuses the worker reconcile job
+ * (one source of truth); RLS via runScoped means a buyer only ever syncs their own campaigns.
+ */
+export async function requestCampaignStatusSync(auth: AuthContext): Promise<{ campaigns: number }> {
+  const ids = await runScoped(auth, (tx) =>
+    tx.campaign.findMany({
+      where: { status: { in: [CAMPAIGN_STATUS.ACTIVE, CAMPAIGN_STATUS.PAUSED] }, fbCampaignId: { not: null } },
+      select: { id: true },
+    }),
+  );
+  const campaignIds = ids.map((c) => c.id);
+  if (campaignIds.length > 0) {
+    await getQueue(QUEUES.META_REJECTION_CHECK).add('sync', { campaignIds }, { removeOnComplete: 50, removeOnFail: 50 });
+  }
+  return { campaigns: campaignIds.length };
+}
+
 export async function getCampaignBreakdown(
   auth: AuthContext,
   campaignId: string,

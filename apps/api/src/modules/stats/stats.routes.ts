@@ -11,6 +11,7 @@ import {
   getCompanyRollup,
   getSummary,
   parseRange,
+  requestCampaignStatusSync,
 } from './stats.service.js';
 
 /**
@@ -45,6 +46,17 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
       }
     },
   );
+
+  // On-demand "Sync from Facebook": enqueue a scoped reconcile of the requester's launched
+  // campaigns (status freshness without waiting for the 30-min poll). Returns how many were queued.
+  app.post('/sync', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await requestCampaignStatusSync(req.auth));
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
 
   app.get<{ Params: { id: string }; Querystring: { from?: string; to?: string } }>(
     '/campaigns/:id',

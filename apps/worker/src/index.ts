@@ -143,7 +143,9 @@ async function main(): Promise<void> {
   // ACTIVE↔PAUSED into Campaign.status so Analytics reflects reality.
   const metaRejectionWorker = new Worker(
     QUEUES.META_REJECTION_CHECK,
-    async () => reconcileCampaigns(),
+    // No payload = the global cron sweep; `{ campaignIds }` = the on-demand "Sync from Facebook"
+    // button (scoped to one buyer's campaigns) so a manual refresh doesn't re-scan every tenant.
+    async (job: Job<{ campaignIds?: string[] }>) => reconcileCampaigns({}, { campaignIds: job.data?.campaignIds }),
     { connection, concurrency: 1 },
   );
   metaRejectionWorker.on('failed', (job, err) => {

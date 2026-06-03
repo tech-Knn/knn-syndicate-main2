@@ -567,6 +567,9 @@ export const stats = {
   campaigns: async (range?: RangeArg): Promise<CampaignPerf[]> =>
     (await parse<{ campaigns: CampaignPerf[] }>(await authedFetch(`/api/stats/campaigns${rangeQs(range)}`)))
       .campaigns,
+  /** Force an on-demand FB→DB status sync of the requester's launched campaigns. */
+  syncStatuses: async (): Promise<{ campaigns: number }> =>
+    parse(await authedFetch('/api/stats/sync', { method: 'POST' })),
   campaignBreakdown: async (id: string, range?: RangeArg): Promise<CampaignBreakdown> =>
     parse(await authedFetch(`/api/stats/campaigns/${id}${rangeQs(range)}`)),
   byBuyer: async (range?: RangeArg): Promise<BuyerRollup[]> =>

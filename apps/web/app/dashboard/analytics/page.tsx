@@ -184,6 +184,7 @@ export default function AnalyticsPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [breakdowns, setBreakdowns] = useState<Record<string, CampaignBreakdown>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   const load = useCallback(async (r: DateRange, silent = false) => {
     if (!silent) setRows(null);
@@ -194,6 +195,25 @@ export default function AnalyticsPage() {
       setError('Could not load campaigns. Retrying shortly…');
     }
   }, []);
+
+  // "Sync from Facebook": force the FB→DB status reconcile for this user's launched campaigns now,
+  // instead of waiting for the 30-min poll. The reconcile runs in the worker (a few seconds for one
+  // buyer's set), so refetch a couple of times to land the fresh status without the 60s poll lag.
+  const syncFromFacebook = useCallback(async () => {
+    setSyncing(true);
+    setError(null);
+    try {
+      await stats.syncStatuses();
+      await new Promise((r) => setTimeout(r, 2500));
+      await load(range, true);
+      await new Promise((r) => setTimeout(r, 3000));
+      await load(range, true);
+    } catch {
+      setError('Couldn’t sync from Facebook just now — try again in a moment.');
+    } finally {
+      setSyncing(false);
+    }
+  }, [range, load]);
 
   useEffect(() => {
     void load(range);
@@ -432,6 +452,9 @@ export default function AnalyticsPage() {
               {filtered.length.toLocaleString()} {filtered.length === 1 ? 'campaign' : 'campaigns'}
             </span>
           )}
+          <button type="button" className={admin.actionBtn} onClick={syncFromFacebook} disabled={syncing}>
+            {syncing ? 'Syncing…' : 'Sync from Facebook'}
+          </button>
           <button type="button" className={admin.actionBtn} onClick={exportCsv} disabled={filtered.length === 0}>
             Export CSV
           </button>
