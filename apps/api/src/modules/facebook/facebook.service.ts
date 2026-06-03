@@ -16,7 +16,6 @@ import {
   fetchPixels,
   fetchPromotePages,
   getMe,
-  graphRequest,
   hasLaunchApp,
   hasVerifyApp,
   isFbConfigured,
@@ -445,14 +444,16 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
         update: { name: p.name },
       });
     }
-    // …then return the pages eligible for THIS ad account. When `promote_pages` lists pages, that IS
-    // the account's eligible set — restrict to it, so a Business-Manager/agency account that can only
-    // promote a subset (e.g. quiroxa-35) doesn't offer pages Facebook rejects at launch. When it comes
-    // back EMPTY (a known FB quirk — an account can still advertise a managed page Ads Manager offers),
-    // fall back to the connection's managed pages rather than wrongly showing nothing.
+    // …then return ONLY the pages Facebook says this ad account can promote (`promote_pages`). Verified
+    // live against FB: it's the authoritative per-(account, user) eligible set — a restricted BM/agency
+    // account returns a tiny set or NONE (e.g. quiroxa-35 → 1 or 0), exactly matching what Ads Manager
+    // offers. If it's empty, the account has NO page this user can run ads with → return none. (We do NOT
+    // fall back to the connection's whole page pool — that leaked 30+ unusable pages onto restricted
+    // accounts. The buyer authorises a page for the account in Business Manager to make it appear.)
     const eligibleFbPageIds = pages.map((p) => p.fbPageId);
+    if (eligibleFbPageIds.length === 0) return [];
     return tx.fbPage.findMany({
-      where: eligibleFbPageIds.length ? { connectionId, fbPageId: { in: eligibleFbPageIds } } : { connectionId },
+      where: { connectionId, fbPageId: { in: eligibleFbPageIds } },
       orderBy: { name: 'asc' },
       select: { id: true, fbPageId: true, name: true, instagramId: true },
     });
@@ -462,66 +463,6 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
 export async function listPixels(auth: AuthContext, adAccountId: string) {
   const account = await loadOwnedAccount(auth, adAccountId);
   return runScoped(auth, (tx) => tx.fbPixel.findMany({ where: { adAccountId: account.id }, orderBy: { name: 'asc' } }));
-}
-
-/**
- * TEMP super-admin diagnostic (remove after use): for ad accounts whose name matches `q`, ask Facebook
- * directly — via the owning connection's token — what `promote_pages` returns vs the account's Business
- * Manager + the user's own pages. Used to explain why a restricted account (e.g. quiroxa-35) shows pages
- * Ads Manager rejects. Never returns the token. System-context (cross-org) — super-admin only at the route.
- */
-export async function debugAdAccountPages(q: string) {
-  const accounts = await withSystem((tx) =>
-    tx.fbAdAccount.findMany({
-      where: q ? { name: { contains: q, mode: 'insensitive' } } : undefined,
-      include: { connection: { select: { appKind: true, status: true, accessTokenEnc: true } } },
-      take: 8,
-    }),
-  );
-  const safe = async <T>(fn: () => Promise<T>): Promise<{ ok: true; data: T } | { ok: false; error: string }> => {
-    try {
-      return { ok: true, data: await fn() };
-    } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
-  };
-  const results = [];
-  for (const a of accounts) {
-    const appKind = a.connection.appKind as FbAppKind;
-    const token = decryptToken(a.connection.accessTokenEnc);
-    const promote = await safe(() =>
-      graphRequest<{ data?: { id: string; name?: string }[] }>({ path: `/act_${a.fbAccountId}/promote_pages`, params: { fields: 'id,name', limit: '200' }, accessToken: token, accountId: a.fbAccountId, appKind }),
-    );
-    const info = await safe(() =>
-      graphRequest<{ name?: string; account_status?: number; business?: { id: string; name: string } }>({ path: `/act_${a.fbAccountId}`, params: { fields: 'name,account_status,business' }, accessToken: token, accountId: a.fbAccountId, appKind }),
-    );
-    const mine = await safe(() =>
-      graphRequest<{ data?: { id: string }[] }>({ path: '/me/accounts', params: { fields: 'id', limit: '200' }, accessToken: token, appKind }),
-    );
-    const bizId = info.ok ? info.data.business?.id : undefined;
-    const owned = bizId
-      ? await safe(() => graphRequest<{ data?: { id: string; name?: string }[] }>({ path: `/${bizId}/owned_pages`, params: { fields: 'id,name', limit: '200' }, accessToken: token, appKind }))
-      : null;
-    const client = bizId
-      ? await safe(() => graphRequest<{ data?: { id: string; name?: string }[] }>({ path: `/${bizId}/client_pages`, params: { fields: 'id,name', limit: '200' }, accessToken: token, appKind }))
-      : null;
-    results.push({
-      name: a.name,
-      fbAccountId: a.fbAccountId,
-      connStatus: a.connection.status,
-      appKind,
-      business: info.ok ? info.data.business ?? null : `ERR: ${info.error}`,
-      accountStatus: info.ok ? info.data.account_status : undefined,
-      promotePagesCount: promote.ok ? promote.data.data?.length ?? 0 : `ERR: ${promote.error}`,
-      promotePagesSample: promote.ok ? (promote.data.data ?? []).slice(0, 12).map((p) => p.name ?? p.id) : undefined,
-      bmOwnedPagesCount: owned ? (owned.ok ? owned.data.data?.length ?? 0 : `ERR: ${owned.error}`) : 'no-bm',
-      bmOwnedSample: owned && owned.ok ? (owned.data.data ?? []).slice(0, 12).map((p) => p.name ?? p.id) : undefined,
-      bmClientPagesCount: client ? (client.ok ? client.data.data?.length ?? 0 : `ERR: ${client.error}`) : 'no-bm',
-      bmClientSample: client && client.ok ? (client.data.data ?? []).slice(0, 12).map((p) => p.name ?? p.id) : undefined,
-      meAccountsCount: mine.ok ? mine.data.data?.length ?? 0 : `ERR: ${mine.error}`,
-    });
-  }
-  return { count: results.length, results };
 }
 
 export interface LaunchAccessResult {

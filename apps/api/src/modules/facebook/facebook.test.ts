@@ -192,10 +192,10 @@ describe('facebook integration', () => {
     expect(pages.some((p) => p.fbPageId === 'page_1')).toBe(false);
   });
 
-  it('still offers the managed pages when promote_pages is empty (avoids false negatives)', async () => {
-    // promote_pages can be empty even when the account CAN advertise a managed page
-    // (Facebook's own Ads Manager offers it), so we return the union — here, the
-    // connection's synced page_1 — rather than wrongly showing nothing.
+  it('returns NO pages when promote_pages is empty (restricted account — matches Ads Manager, no leak)', async () => {
+    // Verified live against FB: an empty promote_pages means the account has no page this user can run
+    // ads with (e.g. quiroxa-35 → 0). We must NOT fall back to the connection's whole page pool, which
+    // previously leaked 30+ unusable managed pages onto restricted accounts.
     const emptyPromote = vi.fn(async (input: unknown) => {
       const url = String(input);
       const json = (b: unknown): Response => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -208,7 +208,7 @@ describe('facebook integration', () => {
     const accountId = accounts.json<{ accounts: { id: string }[] }>().accounts[0]?.id ?? '';
     const res = await app.inject({ method: 'GET', url: `/api/facebook/accounts/${accountId}/pages`, headers: h(token) });
     expect(res.statusCode).toBe(200);
-    expect(res.json<{ pages: { fbPageId: string }[] }>().pages.some((p) => p.fbPageId === 'page_1')).toBe(true);
+    expect(res.json<{ pages: { fbPageId: string }[] }>().pages).toHaveLength(0); // no leak of managed pages
     vi.unstubAllGlobals();
   });
 
