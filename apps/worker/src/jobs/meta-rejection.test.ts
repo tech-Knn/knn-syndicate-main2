@@ -16,9 +16,39 @@ async function makeCampaign(fbCampaignId: string | null, status: CampaignStatus 
   return c.id;
 }
 
+async function makeAdSetWithAd(
+  campaignId: string,
+  fbAdSetId: string | null,
+  fbAdId: string | null,
+): Promise<{ adSetId: string; adId: string }> {
+  return withSystem(async (tx) => {
+    const set = await tx.adSet.create({ data: { orgId, campaignId, name: 'set', fbAdSetId } });
+    const ad = await tx.ad.create({
+      data: {
+        orgId,
+        adSetId: set.id,
+        name: 'ad',
+        headline: 'H',
+        primaryText: 'P',
+        redirectId: `r-${suffix}-${Math.random().toString(36).slice(2)}`,
+        fbAdId,
+      },
+    });
+    return { adSetId: set.id, adId: ad.id };
+  });
+}
+
 async function statusOf(id: string): Promise<string | undefined> {
   const c = await withSystem((tx) => tx.campaign.findUnique({ where: { id }, select: { status: true } }));
   return c?.status;
+}
+
+async function subStatusOf(ids: { adSetId: string; adId: string }): Promise<{ set: string | null; ad: string | null }> {
+  return withSystem(async (tx) => {
+    const set = await tx.adSet.findUnique({ where: { id: ids.adSetId }, select: { effectiveStatus: true } });
+    const ad = await tx.ad.findUnique({ where: { id: ids.adId }, select: { effectiveStatus: true } });
+    return { set: set?.effectiveStatus ?? null, ad: ad?.effectiveStatus ?? null };
+  });
 }
 
 beforeAll(async () => {
@@ -50,6 +80,7 @@ describe('reconcileCampaigns', () => {
     const res = await reconcileCampaigns({
       fetchDelivery: async () => ({
         effectiveStatus: 'ACTIVE',
+        adSets: [],
         ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }, { fbAdId: 'a2', effectiveStatus: 'DISAPPROVED' }],
       }),
       releaseChannel,
@@ -75,7 +106,7 @@ describe('reconcileCampaigns', () => {
     const notify = vi.fn();
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'ACTIVE', ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }] }),
+      fetchDelivery: async () => ({ effectiveStatus: 'ACTIVE', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }] }),
       releaseChannel,
       resync,
       notify,
@@ -83,6 +114,7 @@ describe('reconcileCampaigns', () => {
 
     expect(res.rejected).toBe(0);
     expect(res.statusSynced).toBe(0);
+    expect(res.subSynced).toBe(0);
     expect(releaseChannel).not.toHaveBeenCalled();
     expect(resync).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
@@ -104,7 +136,7 @@ describe('reconcileCampaigns', () => {
     expect(res.statusSynced).toBe(0);
   });
 
-  // ── Live status sync (pause/resume done directly in Ads Manager) ────────────────
+  // ── Live campaign status sync (pause/resume done directly in Ads Manager) ────────
   it('mirrors a pause done in Ads Manager: FB PAUSED → DB PAUSED, KEEPS the channel, notifies', async () => {
     const id = await makeCampaign('fbcamp-4', 'ACTIVE');
     const releaseChannel = vi.fn(async () => ({ released: false }));
@@ -112,7 +144,7 @@ describe('reconcileCampaigns', () => {
     const notify = vi.fn();
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'PAUSED', ads: [{ fbAdId: 'a1', effectiveStatus: 'PAUSED' }] }),
+      fetchDelivery: async () => ({ effectiveStatus: 'PAUSED', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'PAUSED' }] }),
       releaseChannel,
       resync,
       notify,
@@ -133,7 +165,7 @@ describe('reconcileCampaigns', () => {
   it('treats FB CAMPAIGN_PAUSED the same as PAUSED', async () => {
     const id = await makeCampaign('fbcamp-4b', 'ACTIVE');
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'CAMPAIGN_PAUSED', ads: [] }),
+      fetchDelivery: async () => ({ effectiveStatus: 'CAMPAIGN_PAUSED', adSets: [], ads: [] }),
       releaseChannel: vi.fn(async () => ({ released: false })),
       resync: vi.fn(async () => undefined),
       notify: vi.fn(),
@@ -149,7 +181,7 @@ describe('reconcileCampaigns', () => {
     const notify = vi.fn();
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'ACTIVE', ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }] }),
+      fetchDelivery: async () => ({ effectiveStatus: 'ACTIVE', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }] }),
       releaseChannel,
       resync,
       notify,
@@ -171,7 +203,7 @@ describe('reconcileCampaigns', () => {
     const notify = vi.fn();
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'PAUSED', ads: [{ fbAdId: 'a1', effectiveStatus: 'DISAPPROVED' }] }),
+      fetchDelivery: async () => ({ effectiveStatus: 'PAUSED', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'DISAPPROVED' }] }),
       releaseChannel,
       resync,
       notify,
@@ -192,7 +224,7 @@ describe('reconcileCampaigns', () => {
 
     for (const effectiveStatus of ['ARCHIVED', 'DELETED', 'IN_PROCESS', 'WITH_ISSUES', 'PENDING_REVIEW', '']) {
       const res = await reconcileCampaigns({
-        fetchDelivery: async () => ({ effectiveStatus, ads: [] }),
+        fetchDelivery: async () => ({ effectiveStatus, adSets: [], ads: [] }),
         releaseChannel,
         resync,
         notify,
@@ -204,5 +236,71 @@ describe('reconcileCampaigns', () => {
     expect(releaseChannel).not.toHaveBeenCalled();
     expect(resync).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
+  });
+
+  // ── Per-ad-set / per-ad status mirror ───────────────────────────────────────────
+  it('mirrors per-ad-set and per-ad effective_status into the DB', async () => {
+    const id = await makeCampaign('fbcamp-sub-1', 'ACTIVE');
+    const ids = await makeAdSetWithAd(id, 'fbset-1', 'fbad-1');
+
+    const res = await reconcileCampaigns({
+      fetchDelivery: async () => ({
+        effectiveStatus: 'ACTIVE',
+        adSets: [{ fbAdSetId: 'fbset-1', effectiveStatus: 'WITH_ISSUES' }],
+        ads: [{ fbAdId: 'fbad-1', effectiveStatus: 'PAUSED' }],
+      }),
+      releaseChannel: vi.fn(async () => ({ released: false })),
+      resync: vi.fn(async () => undefined),
+      notify: vi.fn(),
+    });
+
+    expect(res.subSynced).toBe(2);
+    expect(res.statusSynced).toBe(0); // campaign itself unchanged (ACTIVE↔ACTIVE)
+    const got = await subStatusOf(ids);
+    expect(got.set).toBe('WITH_ISSUES');
+    expect(got.ad).toBe('PAUSED');
+  });
+
+  it('only writes sub-entities whose status changed (no churn on re-poll)', async () => {
+    const id = await makeCampaign('fbcamp-sub-2', 'ACTIVE');
+    await makeAdSetWithAd(id, 'fbset-2', 'fbad-2');
+    const delivery = {
+      effectiveStatus: 'ACTIVE',
+      adSets: [{ fbAdSetId: 'fbset-2', effectiveStatus: 'ACTIVE' }],
+      ads: [{ fbAdId: 'fbad-2', effectiveStatus: 'ACTIVE' }],
+    };
+    const deps = {
+      releaseChannel: vi.fn(async () => ({ released: false })),
+      resync: vi.fn(async () => undefined),
+      notify: vi.fn(),
+    };
+
+    const first = await reconcileCampaigns({ fetchDelivery: async () => delivery, ...deps });
+    expect(first.subSynced).toBe(2); // null → ACTIVE on both rows
+    const second = await reconcileCampaigns({ fetchDelivery: async () => delivery, ...deps });
+    expect(second.subSynced).toBe(0); // unchanged → no writes
+  });
+
+  it('records the DISAPPROVED ad status even while rejecting the campaign', async () => {
+    const id = await makeCampaign('fbcamp-sub-3', 'ACTIVE');
+    const ids = await makeAdSetWithAd(id, 'fbset-3', 'fbad-3');
+
+    const res = await reconcileCampaigns({
+      fetchDelivery: async () => ({
+        effectiveStatus: 'ACTIVE',
+        adSets: [{ fbAdSetId: 'fbset-3', effectiveStatus: 'ACTIVE' }],
+        ads: [{ fbAdId: 'fbad-3', effectiveStatus: 'DISAPPROVED' }],
+      }),
+      releaseChannel: vi.fn(async () => ({ released: true })),
+      resync: vi.fn(async () => undefined),
+      notify: vi.fn(),
+    });
+
+    expect(res.rejected).toBe(1);
+    expect(res.subSynced).toBe(2); // set ACTIVE + ad DISAPPROVED both recorded before rejection
+    expect(await statusOf(id)).toBe('META_REJECTED');
+    const got = await subStatusOf(ids);
+    expect(got.set).toBe('ACTIVE');
+    expect(got.ad).toBe('DISAPPROVED');
   });
 });

@@ -67,7 +67,7 @@ function fbStatusToTarget(fbStatus: string): CampaignStatus | null {
 
 /** Resolve the ad-account's connection token, then fetch the campaign's live delivery. */
 async function defaultFetchDelivery(c: CampaignRow): Promise<CampaignDeliveryDTO> {
-  if (!c.fbCampaignId || !c.adAccountId) return { effectiveStatus: '', ads: [] };
+  if (!c.fbCampaignId || !c.adAccountId) return { effectiveStatus: '', adSets: [], ads: [] };
   // Use the token of the connection that owns the campaign's ad account (a buyer
   // may have several connected profiles), not "the buyer's (only) connection".
   const acc = await withSystem((tx) =>
@@ -76,15 +76,57 @@ async function defaultFetchDelivery(c: CampaignRow): Promise<CampaignDeliveryDTO
       select: { fbAccountId: true, connection: { select: { accessTokenEnc: true, status: true } } },
     }),
   );
-  if (!acc || acc.connection.status === 'CONNECTION_BROKEN') return { effectiveStatus: '', ads: [] };
+  if (!acc || acc.connection.status === 'CONNECTION_BROKEN') return { effectiveStatus: '', adSets: [], ads: [] };
   return fetchCampaignDelivery(acc.fbAccountId, decryptToken(acc.connection.accessTokenEnc), c.fbCampaignId);
 }
 
 const defaultNotify = (n: Notification): void => sendNotification(n);
 
+/** Mirror each ad set's / ad's live Facebook effective_status into the DB (display-only — the
+ *  campaign status governs the redirect). Only rows whose status actually CHANGED are written,
+ *  so the 30-min poll doesn't churn `updated_at` on every entity each tick. Matches FB entities
+ *  to our rows by fbAdSetId / fbAdId, scoped to the campaign. Returns the number of rows updated. */
+async function syncSubEntityStatuses(campaignId: string, delivery: CampaignDeliveryDTO): Promise<number> {
+  const setStatus = new Map(delivery.adSets.map((s) => [s.fbAdSetId, s.effectiveStatus]));
+  const adStatus = new Map(delivery.ads.map((a) => [a.fbAdId, a.effectiveStatus]));
+  if (setStatus.size === 0 && adStatus.size === 0) return 0;
+
+  return withSystem(async (tx) => {
+    const sets = await tx.adSet.findMany({
+      where: { campaignId },
+      select: {
+        id: true,
+        fbAdSetId: true,
+        effectiveStatus: true,
+        ads: { select: { id: true, fbAdId: true, effectiveStatus: true } },
+      },
+    });
+    const updates: Promise<unknown>[] = [];
+    for (const s of sets) {
+      if (s.fbAdSetId) {
+        const next = setStatus.get(s.fbAdSetId);
+        // `next &&` skips empty/undefined so we never overwrite a real status with a blank.
+        if (next && next !== (s.effectiveStatus ?? '')) {
+          updates.push(tx.adSet.update({ where: { id: s.id }, data: { effectiveStatus: next } }));
+        }
+      }
+      for (const a of s.ads) {
+        if (a.fbAdId) {
+          const next = adStatus.get(a.fbAdId);
+          if (next && next !== (a.effectiveStatus ?? '')) {
+            updates.push(tx.ad.update({ where: { id: a.id }, data: { effectiveStatus: next } }));
+          }
+        }
+      }
+    }
+    await Promise.all(updates);
+    return updates.length;
+  });
+}
+
 export async function reconcileCampaigns(
   deps: ReconcileDeps = {},
-): Promise<{ checked: number; rejected: number; statusSynced: number }> {
+): Promise<{ checked: number; rejected: number; statusSynced: number; subSynced: number }> {
   const fetchDelivery = deps.fetchDelivery ?? defaultFetchDelivery;
   const releaseChannel = deps.releaseChannel ?? releaseChannelForCampaign;
   const resync = deps.resync ?? resyncOffersToKv;
@@ -105,6 +147,7 @@ export async function reconcileCampaigns(
 
   let rejected = 0;
   let statusSynced = 0;
+  let subSynced = 0;
   for (const c of campaigns) {
     let delivery: CampaignDeliveryDTO;
     try {
@@ -112,6 +155,15 @@ export async function reconcileCampaigns(
     } catch (err) {
       console.error(`[reconcile] delivery fetch failed for ${c.id}:`, (err as Error).message);
       continue;
+    }
+
+    // 0) Mirror per-ad-set / per-ad effective_status (display-only) for EVERY in-scope campaign,
+    //    regardless of the campaign-level outcome below — so a campaign about to be META_REJECTED
+    //    still records which ad was DISAPPROVED.
+    try {
+      subSynced += await syncSubEntityStatuses(c.id, delivery);
+    } catch (err) {
+      console.warn(`[reconcile] sub-entity status sync failed for ${c.id}:`, err instanceof Error ? err.message : String(err));
     }
 
     // 1) Disapproval takes precedence — it's the most actionable state and the only one that
@@ -174,5 +226,5 @@ export async function reconcileCampaigns(
       statusSynced += 1;
     }
   }
-  return { checked: campaigns.length, rejected, statusSynced };
+  return { checked: campaigns.length, rejected, statusSynced, subSynced };
 }

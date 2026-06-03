@@ -422,6 +422,10 @@ model AdSet {
   endTime   DateTime? @map("end_time")
   timezone  String?
   fbAdSetId String?   @map("fb_ad_set_id")
+  /// Live Facebook delivery state (effective_status), mirrored by the worker reconcile job
+  /// (display-only — the campaign's status governs the redirect). Null until the first sync
+  /// after launch. ACTIVE | PAUSED | CAMPAIGN_PAUSED | DISAPPROVED | WITH_ISSUES | … .
+  effectiveStatus String? @map("effective_status")
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
 
@@ -457,6 +461,10 @@ model Ad {
   beneficiary String?
 
   fbAdId    String?  @map("fb_ad_id")
+  /// Live Facebook delivery state (effective_status), mirrored by the worker reconcile job
+  /// (display-only). Null until the first sync after launch; a DISAPPROVED ad here is what
+  /// flips the whole campaign to META_REJECTED (D14).
+  effectiveStatus String? @map("effective_status")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

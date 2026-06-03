@@ -233,7 +233,14 @@ export async function getCampaignBreakdown(
         budgetMode: true,
         adSets: {
           orderBy: { createdAt: 'asc' },
-          select: { id: true, name: true, dailyBudgetCents: true, fbAdSetId: true, ads: { orderBy: { createdAt: 'asc' }, select: { id: true, name: true } } },
+          select: {
+            id: true,
+            name: true,
+            effectiveStatus: true,
+            dailyBudgetCents: true,
+            fbAdSetId: true,
+            ads: { orderBy: { createdAt: 'asc' }, select: { id: true, name: true, effectiveStatus: true } },
+          },
         },
       },
     });
@@ -286,6 +293,7 @@ export async function getCampaignBreakdown(
         return {
           id: ad.id,
           name: ad.name,
+          effectiveStatus: ad.effectiveStatus,
           spendUsd,
           revenueUsd,
           profitUsd: round2(revenueUsd - spendUsd),
@@ -302,6 +310,7 @@ export async function getCampaignBreakdown(
       return {
         id: set.id,
         name: set.name,
+        effectiveStatus: set.effectiveStatus,
         spendUsd: setSpend,
         revenueUsd: setRev,
         profitUsd: round2(setRev - setSpend),

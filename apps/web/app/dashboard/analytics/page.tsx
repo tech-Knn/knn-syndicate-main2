@@ -23,6 +23,7 @@ import {
   Segmented,
   Skeleton,
 } from '@/components/ui';
+import { FbStatusBadge } from '@/components/fb-status-badge';
 import { campaigns as campaignApi, stats } from '@/lib/api';
 import { useAuth } from '../../providers';
 import admin from '../admin.module.css';
@@ -730,7 +731,9 @@ function CampaignDetail({ campaignId, bd, range, onError }: { campaignId: string
               {bd.adSets.map((set) => (
                 <FragmentRow key={set.id}>
                   <tr className={styles.setRow}>
-                    <td>{set.name}</td>
+                    <td>
+                      {set.name} <FbStatusBadge status={set.effectiveStatus} />
+                    </td>
                     <td>{money(set.spendUsd)}</td>
                     <td>{money(set.revenueUsd)}</td>
                     <td className={set.profitUsd >= 0 ? styles.pos : styles.neg}>{money(set.profitUsd)}</td>
@@ -751,7 +754,9 @@ function CampaignDetail({ campaignId, bd, range, onError }: { campaignId: string
                   </tr>
                   {set.ads.map((ad) => (
                     <tr key={ad.id}>
-                      <td className={styles.adIndent}>{ad.name}</td>
+                      <td className={styles.adIndent}>
+                        {ad.name} <FbStatusBadge status={ad.effectiveStatus} />
+                      </td>
                       <td>{money(ad.spendUsd)}</td>
                       <td>{money(ad.revenueUsd)}</td>
                       <td className={ad.profitUsd >= 0 ? styles.pos : styles.neg}>{money(ad.profitUsd)}</td>

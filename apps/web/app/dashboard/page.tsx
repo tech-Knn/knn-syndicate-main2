@@ -24,6 +24,7 @@ import {
   StatTile,
 } from '@/components/ui';
 import { RevenueChart, Sparkline } from '@/components/charts';
+import { FbStatusBadge } from '@/components/fb-status-badge';
 import { stats } from '@/lib/api';
 import { useAuth } from '../providers';
 import styles from './overview.module.css';
@@ -428,10 +429,14 @@ function CampaignRows({
               <div className={styles.detail}>
                 {bd.adSets.map((set) => (
                   <div key={set.id} className={styles.adSet}>
-                    <div className={styles.adSetName}>{set.name}</div>
+                    <div className={styles.adSetName}>
+                      {set.name} <FbStatusBadge status={set.effectiveStatus} />
+                    </div>
                     {set.ads.map((ad) => (
                       <div key={ad.id} className={styles.adRow}>
-                        <span className={styles.adName}>{ad.name}</span>
+                        <span className={styles.adName}>
+                          {ad.name} <FbStatusBadge status={ad.effectiveStatus} />
+                        </span>
                         <span className={styles.adMetric}>{money(ad.spendUsd)} spend</span>
                         <span className={styles.adMetric}>{money(ad.revenueUsd)} rev</span>
                         <span className={`${styles.adMetric} ${ad.profitUsd >= 0 ? styles.pos : styles.neg}`}>{money(ad.profitUsd)}</span>

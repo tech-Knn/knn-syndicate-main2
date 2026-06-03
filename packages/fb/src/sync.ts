@@ -123,15 +123,23 @@ export interface AdStatusDTO {
   /** FB effective_status: ACTIVE | PAUSED | DISAPPROVED | WITH_ISSUES | PENDING_REVIEW | … */
   effectiveStatus: string;
 }
+export interface AdSetStatusDTO {
+  fbAdSetId: string;
+  /** FB effective_status: ACTIVE | PAUSED | CAMPAIGN_PAUSED | WITH_ISSUES | … */
+  effectiveStatus: string;
+}
 
 /** A campaign's live delivery state from Facebook: its own `effective_status` plus the
- *  effective_status of every ad under it. Drives campaign-status reconciliation (so a
- *  pause/resume done directly in Ads Manager is mirrored into our DB) AND meta-rejection
- *  (a DISAPPROVED ad). One Graph node read with a nested `ads` edge = a single call. */
+ *  effective_status of every ad set AND ad under it. Drives campaign-status reconciliation
+ *  (a pause/resume done directly in Ads Manager is mirrored into our DB), the per-ad-set /
+ *  per-ad status mirror, AND meta-rejection (a DISAPPROVED ad). One Graph node read with two
+ *  nested edges (`adsets`, `ads`) = a single call. */
 export interface CampaignDeliveryDTO {
   /** Campaign FB effective_status: ACTIVE | PAUSED | CAMPAIGN_PAUSED | ARCHIVED | DELETED | … */
   effectiveStatus: string;
-  /** effective_status of every ad under the campaign. */
+  /** effective_status of every ad set under the campaign. */
+  adSets: AdSetStatusDTO[];
+  /** effective_status of every ad under the campaign (across all its ad sets). */
   ads: AdStatusDTO[];
 }
 export async function fetchCampaignDelivery(
@@ -141,15 +149,22 @@ export async function fetchCampaignDelivery(
 ): Promise<CampaignDeliveryDTO> {
   const node = await graphRequest<{
     effective_status?: string;
+    adsets?: { data?: { id: string; effective_status?: string }[] };
     ads?: { data?: { id: string; effective_status?: string }[] };
   }>({
     path: `/${fbCampaignId}`,
-    params: { fields: 'effective_status,ads.limit(200){id,effective_status}' },
+    params: {
+      fields: 'effective_status,adsets.limit(200){id,effective_status},ads.limit(200){id,effective_status}',
+    },
     accessToken,
     accountId: fbAccountId,
   });
   return {
     effectiveStatus: node.effective_status ?? '',
+    adSets: (node.adsets?.data ?? []).map((s) => ({
+      fbAdSetId: s.id,
+      effectiveStatus: s.effective_status ?? '',
+    })),
     ads: (node.ads?.data ?? []).map((a) => ({
       fbAdId: a.id,
       effectiveStatus: a.effective_status ?? '',

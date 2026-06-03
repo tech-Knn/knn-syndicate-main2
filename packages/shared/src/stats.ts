@@ -147,6 +147,9 @@ export interface CampaignPerf {
 export interface AdPerf {
   id: string;
   name: string;
+  /** Live Facebook delivery state (effective_status), mirrored by the worker reconcile job.
+   *  Null until the first sync after launch. ACTIVE | PAUSED | DISAPPROVED | WITH_ISSUES | … */
+  effectiveStatus: string | null;
   spendUsd: number;
   revenueUsd: number;
   profitUsd: number;
@@ -160,6 +163,9 @@ export interface AdPerf {
 export interface AdSetPerf {
   id: string;
   name: string;
+  /** Live Facebook delivery state (effective_status), mirrored by the worker reconcile job.
+   *  Null until the first sync after launch. ACTIVE | PAUSED | CAMPAIGN_PAUSED | WITH_ISSUES | … */
+  effectiveStatus: string | null;
   /** Rolled-up metrics across the ad set's ads (so the tree shows numbers at every level). */
   spendUsd: number;
   revenueUsd: number;
