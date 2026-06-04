@@ -16,6 +16,7 @@ import {
   ROLES,
   type StatDim,
   type StatsSummary,
+  CAMPAIGN_STATUS,
   SYNC_INTERVALS_SEC,
   SYNC_STATE_KEYS,
   addBusinessDays,
