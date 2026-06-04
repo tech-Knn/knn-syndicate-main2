@@ -119,6 +119,9 @@ async function resolveWriteAuth(tx: TxClient, dataConn: OwningConnection): Promi
 
 export interface FbStructureResult {
   fbCampaignId: string;
+  /** The stable Meta ad-account id we launched under — persisted so reads survive a deleted
+   *  connection row (resolve a live token by the Meta id, not the session-bound row). */
+  fbAccountId: string;
   adSets: { id: string; fbAdSetId: string; ads: { id: string; fbAdId: string }[] }[];
   /** The redirect (go.*) host this launch rotated onto — recorded on the campaign for blast-radius. */
   redirectDomainHost?: string;
@@ -700,13 +703,13 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
     adSets.push({ id: set.id, fbAdSetId: fbAdSet.id, ads: adResults });
   }
 
-  return { fbCampaignId: fbCampaign.id, adSets, redirectDomainHost };
+  return { fbCampaignId: fbCampaign.id, fbAccountId, adSets, redirectDomainHost };
 }
 
 /** Persist the returned FB ids onto the campaign/adsets/ads. */
 async function persistFbIds(auth: AuthContext, campaignId: string, result: FbStructureResult): Promise<void> {
   await runScoped(auth, async (tx) => {
-    await tx.campaign.update({ where: { id: campaignId }, data: { fbCampaignId: result.fbCampaignId } });
+    await tx.campaign.update({ where: { id: campaignId }, data: { fbCampaignId: result.fbCampaignId, fbAccountId: result.fbAccountId } });
     for (const s of result.adSets) {
       await tx.adSet.update({ where: { id: s.id }, data: { fbAdSetId: s.fbAdSetId } });
       for (const a of s.ads) await tx.ad.update({ where: { id: a.id }, data: { fbAdId: a.fbAdId } });

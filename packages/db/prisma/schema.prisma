@@ -344,6 +344,11 @@ model Campaign {
 
   /// Populated on launch (Phase 8).
   fbCampaignId String? @map("fb_campaign_id")
+  /// The STABLE Meta ad-account id (the `act_…` numeric body) this campaign launched under.
+  /// Unlike `adAccountId` (an internal fb_ad_accounts row id that is deleted when a connection is
+  /// disconnected), this survives reconnects/app-switches — so reads (status reconcile, insights)
+  /// resolve a live token by the Meta id, never a session-bound row that can vanish (D-fix #3).
+  fbAccountId String? @map("fb_account_id")
 
   /// The redirect (go.*) host this campaign was rotated onto at launch, and (cloaker only) the
   /// white host used for its fallback + FB display link. Stored for blast-radius reporting (which

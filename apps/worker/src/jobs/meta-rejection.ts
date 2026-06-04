@@ -30,6 +30,7 @@ interface CampaignRow {
   buyerId: string;
   name: string;
   fbCampaignId: string | null;
+  fbAccountId: string | null;
   adAccountId: string | null;
 }
 interface Notification {
@@ -69,9 +70,9 @@ function fbStatusToTarget(fbStatus: string): CampaignStatus | null {
 /** Fetch the campaign's live delivery using a token resolved by the STABLE Meta fbAccountId against
  *  the buyer's CURRENT healthy connection (survives reconnects/app-switches — see resolveCampaignReadAuth). */
 async function defaultFetchDelivery(c: CampaignRow): Promise<CampaignDeliveryDTO> {
-  if (!c.fbCampaignId) return { effectiveStatus: '', adSets: [], ads: [] };
-  const auth = await resolveCampaignReadAuth(c.adAccountId);
-  if (!auth) return { effectiveStatus: '', adSets: [], ads: [] };
+  if (!c.fbCampaignId) return { effectiveStatus: '', accountId: '', adSets: [], ads: [] };
+  const auth = await resolveCampaignReadAuth({ fbAccountId: c.fbAccountId, adAccountId: c.adAccountId });
+  if (!auth) return { effectiveStatus: '', accountId: '', adSets: [], ads: [] };
   return fetchCampaignDelivery(auth.fbAccountId, auth.token, c.fbCampaignId, auth.appKind);
 }
 
@@ -137,7 +138,7 @@ export async function reconcileCampaigns(
         status: { in: [CAMPAIGN_STATUS.ACTIVE, CAMPAIGN_STATUS.PAUSED] },
         fbCampaignId: { not: null },
       },
-      select: { id: true, orgId: true, buyerId: true, name: true, fbCampaignId: true, adAccountId: true },
+      select: { id: true, orgId: true, buyerId: true, name: true, fbCampaignId: true, fbAccountId: true, adAccountId: true },
     }),
   )) as CampaignRow[];
 

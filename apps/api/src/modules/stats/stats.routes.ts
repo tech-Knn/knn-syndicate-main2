@@ -9,7 +9,7 @@ import {
   getCampaignOfferStats,
   getCampaignPerformance,
   getCompanyRollup,
-  debugReconcile,
+  backfillCampaignFbAccountId,
   getSummary,
   getSyncStatus,
   parseRange,
@@ -60,11 +60,12 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  // TEMP super-admin diagnostic: per-campaign reconcile trace (resolve + live FB effective_status).
-  app.get('/admin/reconcile-debug', { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] }, async (req, reply) => {
+  // TEMP super-admin one-off: backfill the stable Campaign.fbAccountId (incl. FB recovery for
+  // orphaned campaigns whose ad-account row was deleted). Remove after running.
+  app.post('/admin/backfill-fb-account', { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] }, async (req, reply) => {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     try {
-      return reply.send(await debugReconcile(req.auth));
+      return reply.send(await backfillCampaignFbAccountId(req.auth));
     } catch (err) {
       return handleRouteError(err, reply);
     }

@@ -68,6 +68,7 @@ interface LaunchedCampaign {
   orgId: string;
   buyerId: string;
   fbCampaignId: string;
+  fbAccountId: string | null;
   adAccountId: string | null;
 }
 
@@ -83,7 +84,7 @@ async function pullFbStatsForCampaign(
     // connection — NOT the campaign's pinned, connection-bound adAccountId, which goes stale
     // after a reconnect/app-switch (the bug behind spend going stale). Reuses this txn, and
     // returns the connection's appKind so appsecret_proof is signed with the right app secret.
-    const auth = await resolveCampaignReadAuth(campaign.adAccountId, tx);
+    const auth = await resolveCampaignReadAuth({ fbAccountId: campaign.fbAccountId, adAccountId: campaign.adAccountId }, tx);
     if (!auth) return 0;
 
     const ads = await tx.ad.findMany({
@@ -182,7 +183,7 @@ export async function pullFbStats(
   const campaigns = await withSystem((tx) =>
     tx.campaign.findMany({
       where: { fbCampaignId: { not: null }, adAccountId: { not: null } },
-      select: { id: true, orgId: true, buyerId: true, fbCampaignId: true, adAccountId: true },
+      select: { id: true, orgId: true, buyerId: true, fbCampaignId: true, fbAccountId: true, adAccountId: true },
     }),
   );
   let rows = 0;

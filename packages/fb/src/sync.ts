@@ -138,6 +138,9 @@ export interface AdSetStatusDTO {
 export interface CampaignDeliveryDTO {
   /** Campaign FB effective_status: ACTIVE | PAUSED | CAMPAIGN_PAUSED | ARCHIVED | DELETED | … */
   effectiveStatus: string;
+  /** The Meta ad-account id this campaign lives under (numeric, no `act_` prefix) — the stable
+   *  key we persist on the campaign so reads survive a disconnected/recreated connection row. */
+  accountId: string;
   /** effective_status of every ad set under the campaign. */
   adSets: AdSetStatusDTO[];
   /** effective_status of every ad under the campaign (across all its ad sets). */
@@ -150,13 +153,14 @@ export async function fetchCampaignDelivery(
   appKind?: FbAppKind,
 ): Promise<CampaignDeliveryDTO> {
   const node = await graphRequest<{
+    account_id?: string;
     effective_status?: string;
     adsets?: { data?: { id: string; effective_status?: string }[] };
     ads?: { data?: { id: string; effective_status?: string }[] };
   }>({
     path: `/${fbCampaignId}`,
     params: {
-      fields: 'effective_status,adsets.limit(200){id,effective_status},ads.limit(200){id,effective_status}',
+      fields: 'account_id,effective_status,adsets.limit(200){id,effective_status},ads.limit(200){id,effective_status}',
     },
     accessToken,
     accountId: fbAccountId,
@@ -164,6 +168,7 @@ export async function fetchCampaignDelivery(
   });
   return {
     effectiveStatus: node.effective_status ?? '',
+    accountId: node.account_id ?? '',
     adSets: (node.adsets?.data ?? []).map((s) => ({
       fbAdSetId: s.id,
       effectiveStatus: s.effective_status ?? '',

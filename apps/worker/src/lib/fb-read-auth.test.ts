@@ -55,38 +55,47 @@ afterAll(async () => {
 });
 
 describe('resolveCampaignReadAuth', () => {
-  it('resolves token + appKind + currency for a healthy connection', async () => {
+  it('resolves token + appKind + currency from the pinned ad-account row', async () => {
     const conn = await mkConn('DATA', FbConnectionStatus.ACTIVE);
     const acctId = await mkAcct(conn, 'act_100', 'EUR');
 
-    const auth = await resolveCampaignReadAuth(acctId);
+    const auth = await resolveCampaignReadAuth({ fbAccountId: null, adAccountId: acctId });
     expect(auth?.fbAccountId).toBe('act_100');
     expect(auth?.appKind).toBe('DATA');
     expect(auth?.currency).toBe('EUR');
     expect(auth?.token).toBe('tok-DATA'); // decrypted
   });
 
-  it('resolves via the STABLE fbAccountId to the CURRENT healthy connection when the pinned row is on a broken/old one (#3)', async () => {
-    // The campaign was launched against an old connection (now broken); the buyer later reconnected
-    // under a different app — same Meta ad account, a NEW healthy connection row.
-    const oldConn = await mkConn('DATA', FbConnectionStatus.CONNECTION_BROKEN);
-    const pinned = await mkAcct(oldConn, 'act_200'); // the internal id the campaign still stores
-    const newConn = await mkConn('VERIFY', FbConnectionStatus.ACTIVE);
-    await mkAcct(newConn, 'act_200'); // same Meta account under the live connection
+  it('uses the stable campaign.fbAccountId even when the pinned row is gone (orphan fix #3)', async () => {
+    // The disconnect deleted the original ad-account row (adAccountId now dangling/null), but the
+    // campaign carries the stable Meta id and a current healthy connection owns that account.
+    const conn = await mkConn('VERIFY', FbConnectionStatus.ACTIVE);
+    await mkAcct(conn, 'act_orphan');
 
-    const auth = await resolveCampaignReadAuth(pinned);
-    expect(auth?.fbAccountId).toBe('act_200');
-    expect(auth?.appKind).toBe('VERIFY'); // the LIVE connection, not the broken pinned one
+    const auth = await resolveCampaignReadAuth({ fbAccountId: 'act_orphan', adAccountId: null });
+    expect(auth?.fbAccountId).toBe('act_orphan');
+    expect(auth?.appKind).toBe('VERIFY');
+    expect(auth?.token).toBe('tok-VERIFY');
+  });
+
+  it('prefers a LIVE connection over a broken one for the same Meta account', async () => {
+    const oldConn = await mkConn('DATA', FbConnectionStatus.CONNECTION_BROKEN);
+    await mkAcct(oldConn, 'act_200');
+    const newConn = await mkConn('VERIFY', FbConnectionStatus.ACTIVE);
+    await mkAcct(newConn, 'act_200');
+
+    const auth = await resolveCampaignReadAuth({ fbAccountId: 'act_200', adAccountId: null });
+    expect(auth?.appKind).toBe('VERIFY'); // the live connection, not the broken one
     expect(auth?.token).toBe('tok-VERIFY');
   });
 
   it('returns null when no healthy connection owns the account', async () => {
     const conn = await mkConn('DATA', FbConnectionStatus.CONNECTION_BROKEN);
-    const acctId = await mkAcct(conn, 'act_300');
-    expect(await resolveCampaignReadAuth(acctId)).toBeNull();
+    await mkAcct(conn, 'act_300');
+    expect(await resolveCampaignReadAuth({ fbAccountId: 'act_300', adAccountId: null })).toBeNull();
   });
 
-  it('returns null for a null ad account', async () => {
-    expect(await resolveCampaignReadAuth(null)).toBeNull();
+  it('returns null with neither a stable id nor a pinned row', async () => {
+    expect(await resolveCampaignReadAuth({ fbAccountId: null, adAccountId: null })).toBeNull();
   });
 });

@@ -26,16 +26,23 @@ export interface ReadAuth {
  * Returns null only when NO healthy connection currently owns the account (a genuine reconnect
  * state — surfaced to the buyer by the Analytics connection-health banner).
  */
-export async function resolveCampaignReadAuth(adAccountId: string | null, tx?: TxClient): Promise<ReadAuth | null> {
-  if (!adAccountId) return null;
+export async function resolveCampaignReadAuth(
+  campaign: { fbAccountId: string | null; adAccountId: string | null },
+  tx?: TxClient,
+): Promise<ReadAuth | null> {
   const run = async (db: TxClient): Promise<ReadAuth | null> => {
-    // The campaign stores an internal FbAdAccount.id → map it to the stable Meta fbAccountId.
-    const ref = await db.fbAdAccount.findUnique({ where: { id: adAccountId }, select: { fbAccountId: true } });
-    if (!ref) return null;
-    // Pick a live row for that SAME Meta account under any ACTIVE connection (most-recently
-    // updated wins — that's the connection the buyer is actually using now).
+    // The stable Meta ad-account id: prefer the one persisted on the campaign (survives a deleted
+    // connection row); fall back to the pinned internal row's fbAccountId while it still exists.
+    let stableId = campaign.fbAccountId;
+    if (!stableId && campaign.adAccountId) {
+      const ref = await db.fbAdAccount.findUnique({ where: { id: campaign.adAccountId }, select: { fbAccountId: true } });
+      stableId = ref?.fbAccountId ?? null;
+    }
+    if (!stableId) return null; // orphaned + not yet backfilled — recoverCampaignAccountId() handles it
+    // Pick a live row for that Meta account under any ACTIVE connection (most-recently updated wins
+    // — the connection the buyer is actually using now).
     const live = await db.fbAdAccount.findFirst({
-      where: { fbAccountId: ref.fbAccountId, connection: { status: FbConnectionStatus.ACTIVE } },
+      where: { fbAccountId: stableId, connection: { status: FbConnectionStatus.ACTIVE } },
       orderBy: { updatedAt: 'desc' },
       select: { fbAccountId: true, currency: true, connection: { select: { accessTokenEnc: true, appKind: true } } },
     });

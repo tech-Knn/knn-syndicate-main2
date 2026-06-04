@@ -80,7 +80,7 @@ describe('reconcileCampaigns', () => {
     const res = await reconcileCampaigns({
       fetchDelivery: async () => ({
         effectiveStatus: 'ACTIVE',
-        adSets: [],
+        accountId: 'act_test', adSets: [],
         ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }, { fbAdId: 'a2', effectiveStatus: 'DISAPPROVED' }],
       }),
       releaseChannel,
@@ -106,7 +106,7 @@ describe('reconcileCampaigns', () => {
     const notify = vi.fn();
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'ACTIVE', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }] }),
+      fetchDelivery: async () => ({ effectiveStatus: 'ACTIVE', accountId: 'act_test', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }] }),
       releaseChannel,
       resync,
       notify,
@@ -144,7 +144,7 @@ describe('reconcileCampaigns', () => {
     const notify = vi.fn();
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'PAUSED', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'PAUSED' }] }),
+      fetchDelivery: async () => ({ effectiveStatus: 'PAUSED', accountId: 'act_test', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'PAUSED' }] }),
       releaseChannel,
       resync,
       notify,
@@ -165,7 +165,7 @@ describe('reconcileCampaigns', () => {
   it('treats FB CAMPAIGN_PAUSED the same as PAUSED', async () => {
     const id = await makeCampaign('fbcamp-4b', 'ACTIVE');
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'CAMPAIGN_PAUSED', adSets: [], ads: [] }),
+      fetchDelivery: async () => ({ effectiveStatus: 'CAMPAIGN_PAUSED', accountId: 'act_test', adSets: [], ads: [] }),
       releaseChannel: vi.fn(async () => ({ released: false })),
       resync: vi.fn(async () => undefined),
       notify: vi.fn(),
@@ -181,7 +181,7 @@ describe('reconcileCampaigns', () => {
     const notify = vi.fn();
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'ACTIVE', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }] }),
+      fetchDelivery: async () => ({ effectiveStatus: 'ACTIVE', accountId: 'act_test', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }] }),
       releaseChannel,
       resync,
       notify,
@@ -203,7 +203,7 @@ describe('reconcileCampaigns', () => {
     const notify = vi.fn();
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'PAUSED', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'DISAPPROVED' }] }),
+      fetchDelivery: async () => ({ effectiveStatus: 'PAUSED', accountId: 'act_test', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'DISAPPROVED' }] }),
       releaseChannel,
       resync,
       notify,
@@ -224,7 +224,7 @@ describe('reconcileCampaigns', () => {
 
     for (const effectiveStatus of ['ARCHIVED', 'DELETED', 'IN_PROCESS', 'WITH_ISSUES', 'PENDING_REVIEW', '']) {
       const res = await reconcileCampaigns({
-        fetchDelivery: async () => ({ effectiveStatus, adSets: [], ads: [] }),
+        fetchDelivery: async () => ({ effectiveStatus, accountId: 'act_test', adSets: [], ads: [] }),
         releaseChannel,
         resync,
         notify,
@@ -246,7 +246,7 @@ describe('reconcileCampaigns', () => {
     const res = await reconcileCampaigns({
       fetchDelivery: async () => ({
         effectiveStatus: 'ACTIVE',
-        adSets: [{ fbAdSetId: 'fbset-1', effectiveStatus: 'WITH_ISSUES' }],
+        accountId: 'act_test', adSets: [{ fbAdSetId: 'fbset-1', effectiveStatus: 'WITH_ISSUES' }],
         ads: [{ fbAdId: 'fbad-1', effectiveStatus: 'PAUSED' }],
       }),
       releaseChannel: vi.fn(async () => ({ released: false })),
@@ -266,7 +266,7 @@ describe('reconcileCampaigns', () => {
     await makeAdSetWithAd(id, 'fbset-2', 'fbad-2');
     const delivery = {
       effectiveStatus: 'ACTIVE',
-      adSets: [{ fbAdSetId: 'fbset-2', effectiveStatus: 'ACTIVE' }],
+      accountId: 'act_test', adSets: [{ fbAdSetId: 'fbset-2', effectiveStatus: 'ACTIVE' }],
       ads: [{ fbAdId: 'fbad-2', effectiveStatus: 'ACTIVE' }],
     };
     const deps = {
@@ -288,7 +288,7 @@ describe('reconcileCampaigns', () => {
     const res = await reconcileCampaigns({
       fetchDelivery: async () => ({
         effectiveStatus: 'ACTIVE',
-        adSets: [{ fbAdSetId: 'fbset-3', effectiveStatus: 'ACTIVE' }],
+        accountId: 'act_test', adSets: [{ fbAdSetId: 'fbset-3', effectiveStatus: 'ACTIVE' }],
         ads: [{ fbAdId: 'fbad-3', effectiveStatus: 'DISAPPROVED' }],
       }),
       releaseChannel: vi.fn(async () => ({ released: true })),
