@@ -250,6 +250,10 @@ export const facebook = {
     (await parse<{ profiles: FbProfileWithOwner[] }>(await authedFetch('/api/facebook/profiles/all'))).profiles,
   syncProfile: async (id: string): Promise<SyncResult> =>
     parse(await authedFetch(`/api/facebook/profiles/${id}/sync`, { method: 'POST' })),
+  // Super-admin: re-pull ad accounts, pages & pixels for every active connection now
+  // (the inventory re-sync that otherwise runs on a 6-hour schedule).
+  adminSyncAll: async (): Promise<{ connections: number; synced: number; failed: number }> =>
+    parse(await authedFetch('/api/facebook/admin/sync-all', { method: 'POST' })),
   // Does a launch-app connection's token cover all the same person's DATA assets?
   launchAccess: async (id: string): Promise<LaunchAccessResult> =>
     parse(await authedFetch(`/api/facebook/profiles/${id}/launch-access`)),
@@ -570,6 +574,10 @@ export const stats = {
   /** Freshness of the scheduled syncs (no manual refresh) — drives the "last updated" indicator. */
   syncStatus: async (): Promise<{ fbStatus: { at: string | null; everySec: number }; metrics: { at: string | null; everySec: number } }> =>
     parse(await authedFetch('/api/stats/sync-status')),
+  // Super-admin: reconcile every launched campaign's status against Facebook now
+  // (the status check that otherwise runs on a 30-minute schedule). Returns once queued.
+  adminReconcile: async (): Promise<{ enqueued: boolean }> =>
+    parse(await authedFetch('/api/stats/admin/reconcile', { method: 'POST' })),
   campaignBreakdown: async (id: string, range?: RangeArg): Promise<CampaignBreakdown> =>
     parse(await authedFetch(`/api/stats/campaigns/${id}${rangeQs(range)}`)),
   byBuyer: async (range?: RangeArg): Promise<BuyerRollup[]> =>

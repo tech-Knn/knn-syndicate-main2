@@ -4,7 +4,7 @@ import { type FormEvent, Fragment, useCallback, useEffect, useState } from 'reac
 import { useRouter } from 'next/navigation';
 import { type PlatformSettings, addBusinessDays, currentBusinessDay } from '@knn/shared';
 import { Badge, Banner, Button, Card, EmptyState, Skeleton, useConfirm, useToast } from '@/components/ui';
-import { adsense, admin } from '@/lib/api';
+import { adsense, admin, facebook, stats } from '@/lib/api';
 import { type AdsenseRevenuePreview, type AfsAccountRow } from '@/lib/types';
 import { useAuth } from '../../providers';
 import { RedirectDomainsPanel } from './redirect-domains-panel';
@@ -22,6 +22,11 @@ export default function PlatformPage() {
   const [afsAccounts, setAfsAccounts] = useState<AfsAccountRow[] | null>(null);
   const [catSyncing, setCatSyncing] = useState<string | null>(null);
   const [adsNote, setAdsNote] = useState<string | null>(null);
+
+  // Force-now data-sync ops (both also run automatically on a schedule).
+  const [syncingStatuses, setSyncingStatuses] = useState(false);
+  const [syncingAssets, setSyncingAssets] = useState(false);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
 
   // Live AFS revenue preview (per account) + on-demand attribution pull.
   const [revOpen, setRevOpen] = useState<string | null>(null);
@@ -53,6 +58,40 @@ export default function PlatformPage() {
       setAdsNote('Could not queue the attribution run — check the worker is up.');
     } finally {
       setPulling(false);
+    }
+  };
+
+  // Reconcile every launched campaign's status against Facebook right now.
+  const syncStatusesNow = async (): Promise<void> => {
+    setSyncingStatuses(true);
+    setSyncNote(null);
+    try {
+      await stats.adminReconcile();
+      setSyncNote('Status check queued — campaign statuses refresh from Facebook within a minute.');
+      toast.success('Campaign status sync queued');
+    } catch {
+      setSyncNote('Could not queue the status check — check the worker is up.');
+      toast.error('Could not queue the status sync');
+    } finally {
+      setSyncingStatuses(false);
+    }
+  };
+
+  // Re-pull ad accounts, pages & pixels for every active connection right now.
+  const syncAssetsNow = async (): Promise<void> => {
+    setSyncingAssets(true);
+    setSyncNote(null);
+    try {
+      const r = await facebook.adminSyncAll();
+      const failedSuffix = r.failed > 0 ? `, ${r.failed} failed` : '';
+      setSyncNote(`Refreshed ${r.synced} of ${r.connections} connection${r.connections === 1 ? '' : 's'}${failedSuffix}.`);
+      if (r.failed > 0) toast.error(`Refreshed ad accounts with ${r.failed} failed`);
+      else toast.success(`Refreshed ${r.synced} connection${r.synced === 1 ? '' : 's'}`);
+    } catch {
+      setSyncNote('Could not refresh ad accounts — check the worker and connections.');
+      toast.error('Could not refresh ad accounts');
+    } finally {
+      setSyncingAssets(false);
     }
   };
 
@@ -140,9 +179,62 @@ export default function PlatformPage() {
         <div>
           <span className="eyebrow">Platform</span>
           <h1 className={`serif ${styles.title}`}>Setup</h1>
-          <p className={styles.sub}>AdSense accounts, redirect domains, and platform settings. Companies, Domains, Channels &amp; Articles are in the left nav.</p>
+          <p className={styles.sub}>Data sync, AdSense accounts, redirect domains, and platform settings. Companies, Domains, Channels &amp; Articles are in the left nav.</p>
         </div>
       </div>
+
+      {/* Data sync — force the scheduled Facebook syncs to run now (the "show me current data" ops) */}
+      <Card className={styles.section}>
+        <div className={styles.sectionHead} style={{ marginBottom: 'var(--space-2)' }}>
+          <span className={styles.sectionTitle}>Data sync</span>
+        </div>
+        <p className={styles.sub} style={{ marginTop: 0, marginBottom: 'var(--space-4)' }}>
+          These run automatically on a schedule. Use them to force an immediate refresh when you need current
+          data right now.
+        </p>
+
+        {syncNote && (
+          <div style={{ marginBottom: 'var(--space-4)' }}>
+            <Banner tone="info" onDismiss={() => setSyncNote(null)}>{syncNote}</Banner>
+          </div>
+        )}
+
+        <div className={styles.sectionHead} style={{ marginBottom: 'var(--space-4)' }}>
+          <div style={{ maxWidth: '54ch' }}>
+            <div className={styles.name}>Campaign statuses</div>
+            <div className={styles.subtle}>
+              Pull every launched campaign&apos;s live state — Active, Paused, Archived, or rejected — from
+              Facebook. Runs automatically every 30&nbsp;minutes.
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            loading={syncingStatuses}
+            onClick={() => void syncStatusesNow()}
+            title="Reconcile every launched campaign's status against Facebook now"
+          >
+            Sync statuses now
+          </Button>
+        </div>
+
+        <div className={styles.sectionHead} style={{ marginBottom: 0 }}>
+          <div style={{ maxWidth: '54ch' }}>
+            <div className={styles.name}>Ad accounts &amp; pages</div>
+            <div className={styles.subtle}>
+              Re-pull every connected profile&apos;s ad accounts, pages, and pixels so newly-added Business
+              Manager assets appear. Runs automatically every 6&nbsp;hours.
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            loading={syncingAssets}
+            onClick={() => void syncAssetsNow()}
+            title="Re-pull ad accounts, pages & pixels for every active connection now"
+          >
+            Refresh accounts now
+          </Button>
+        </div>
+      </Card>
 
       {/* AdSense accounts (multi-account) */}
       <Card className={styles.section}>
