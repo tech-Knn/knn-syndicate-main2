@@ -23,6 +23,7 @@ import {
   centsToDollars,
   currentBusinessDay,
 } from '@knn/shared';
+import { QUEUES, getQueue } from '@knn/queue';
 import { AppError } from '../../lib/errors.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
@@ -233,6 +234,17 @@ export interface SyncFreshness {
  * platforms' own reporting only refreshes every ~15 min anyway. Data lands on the worker crons
  * (status every 30 min, metrics hourly); this reports WHEN each last completed.
  */
+/**
+ * SUPER_ADMIN ops: enqueue an immediate global FB→DB reconcile — the SAME job the 30-min cron
+ * runs — to force a status refresh on demand (debugging / "I just changed things in Ads Manager").
+ * NOT buyer-facing: there's no per-buyer fan-out, so it doesn't reintroduce the rate-limit risk of
+ * a buyer refresh button; the scheduled cron remains the normal path.
+ */
+export async function triggerCampaignReconcile(): Promise<{ enqueued: true }> {
+  await getQueue(QUEUES.META_REJECTION_CHECK).add('admin-reconcile', {}, { removeOnComplete: 50, removeOnFail: 50 });
+  return { enqueued: true };
+}
+
 export async function getSyncStatus(auth: AuthContext): Promise<SyncFreshness> {
   const rows = await runScoped(auth, (tx) =>
     tx.platformSetting.findMany({

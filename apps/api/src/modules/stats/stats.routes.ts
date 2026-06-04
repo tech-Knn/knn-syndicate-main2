@@ -12,6 +12,7 @@ import {
   getSummary,
   getSyncStatus,
   parseRange,
+  triggerCampaignReconcile,
 } from './stats.service.js';
 
 /**
@@ -46,6 +47,17 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
       }
     },
   );
+
+  // SUPER_ADMIN ops: force an immediate global FB→DB reconcile (debug / on-demand status refresh).
+  // Not buyer-facing — see triggerCampaignReconcile (no per-buyer fan-out / rate-limit risk).
+  app.post('/admin/reconcile', { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await triggerCampaignReconcile());
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
 
   // Freshness of the scheduled syncs (no manual refresh — see getSyncStatus). Drives the
   // Analytics "auto-updates • last updated X ago" indicator.
