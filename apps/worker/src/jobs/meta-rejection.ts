@@ -52,9 +52,11 @@ export interface ReconcileDeps {
 
 const DISAPPROVED = 'DISAPPROVED';
 
-/** Map a Facebook campaign `effective_status` to the `Campaign.status` we should reconcile
- *  to, or `null` to leave it untouched. Only the reversible ACTIVE↔PAUSED pair is mirrored;
- *  archival/deletion and transient review states are intentionally not auto-applied. */
+/** Map a Facebook campaign `effective_status` to the `Campaign.status` we should reconcile to,
+ *  or `null` to leave it untouched. ACTIVE↔PAUSED mirror the running state; ARCHIVED/DELETED are
+ *  terminal on Facebook → archive here too (so a campaign deleted/archived in Ads Manager stops
+ *  showing as Active). Transient review states (IN_PROCESS/PENDING_REVIEW/WITH_ISSUES/…) are left
+ *  alone (disapproval is handled at the ad level → META_REJECTED). */
 function fbStatusToTarget(fbStatus: string): CampaignStatus | null {
   switch (fbStatus) {
     case 'ACTIVE':
@@ -62,6 +64,9 @@ function fbStatusToTarget(fbStatus: string): CampaignStatus | null {
     case 'PAUSED':
     case 'CAMPAIGN_PAUSED':
       return CAMPAIGN_STATUS.PAUSED;
+    case 'ARCHIVED':
+    case 'DELETED':
+      return CAMPAIGN_STATUS.ARCHIVED;
     default:
       return null;
   }
@@ -195,9 +200,9 @@ export async function reconcileCampaigns(
       continue;
     }
 
-    // 2) Mirror a pause/resume the buyer did directly in Ads Manager into Campaign.status.
+    // 2) Mirror a pause/resume/archive the buyer did directly in Ads Manager into Campaign.status.
     const target = fbStatusToTarget(delivery.effectiveStatus);
-    if (!target) continue; // archived/deleted/transient → leave it alone
+    if (!target) continue; // transient review state (IN_PROCESS/PENDING_REVIEW/…) → leave it alone
     let didSync = false;
     await withSystem(async (tx) => {
       const fresh = await tx.campaign.findUnique({ where: { id: c.id }, select: { status: true } });
@@ -207,8 +212,11 @@ export async function reconcileCampaigns(
       }
     });
     if (didSync) {
+      const archived = target === CAMPAIGN_STATUS.ARCHIVED;
+      // Archive is terminal → free the channel for reuse (like a rejection). Pause/resume KEEP it.
+      if (archived) await releaseChannel(c.id);
       // The redirect `active` flag is derived from campaign.status (ACTIVE → emits the channel;
-      // PAUSED → active:false). Re-publish so the edge follows. Pausing KEEPS the channel.
+      // PAUSED/ARCHIVED → active:false). Re-publish so the edge follows.
       await resync(c.id).catch((err) =>
         console.warn(`[reconcile] edge KV resync failed for ${c.id}:`, err instanceof Error ? err.message : String(err)),
       );
@@ -217,8 +225,10 @@ export async function reconcileCampaigns(
         orgId: c.orgId,
         userId: c.buyerId,
         type: 'campaign.status_synced',
-        title: resumed ? 'Campaign resumed' : 'Campaign paused',
-        body: `"${c.name}" was ${resumed ? 'resumed' : 'paused'} in Facebook; the change is now reflected here.`,
+        title: archived ? 'Campaign archived' : resumed ? 'Campaign resumed' : 'Campaign paused',
+        body: archived
+          ? `"${c.name}" was archived in Facebook; it's been archived here and its channel released.`
+          : `"${c.name}" was ${resumed ? 'resumed' : 'paused'} in Facebook; the change is now reflected here.`,
       });
       statusSynced += 1;
     }

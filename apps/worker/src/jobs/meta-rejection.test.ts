@@ -216,13 +216,13 @@ describe('reconcileCampaigns', () => {
     expect(notify.mock.calls[0]?.[0]?.type).toBe('campaign.meta_rejected');
   });
 
-  it('leaves the campaign alone for archived/transient FB statuses (no auto-archive)', async () => {
+  it('leaves the campaign alone for TRANSIENT FB review states (not ACTIVE/PAUSED/ARCHIVED)', async () => {
     const id = await makeCampaign('fbcamp-7', 'ACTIVE');
     const releaseChannel = vi.fn(async () => ({ released: false }));
     const resync = vi.fn(async () => undefined);
     const notify = vi.fn();
 
-    for (const effectiveStatus of ['ARCHIVED', 'DELETED', 'IN_PROCESS', 'WITH_ISSUES', 'PENDING_REVIEW', '']) {
+    for (const effectiveStatus of ['IN_PROCESS', 'WITH_ISSUES', 'PENDING_REVIEW', 'PREAPPROVED', '']) {
       const res = await reconcileCampaigns({
         fetchDelivery: async () => ({ effectiveStatus, accountId: 'act_test', adSets: [], ads: [] }),
         releaseChannel,
@@ -236,6 +236,38 @@ describe('reconcileCampaigns', () => {
     expect(releaseChannel).not.toHaveBeenCalled();
     expect(resync).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('mirrors an archive done in Ads Manager: FB ARCHIVED → DB ARCHIVED + releases the channel', async () => {
+    const id = await makeCampaign('fbcamp-arch', 'ACTIVE');
+    const releaseChannel = vi.fn(async () => ({ released: true }));
+    const resync = vi.fn(async () => undefined);
+    const notify = vi.fn();
+
+    const res = await reconcileCampaigns({
+      fetchDelivery: async () => ({ effectiveStatus: 'ARCHIVED', accountId: 'act_test', adSets: [], ads: [] }),
+      releaseChannel,
+      resync,
+      notify,
+    });
+
+    expect(res.statusSynced).toBe(1);
+    expect(await statusOf(id)).toBe('ARCHIVED');
+    expect(releaseChannel).toHaveBeenCalledWith(id); // archive is terminal → free the channel
+    expect(resync).toHaveBeenCalledWith(id);
+    expect(notify.mock.calls[0]?.[0]?.title).toBe('Campaign archived');
+  });
+
+  it('treats FB DELETED the same as ARCHIVED', async () => {
+    const id = await makeCampaign('fbcamp-del', 'PAUSED');
+    const res = await reconcileCampaigns({
+      fetchDelivery: async () => ({ effectiveStatus: 'DELETED', accountId: 'act_test', adSets: [], ads: [] }),
+      releaseChannel: vi.fn(async () => ({ released: true })),
+      resync: vi.fn(async () => undefined),
+      notify: vi.fn(),
+    });
+    expect(res.statusSynced).toBe(1);
+    expect(await statusOf(id)).toBe('ARCHIVED');
   });
 
   // ── Per-ad-set / per-ad status mirror ───────────────────────────────────────────
