@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type CampaignDeliveryDTO } from '@knn/fb';
 import { prisma, withSystem } from '@knn/db';
 import { type CampaignStatus, ROLES, USER_STATUS } from '@knn/shared';
 import { reconcileCampaigns } from './meta-rejection.js';
@@ -43,6 +44,18 @@ async function statusOf(id: string): Promise<string | undefined> {
   return c?.status;
 }
 
+// reconcileCampaigns scans EVERY launched campaign globally (cross-org). The api package's tests run
+// concurrently against the SAME Postgres, so their ACTIVE/PAUSED campaigns get swept into the scan
+// here too. Scope each fixture's delivery to its OWN campaign: any other campaign returns an empty
+// no-op delivery (effectiveStatus '' → null target → left alone; no ads → never rejected; no
+// sub-entities), so a foreign suite's rows can't inflate the result counters or be mutated. We then
+// assert our own campaign's observable outcome, never a global aggregate (worker CLAUDE.md).
+const NOOP_DELIVERY: CampaignDeliveryDTO = { effectiveStatus: '', accountId: '', adSets: [], ads: [] };
+const onlyFor =
+  (id: string, delivery: CampaignDeliveryDTO) =>
+  async (c: { id: string }): Promise<CampaignDeliveryDTO> =>
+    c.id === id ? delivery : NOOP_DELIVERY;
+
 async function subStatusOf(ids: { adSetId: string; adId: string }): Promise<{ set: string | null; ad: string | null }> {
   return withSystem(async (tx) => {
     const set = await tx.adSet.findUnique({ where: { id: ids.adSetId }, select: { effectiveStatus: true } });
@@ -78,7 +91,7 @@ describe('reconcileCampaigns', () => {
     const notify = vi.fn();
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({
+      fetchDelivery: onlyFor(id, {
         effectiveStatus: 'ACTIVE',
         accountId: 'act_test', adSets: [],
         ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }, { fbAdId: 'a2', effectiveStatus: 'DISAPPROVED' }],
@@ -106,7 +119,7 @@ describe('reconcileCampaigns', () => {
     const notify = vi.fn();
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'ACTIVE', accountId: 'act_test', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }] }),
+      fetchDelivery: onlyFor(id, { effectiveStatus: 'ACTIVE', accountId: 'act_test', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }] }),
       releaseChannel,
       resync,
       notify,
@@ -122,18 +135,25 @@ describe('reconcileCampaigns', () => {
   });
 
   it('skips campaigns whose delivery fetch throws (keeps going)', async () => {
-    await makeCampaign('fbcamp-3');
+    const id = await makeCampaign('fbcamp-3');
+    let scanned = false;
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => {
-        throw new Error('FB down');
+      // Throw for THIS campaign (foreign concurrent campaigns no-op) → prove the loop survives the error.
+      fetchDelivery: async (c) => {
+        if (c.id === id) {
+          scanned = true;
+          throw new Error('FB down');
+        }
+        return NOOP_DELIVERY;
       },
       releaseChannel: vi.fn(async () => ({ released: false })),
       resync: vi.fn(async () => undefined),
       notify: vi.fn(),
     });
-    expect(res.checked).toBe(1);
+    expect(scanned).toBe(true); // our campaign was reached (its fetch threw and was caught)
     expect(res.rejected).toBe(0);
     expect(res.statusSynced).toBe(0);
+    expect(await statusOf(id)).toBe('ACTIVE'); // unchanged despite the fetch error
   });
 
   // ── Live campaign status sync (pause/resume done directly in Ads Manager) ────────
@@ -144,7 +164,7 @@ describe('reconcileCampaigns', () => {
     const notify = vi.fn();
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'PAUSED', accountId: 'act_test', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'PAUSED' }] }),
+      fetchDelivery: onlyFor(id, { effectiveStatus: 'PAUSED', accountId: 'act_test', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'PAUSED' }] }),
       releaseChannel,
       resync,
       notify,
@@ -165,7 +185,7 @@ describe('reconcileCampaigns', () => {
   it('treats FB CAMPAIGN_PAUSED the same as PAUSED', async () => {
     const id = await makeCampaign('fbcamp-4b', 'ACTIVE');
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'CAMPAIGN_PAUSED', accountId: 'act_test', adSets: [], ads: [] }),
+      fetchDelivery: onlyFor(id, { effectiveStatus: 'CAMPAIGN_PAUSED', accountId: 'act_test', adSets: [], ads: [] }),
       releaseChannel: vi.fn(async () => ({ released: false })),
       resync: vi.fn(async () => undefined),
       notify: vi.fn(),
@@ -181,7 +201,7 @@ describe('reconcileCampaigns', () => {
     const notify = vi.fn();
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'ACTIVE', accountId: 'act_test', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }] }),
+      fetchDelivery: onlyFor(id, { effectiveStatus: 'ACTIVE', accountId: 'act_test', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'ACTIVE' }] }),
       releaseChannel,
       resync,
       notify,
@@ -203,7 +223,7 @@ describe('reconcileCampaigns', () => {
     const notify = vi.fn();
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'PAUSED', accountId: 'act_test', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'DISAPPROVED' }] }),
+      fetchDelivery: onlyFor(id, { effectiveStatus: 'PAUSED', accountId: 'act_test', adSets: [], ads: [{ fbAdId: 'a1', effectiveStatus: 'DISAPPROVED' }] }),
       releaseChannel,
       resync,
       notify,
@@ -224,7 +244,7 @@ describe('reconcileCampaigns', () => {
 
     for (const effectiveStatus of ['IN_PROCESS', 'WITH_ISSUES', 'PENDING_REVIEW', 'PREAPPROVED', '']) {
       const res = await reconcileCampaigns({
-        fetchDelivery: async () => ({ effectiveStatus, accountId: 'act_test', adSets: [], ads: [] }),
+        fetchDelivery: onlyFor(id, { effectiveStatus, accountId: 'act_test', adSets: [], ads: [] }),
         releaseChannel,
         resync,
         notify,
@@ -245,7 +265,7 @@ describe('reconcileCampaigns', () => {
     const notify = vi.fn();
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'ARCHIVED', accountId: 'act_test', adSets: [], ads: [] }),
+      fetchDelivery: onlyFor(id, { effectiveStatus: 'ARCHIVED', accountId: 'act_test', adSets: [], ads: [] }),
       releaseChannel,
       resync,
       notify,
@@ -261,7 +281,7 @@ describe('reconcileCampaigns', () => {
   it('treats FB DELETED the same as ARCHIVED', async () => {
     const id = await makeCampaign('fbcamp-del', 'PAUSED');
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({ effectiveStatus: 'DELETED', accountId: 'act_test', adSets: [], ads: [] }),
+      fetchDelivery: onlyFor(id, { effectiveStatus: 'DELETED', accountId: 'act_test', adSets: [], ads: [] }),
       releaseChannel: vi.fn(async () => ({ released: true })),
       resync: vi.fn(async () => undefined),
       notify: vi.fn(),
@@ -276,7 +296,7 @@ describe('reconcileCampaigns', () => {
     const ids = await makeAdSetWithAd(id, 'fbset-1', 'fbad-1');
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({
+      fetchDelivery: onlyFor(id, {
         effectiveStatus: 'ACTIVE',
         accountId: 'act_test', adSets: [{ fbAdSetId: 'fbset-1', effectiveStatus: 'WITH_ISSUES' }],
         ads: [{ fbAdId: 'fbad-1', effectiveStatus: 'PAUSED' }],
@@ -307,9 +327,9 @@ describe('reconcileCampaigns', () => {
       notify: vi.fn(),
     };
 
-    const first = await reconcileCampaigns({ fetchDelivery: async () => delivery, ...deps });
+    const first = await reconcileCampaigns({ fetchDelivery: onlyFor(id, delivery), ...deps });
     expect(first.subSynced).toBe(2); // null → ACTIVE on both rows
-    const second = await reconcileCampaigns({ fetchDelivery: async () => delivery, ...deps });
+    const second = await reconcileCampaigns({ fetchDelivery: onlyFor(id, delivery), ...deps });
     expect(second.subSynced).toBe(0); // unchanged → no writes
   });
 
@@ -318,7 +338,7 @@ describe('reconcileCampaigns', () => {
     const ids = await makeAdSetWithAd(id, 'fbset-3', 'fbad-3');
 
     const res = await reconcileCampaigns({
-      fetchDelivery: async () => ({
+      fetchDelivery: onlyFor(id, {
         effectiveStatus: 'ACTIVE',
         accountId: 'act_test', adSets: [{ fbAdSetId: 'fbset-3', effectiveStatus: 'ACTIVE' }],
         ads: [{ fbAdId: 'fbad-3', effectiveStatus: 'DISAPPROVED' }],
