@@ -22,6 +22,8 @@ vi.mock('@knn/fb', async (importOriginal) => {
     createFbCampaign: vi.fn(async () => ({ id: 'fbcamp-1' })),
     createFbAdSet: vi.fn(async () => ({ id: 'fbadset-1' })),
     uploadFbAdImage: vi.fn(async () => 'imghash'),
+    uploadFbAdVideo: vi.fn(async () => 'fbvideo-1'),
+    fetchFbVideoThumbnail: vi.fn(async () => 'https://scontent.fb/thumb.jpg'),
     createFbAdCreative: vi.fn(async () => ({ id: 'fbcreative-1' })),
     createFbAd: vi.fn(async () => ({ id: 'fbad-1' })),
     updateFbCampaignStatus: vi.fn(async () => ({ success: true })),
@@ -326,6 +328,60 @@ describe('launchCampaign (Phase 8)', () => {
     expect('name' in spec.link_data).toBe(false); // headline omitted
     expect('message' in spec.link_data).toBe(false); // primary text omitted
     expect(spec.link_data.link).toContain('/go/'); // destination still present
+  });
+
+  // The reported bug: a VIDEO creative was uploaded via the image path (adimages) → Facebook
+  // rejected the launch with "We could not process the image that you have uploaded." A video must
+  // go to advideos and build video_data, never link_data.image_hash.
+  async function makeVideoCampaign(tag: string): Promise<string> {
+    const key = `launch-vid-${tag}-${suffix}.mp4`;
+    await writeFile(join(env.UPLOAD_DIR, key), Buffer.from([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70])); // tiny mp4-ish stub
+    return withSystem(async (tx) => {
+      const up = await tx.upload.create({
+        data: { orgId, buyerId, kind: 'VIDEO', filename: 'clip.mp4', mimeType: 'video/mp4', sizeBytes: 8, storageKey: key },
+      });
+      const camp = await tx.campaign.create({
+        data: {
+          orgId, buyerId, name: `Vid ${tag} ${Math.random()}`, status: 'PROCESSING', keywords: ['x'], racValue: 'x', adAccountId, pageId, channelId: channelRef,
+          adSets: { create: [{ orgId, name: 'S', dailyBudgetCents: 5000, countries: ['US'], pixelId, ads: { create: [{ orgId, name: 'VidAd', headline: 'Watch this', primaryText: 'Body', description: 'Desc', creativeType: 'VIDEO', uploadId: up.id, redirectId: `rv-${tag}-${suffix}-${Math.random().toString(36).slice(2, 8)}` }] } }] },
+        },
+      });
+      return camp.id;
+    });
+  }
+
+  it('launches a VIDEO ad via advideos → video_data with a thumbnail (NOT the image path FB rejects)', async () => {
+    const campaignId = await makeVideoCampaign('ok');
+    vi.mocked(fb.uploadFbAdVideo).mockClear();
+    vi.mocked(fb.uploadFbAdImage).mockClear();
+    const result = await launchCampaign(auth(), campaignId, {
+      generateArticle: vi.fn(async () => ({ slug: 'health-2026' })),
+      writeRedirectConfigs: vi.fn(async () => undefined),
+    });
+    expect(result.status).toBe('ACTIVE');
+    // The video path ran; the image path did NOT.
+    expect(fb.uploadFbAdVideo).toHaveBeenCalledTimes(1);
+    expect(fb.uploadFbAdImage).not.toHaveBeenCalled();
+    const spec = vi.mocked(fb.createFbAdCreative).mock.calls.at(-1)![2].objectStorySpec as {
+      link_data?: unknown;
+      video_data?: { video_id: string; image_url: string; title?: string; message?: string; link_description?: string; call_to_action: { value: { link: string } } };
+    };
+    expect(spec.link_data).toBeUndefined(); // never an image creative
+    expect(spec.video_data).toMatchObject({ video_id: 'fbvideo-1', image_url: 'https://scontent.fb/thumb.jpg', title: 'Watch this', message: 'Body', link_description: 'Desc' });
+    expect(spec.video_data!.call_to_action.value.link).toContain('/go/'); // cloaked destination rides the CTA
+    const camp = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { status: true, adSets: { select: { ads: { select: { fbAdId: true } } } } } }));
+    expect(camp?.status).toBe('ACTIVE');
+    expect(camp?.adSets[0]?.ads[0]?.fbAdId).toBe('fbad-1');
+  });
+
+  it('reverts a VIDEO launch to PROCESSING with an actionable 409 when the thumbnail is not ready yet', async () => {
+    const campaignId = await makeVideoCampaign('nothumb');
+    vi.mocked(fb.fetchFbVideoThumbnail).mockResolvedValueOnce(null); // FB still processing → no thumbnail
+    await expect(
+      launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('still processing') });
+    const c = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { status: true } }));
+    expect(c?.status).toBe('PROCESSING'); // relaunchable once FB finishes processing
   });
 
   it('two-app: writes use the same person\'s LAUNCH connection (short-lived token) when configured', async () => {

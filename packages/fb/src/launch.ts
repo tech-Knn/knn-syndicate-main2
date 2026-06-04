@@ -186,6 +186,71 @@ export async function uploadFbAdImage(
   return first.hash;
 }
 
+/**
+ * Upload a VIDEO creative → returns the FB video id for use in a creative's `video_data`.
+ *
+ * The image path (`adimages`, base64 `bytes`) does NOT accept video — posting a video there is
+ * exactly what yields Facebook's "We could not process the image that you have uploaded." Video
+ * goes to the ad account's `/advideos` edge as a multipart `source` file upload. Gated by the
+ * per-account rate limiter like every account-scoped write.
+ */
+export async function uploadFbAdVideo(
+  fbAccountId: string,
+  accessToken: string,
+  video: { bytes: Buffer; filename: string; mimeType: string },
+  appKind: FbAppKind = 'DATA',
+): Promise<string> {
+  const form = new FormData();
+  form.set('source', new Blob([video.bytes], { type: video.mimeType || 'video/mp4' }), video.filename || 'video.mp4');
+  const res = await graphRequest<{ id?: string }>({
+    path: `/act_${fbAccountId}/advideos`,
+    method: 'POST',
+    form,
+    accessToken,
+    accountId: fbAccountId,
+    appKind,
+  });
+  if (!res.id) throw new Error('Video upload returned no id');
+  return res.id;
+}
+
+interface VideoThumbnailsResponse {
+  thumbnails?: { data?: { uri?: string; is_preferred?: boolean }[] };
+}
+
+/**
+ * A video creative's `video_data` REQUIRES a thumbnail (`image_url` or `image_hash`). Facebook
+ * processes uploads asynchronously and auto-generates thumbnails a few seconds in, so poll the
+ * video node until one is ready. Returns the preferred thumbnail URI (else the first), or `null`
+ * if none appears within the budget (caller surfaces an actionable "still processing — relaunch").
+ * `sleep` is injectable so tests don't actually wait.
+ */
+export async function fetchFbVideoThumbnail(
+  videoId: string,
+  accessToken: string,
+  appKind: FbAppKind = 'DATA',
+  opts: { accountId?: string; attempts?: number; delayMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<string | null> {
+  const attempts = opts.attempts ?? 6;
+  const delayMs = opts.delayMs ?? 2500;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let i = 0; i < attempts; i += 1) {
+    const res = await graphRequest<VideoThumbnailsResponse>({
+      path: `/${videoId}`,
+      method: 'GET',
+      params: { fields: 'thumbnails' },
+      accessToken,
+      accountId: opts.accountId,
+      appKind,
+    });
+    const thumbs = res.thumbnails?.data ?? [];
+    const preferred = thumbs.find((t) => t.is_preferred && t.uri) ?? thumbs.find((t) => t.uri);
+    if (preferred?.uri) return preferred.uri;
+    if (i < attempts - 1) await sleep(delayMs);
+  }
+  return null;
+}
+
 export interface FbCreativeParams {
   name: string;
   objectStorySpec: Record<string, unknown>;

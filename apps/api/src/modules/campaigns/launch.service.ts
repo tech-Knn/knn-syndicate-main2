@@ -15,11 +15,13 @@ import {
   createFbAdSet,
   createFbCampaign,
   decryptToken,
+  fetchFbVideoThumbnail,
   hasLaunchApp,
   updateFbAdSetBudget,
   updateFbCampaignBudget,
   updateFbCampaignStatus,
   uploadFbAdImage,
+  uploadFbAdVideo,
 } from '@knn/fb';
 import { CAMPAIGN_STATUS, type FunnelMode, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, effectiveFunnelMode, goalRequiresPixel, pxeToCustomEventType } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
@@ -139,7 +141,14 @@ interface LaunchPlan {
   fbPageId: string;
   /** The connection whose token we're using — so a token break can mark it (D13). */
   connectionId: string;
-  adSets: { set: StoredAdSet; fbPixelId: string | null; ads: { ad: StoredAdSet['ads'][number]; storageKey: string | null }[] }[];
+  adSets: {
+    set: StoredAdSet;
+    fbPixelId: string | null;
+    // `creativeKind` drives the FB build: IMAGE → adimages + link_data.image_hash; VIDEO →
+    // advideos + video_data.video_id (with an auto-generated thumbnail). mimeType/filename are
+    // passed to the multipart video upload.
+    ads: { ad: StoredAdSet['ads'][number]; storageKey: string | null; creativeKind: 'IMAGE' | 'VIDEO'; mimeType: string | null; filename: string | null }[];
+  }[];
 }
 
 /** Core FB targeting spec from an ad set (geo / age / gender / device / OS). */
@@ -195,9 +204,17 @@ async function resolveLaunchPlan(auth: AuthContext, campaignId: string): Promise
         const ads = await Promise.all(
           set.ads.map(async (ad) => {
             const upload = ad.uploadId
-              ? await tx.upload.findUnique({ where: { id: ad.uploadId }, select: { storageKey: true } })
+              ? await tx.upload.findUnique({ where: { id: ad.uploadId }, select: { storageKey: true, kind: true, mimeType: true, filename: true } })
               : null;
-            return { ad, storageKey: upload?.storageKey ?? null };
+            return {
+              ad,
+              storageKey: upload?.storageKey ?? null,
+              // The file's actual kind is the source of truth for which FB upload path to use
+              // (more reliable than the denormalized Ad.creativeType copy).
+              creativeKind: upload?.kind === 'VIDEO' ? 'VIDEO' : 'IMAGE',
+              mimeType: upload?.mimeType ?? null,
+              filename: upload?.filename ?? null,
+            } as const;
           }),
         );
         return { set, fbPixelId: pixel?.fbPixelId ?? null, ads };
@@ -644,8 +661,9 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
     }, appKind);
 
     const adResults: { id: string; fbAdId: string }[] = [];
-    for (const { ad, storageKey } of ads) {
+    for (const { ad, storageKey, creativeKind, mimeType, filename } of ads) {
       if (!storageKey) throw new AppError(400, `Ad "${ad.name}" has no creative file`);
+      const creativeNoun = creativeKind === 'VIDEO' ? 'video' : 'image';
       let bytes: Buffer;
       try {
         bytes = await readFile(join(env.UPLOAD_DIR, storageKey));
@@ -654,28 +672,60 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
         // before the uploads volume existed, or lost). Fail with an actionable message
         // instead of a raw 500 — the buyer must reopen the campaign and re-upload it.
         if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
-          throw new AppError(409, `Ad "${ad.name}" — its creative image is missing on the server. Reopen the campaign, re-upload the ad's image, then relaunch.`);
+          throw new AppError(409, `Ad "${ad.name}" — its creative ${creativeNoun} is missing on the server. Reopen the campaign, re-upload the ad's ${creativeNoun}, then relaunch.`);
         }
         throw err;
       }
-      const imageHash = await uploadFbAdImage(fbAccountId, token, bytes.toString('base64'), appKind);
       const destination = `${redirectBase}/go/${ad.redirectId}`;
-      // Display link (FB link_data.caption): the VISIBLE URL caption in the ad, separate from the
-      // cloaked `link` destination. FB requires an actual URL, so normalize a bare domain to https://.
-      // Unset → FB derives the display URL from the destination domain (prior behavior).
-      // CLOAKER campaigns ALWAYS show the assigned white domain as the display link, so the visible ad
-      // URL matches where a reviewer/organic visitor actually lands (the fallback → the white site).
-      // Otherwise the buyer's own display link (normalized to a URL); unset → FB derives it.
-      const displayCaption = campaign.whiteDomainHost
-        ? `https://${campaign.whiteDomainHost}`
-        : ad.displayLink
-          ? /^https?:\/\//i.test(ad.displayLink)
-            ? ad.displayLink
-            : `https://${ad.displayLink}`
-          : undefined;
-      const creative = await createFbAdCreative(fbAccountId, token, {
-        name: ad.name,
-        objectStorySpec: {
+      const callToAction = { type: ad.cta, value: { link: destination } };
+
+      // VIDEO vs IMAGE creative — the bug this guards against: a video uploaded via the image path
+      // (`adimages` base64) makes Facebook reject the launch with "We could not process the image
+      // that you have uploaded." A video goes to `/advideos` and references `video_data.video_id`
+      // (plus the auto-generated thumbnail FB requires); an image uses `link_data.image_hash`. The
+      // click destination + `kaid` url_tag (so the cloaker can verify the ad id) are identical.
+      let objectStorySpec: Record<string, unknown>;
+      if (creativeKind === 'VIDEO') {
+        const videoId = await uploadFbAdVideo(
+          fbAccountId,
+          token,
+          { bytes, filename: filename ?? `${ad.name}.mp4`, mimeType: mimeType ?? 'video/mp4' },
+          appKind,
+        );
+        const thumbnailUrl = await fetchFbVideoThumbnail(videoId, token, appKind, { accountId: fbAccountId });
+        if (!thumbnailUrl) {
+          throw new AppError(409, `Ad "${ad.name}" — Facebook is still processing your video (no thumbnail available yet). Wait a minute, then relaunch.`);
+        }
+        objectStorySpec = {
+          page_id: fbPageId,
+          video_data: {
+            video_id: videoId,
+            image_url: thumbnailUrl,
+            // video_data field names differ from link_data: title=headline, message=primary text,
+            // link_description=description. There's no top-level link/caption on video_data — the
+            // cloaked /go destination rides the CTA link instead.
+            ...(ad.primaryText ? { message: ad.primaryText } : {}),
+            ...(ad.headline ? { title: ad.headline } : {}),
+            ...(ad.description ? { link_description: ad.description } : {}),
+            call_to_action: callToAction,
+          },
+        };
+      } else {
+        const imageHash = await uploadFbAdImage(fbAccountId, token, bytes.toString('base64'), appKind);
+        // Display link (FB link_data.caption): the VISIBLE URL caption in the ad, separate from the
+        // cloaked `link` destination. FB requires an actual URL, so normalize a bare domain to https://.
+        // Unset → FB derives the display URL from the destination domain (prior behavior).
+        // CLOAKER campaigns ALWAYS show the assigned white domain as the display link, so the visible ad
+        // URL matches where a reviewer/organic visitor actually lands (the fallback → the white site).
+        // Otherwise the buyer's own display link (normalized to a URL); unset → FB derives it.
+        const displayCaption = campaign.whiteDomainHost
+          ? `https://${campaign.whiteDomainHost}`
+          : ad.displayLink
+            ? /^https?:\/\//i.test(ad.displayLink)
+              ? ad.displayLink
+              : `https://${ad.displayLink}`
+            : undefined;
+        objectStorySpec = {
           page_id: fbPageId,
           link_data: {
             link: destination,
@@ -685,9 +735,13 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
             ...(ad.description ? { description: ad.description } : {}),
             ...(displayCaption ? { caption: displayCaption } : {}),
             image_hash: imageHash,
-            call_to_action: { type: ad.cta, value: { link: destination } },
+            call_to_action: callToAction,
           },
-        },
+        };
+      }
+      const creative = await createFbAdCreative(fbAccountId, token, {
+        name: ad.name,
+        objectStorySpec,
         // FB substitutes {{ad.id}} at click time → `/go/{redirectId}?…&kaid=<fbAdId>`, which the
         // cloaker verifies against the ad's stored fbAdId (observe-first; see syncCampaignRedirectConfigs).
         urlTags: 'kaid={{ad.id}}',

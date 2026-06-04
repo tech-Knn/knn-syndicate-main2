@@ -44,6 +44,13 @@ export interface GraphRequest {
   path: string;
   method?: 'GET' | 'POST';
   params?: Record<string, string>;
+  /**
+   * Multipart body for binary uploads (e.g. `advideos`, which — unlike `adimages` — does not
+   * accept a base64 `bytes` param). When set, the request is sent as `multipart/form-data`:
+   * `params` (incl. the computed `appsecret_proof`) are folded into the form, and the file part
+   * is whatever the caller appended (e.g. `source`). Ignored for GET.
+   */
+  form?: FormData;
   accessToken?: string;
   accountId?: string;
   /**
@@ -97,6 +104,11 @@ async function doRequest<T>(req: GraphRequest): Promise<T> {
   const init: RequestInit = { method, headers };
   if (method === 'GET') {
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  } else if (req.form) {
+    // Multipart upload: fold the computed params (incl. appsecret_proof) into the form alongside
+    // the caller's file part. Do NOT set Content-Type — fetch derives the multipart boundary.
+    for (const [k, v] of Object.entries(params)) req.form.set(k, v);
+    init.body = req.form;
   } else {
     init.body = new URLSearchParams(params);
   }
@@ -104,11 +116,13 @@ async function doRequest<T>(req: GraphRequest): Promise<T> {
   // Debug: log the exact ad-build POSTs (campaign/adset/image/creative/ad) with secrets
   // and the image blob redacted, so we can reproduce the precise sequence. Gated on
   // FB_DEBUG_LOG so it's off unless explicitly enabled.
-  if (env.FB_DEBUG_LOG && method === 'POST' && /\/(campaigns|adsets|ads|adimages|adcreatives)$/.test(req.path)) {
+  if (env.FB_DEBUG_LOG && method === 'POST' && /\/(campaigns|adsets|ads|adimages|advideos|adcreatives)$/.test(req.path)) {
     const redacted: Record<string, string> = {};
     for (const [k, v] of Object.entries(params)) {
       redacted[k] = k === 'access_token' || k === 'appsecret_proof' ? '***' : k === 'bytes' ? `<base64 image, ${v.length} chars>` : v;
     }
+    // For a multipart upload (advideos) the file is in the form, not params — note it explicitly.
+    if (req.form) redacted.source = '<multipart video upload>';
     console.log(`[fb-call] POST ${graphBase()}${req.path} :: ${JSON.stringify(redacted)}`);
   }
 
@@ -116,7 +130,7 @@ async function doRequest<T>(req: GraphRequest): Promise<T> {
   // direct global fetch (unchanged path — what the tests stub).
   const proxy = getFbProxyAgent();
   const res = proxy
-    ? await undiciFetch(url, { method, headers, body: init.body as URLSearchParams | undefined, dispatcher: proxy })
+    ? await undiciFetch(url, { method, headers, body: init.body as URLSearchParams | FormData | undefined, dispatcher: proxy })
     : await fetch(url, init);
   const text = await res.text();
   let json: unknown = {};
