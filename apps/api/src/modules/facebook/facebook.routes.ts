@@ -21,6 +21,7 @@ import {
   markFbAccessInvited,
   requestFbAccess,
   resync,
+  syncAllConnections,
 } from './facebook.service.js';
 
 interface CallbackQuery {
@@ -31,6 +32,17 @@ interface CallbackQuery {
 }
 
 export async function facebookRoutes(app: FastifyInstance): Promise<void> {
+  // SUPER_ADMIN ops: re-sync ad accounts/pages/pixels for every active connection now — the same
+  // work the 6h cron does. Lets an admin force a refresh after a buyer adds a Business-Manager asset.
+  app.post('/admin/sync-all', { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await syncAllConnections());
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
   // Start the OAuth flow — returns the Facebook dialog URL to open in the browser.
   // `?app=launch` connects the optional short-lived LAUNCH app; default is the DATA app.
   app.get<{ Querystring: { app?: string } }>('/auth-url', { preHandler: [authenticate] }, async (req, reply) => {
