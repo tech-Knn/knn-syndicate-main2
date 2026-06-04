@@ -142,3 +142,20 @@ export async function resyncOffersToKv(
     throw new Error(`internal offer resync failed (${res.status}) for ${campaignId}: ${text}`);
   }
 }
+
+/**
+ * Background re-sync of every active connection's ad accounts/pages/pixels — so new Business
+ * Manager assets appear without a manual "Sync". POSTs the API's token-guarded internal endpoint
+ * (the sync logic lives on the API). Driven by the worker's low-frequency connection-sync cron.
+ */
+export async function syncAllFbConnections(deps: RunFbLaunchDeps = defaultRunFbLaunchDeps): Promise<void> {
+  if (!deps.token) throw new Error('INTERNAL_API_TOKEN is not configured — cannot re-sync FB connections');
+  const res = await deps.fetch(`${deps.baseUrl}/api/internal/sync-connections`, {
+    method: 'POST',
+    headers: { 'x-internal-token': deps.token },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`internal connection sync failed (${res.status}): ${text}`);
+  }
+}

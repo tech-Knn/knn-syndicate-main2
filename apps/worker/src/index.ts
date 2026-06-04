@@ -16,7 +16,7 @@ import { sweepDomainHealth } from './jobs/domain-health.js';
 import { reconcileCampaigns } from './jobs/meta-rejection.js';
 import { SYNC_KEYS, markSyncRun } from './lib/sync-state.js';
 import { refreshFbTokens } from './jobs/token-refresh.js';
-import { type FbLaunchJob, resyncOffersToKv, runFbLaunch, triggerAutoLaunch } from './launch-trigger.js';
+import { type FbLaunchJob, resyncOffersToKv, runFbLaunch, syncAllFbConnections, triggerAutoLaunch } from './launch-trigger.js';
 
 interface ChannelJob {
   action: 'assign' | 'release' | 'rollover' | 'process-queue' | 'rebalance';
@@ -245,6 +245,18 @@ async function main(): Promise<void> {
     { timezone: env.BUSINESS_TIMEZONE },
   );
 
+  // FB asset inventory re-sync every 6h: re-pull ad accounts/pages/pixels for every active
+  // connection so a new Business-Manager asset appears without a manual "Sync". Inventory changes
+  // rarely + these are mostly ungated user-scoped reads, so 6h is plenty (the per-profile Sync
+  // button stays the instant path). Fire-and-forget; the next run retries.
+  const connectionSyncCron = cron.schedule(
+    '0 */6 * * *',
+    () => {
+      void syncAllFbConnections().catch((e) => console.error('[connection-sync] failed:', e instanceof Error ? e.message : String(e)));
+    },
+    { timezone: env.BUSINESS_TIMEZONE },
+  );
+
   console.log(
     `[worker] started — processing ${QUEUES.HEALTH}; business tz=${env.BUSINESS_TIMEZONE}`,
   );
@@ -257,6 +269,7 @@ async function main(): Promise<void> {
     attributionCron.stop();
     finalizationCron.stop();
     domainHealthCron.stop();
+    connectionSyncCron.stop();
     await healthWorker.close();
     await tokenRefreshWorker.close();
     await channelWorker.close();

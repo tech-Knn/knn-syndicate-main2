@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prisma, withSystem } from '@knn/db';
 import { ROLES, USER_STATUS } from '@knn/shared';
-import { type FbLaunchJob, launchJobId, runFbLaunch, triggerAutoLaunch } from './launch-trigger.js';
+import { type FbLaunchJob, launchJobId, runFbLaunch, syncAllFbConnections, triggerAutoLaunch } from './launch-trigger.js';
 
 const suffix = Date.now().toString(36);
 let orgId = '';
@@ -207,6 +207,36 @@ describe('runFbLaunch', () => {
 
     await expect(
       runFbLaunch(job, { fetch: fetchMock as unknown as typeof fetch, token: '', baseUrl: 'http://api:3000' }),
+    ).rejects.toThrow(/INTERNAL_API_TOKEN is not configured/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('syncAllFbConnections', () => {
+  it('POSTs the internal sync-connections endpoint with the shared token', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ connections: 3, synced: 3, failed: 0 }), { status: 200 }));
+
+    await syncAllFbConnections({ fetch: fetchMock as unknown as typeof fetch, token: 'secret-token', baseUrl: 'http://api:3000' });
+
+    expect(fetchMock).toHaveBeenCalledWith('http://api:3000/api/internal/sync-connections', {
+      method: 'POST',
+      headers: { 'x-internal-token': 'secret-token' },
+    });
+  });
+
+  it('throws on a non-2xx response', async () => {
+    const fetchMock = vi.fn(async () => new Response('boom', { status: 500 }));
+
+    await expect(
+      syncAllFbConnections({ fetch: fetchMock as unknown as typeof fetch, token: 'secret-token', baseUrl: 'http://api:3000' }),
+    ).rejects.toThrow(/internal connection sync failed \(500\)/);
+  });
+
+  it('throws when the internal token is not configured', async () => {
+    const fetchMock = vi.fn();
+
+    await expect(
+      syncAllFbConnections({ fetch: fetchMock as unknown as typeof fetch, token: '', baseUrl: 'http://api:3000' }),
     ).rejects.toThrow(/INTERNAL_API_TOKEN is not configured/);
     expect(fetchMock).not.toHaveBeenCalled();
   });

@@ -326,6 +326,35 @@ async function loadConnection(auth: AuthContext, connectionId: string) {
   return conn;
 }
 
+/**
+ * Background re-sync of ad accounts / pages / pixels for EVERY active asset-owning (DATA/VERIFY)
+ * connection — so a new asset added in Business Manager appears without the buyer hitting "Sync".
+ * Reuses syncFromFacebook (one source of truth); per-connection errors are isolated so one bad
+ * token can't stop the sweep. Driven by a low-frequency worker cron (the per-profile "Sync" button
+ * remains the instant on-demand path). These are user-scoped Graph reads (`/me/adaccounts`,
+ * `/me/accounts`) — ungated — plus per-account pixel reads, so the volume is rate-limit-safe.
+ */
+export async function syncAllConnections(): Promise<{ connections: number; synced: number; failed: number }> {
+  const conns = await withSystem((tx) =>
+    tx.fbConnection.findMany({
+      where: { status: FbConnectionStatus.ACTIVE, appKind: { in: ['DATA', 'VERIFY'] } },
+      select: { id: true, orgId: true, accessTokenEnc: true },
+    }),
+  );
+  let synced = 0;
+  let failed = 0;
+  for (const c of conns) {
+    try {
+      await syncFromFacebook({ connectionId: c.id, orgId: c.orgId, accessToken: decryptToken(c.accessTokenEnc) });
+      synced += 1;
+    } catch (err) {
+      failed += 1;
+      console.warn(`[sync-connections] connection ${c.id} failed:`, err instanceof Error ? err.message : String(err));
+    }
+  }
+  return { connections: conns.length, synced, failed };
+}
+
 /** Re-pull the account graph for one of the actor's profiles. */
 export async function resync(auth: AuthContext, connectionId: string): Promise<SyncResult> {
   const conn = await loadConnection(auth, connectionId);
