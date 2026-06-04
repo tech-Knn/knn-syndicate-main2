@@ -1,6 +1,6 @@
-import { type TxClient, FbConnectionStatus, withSystem } from '@knn/db';
+import { type TxClient, withSystem } from '@knn/db';
 import type { ChannelDayRevenue } from '@knn/adsense';
-import { type FbAdInsightRow, decryptToken, fetchAdInsights } from '@knn/fb';
+import { type FbAdInsightRow, fetchAdInsights } from '@knn/fb';
 import {
   AFS_CLICK_SUPPRESSION_THRESHOLD,
   type AdSignals,
@@ -13,6 +13,7 @@ import {
 } from '@knn/shared';
 import { liveAdsenseFetch } from './adsense-source.js';
 import { ensureFxRatesForDays, getUsdRate } from './fx.service.js';
+import { resolveCampaignReadAuth } from '../lib/fb-read-auth.js';
 
 /**
  * Revenue attribution (Phase 9, D8/D15). Two pulls feed three daily tables:
@@ -78,14 +79,12 @@ async function pullFbStatsForCampaign(
   deps: AttributionDeps,
 ): Promise<number> {
   return withSystem(async (tx) => {
-    if (!campaign.adAccountId) return 0;
-    // Token comes from the connection that owns the campaign's ad account (a buyer
-    // may have several connected profiles), not "the buyer's (only) connection".
-    const account = await tx.fbAdAccount.findUnique({
-      where: { id: campaign.adAccountId },
-      select: { fbAccountId: true, currency: true, connection: { select: { accessTokenEnc: true, status: true } } },
-    });
-    if (!account || account.connection.status === FbConnectionStatus.CONNECTION_BROKEN) return 0;
+    // Resolve the token by the STABLE Meta fbAccountId against the buyer's CURRENT healthy
+    // connection — NOT the campaign's pinned, connection-bound adAccountId, which goes stale
+    // after a reconnect/app-switch (the bug behind spend going stale). Reuses this txn, and
+    // returns the connection's appKind so appsecret_proof is signed with the right app secret.
+    const auth = await resolveCampaignReadAuth(campaign.adAccountId, tx);
+    if (!auth) return 0;
 
     const ads = await tx.ad.findMany({
       where: { adSet: { campaignId: campaign.id }, fbAdId: { not: null } },
@@ -96,8 +95,9 @@ async function pullFbStatsForCampaign(
 
     const rows: FbAdInsightRow[] = await deps.fetchInsights({
       fbCampaignId: campaign.fbCampaignId,
-      accountId: account.fbAccountId,
-      accessToken: decryptToken(account.connection.accessTokenEnc),
+      accountId: auth.fbAccountId,
+      accessToken: auth.token,
+      appKind: auth.appKind,
       since,
       until,
     });
@@ -106,7 +106,7 @@ async function pullFbStatsForCampaign(
     for (const row of rows) {
       const adId = adByFbId.get(row.fbAdId);
       if (!adId) continue;
-      const rate = await deps.getRate(tx, row.day, account.currency);
+      const rate = await deps.getRate(tx, row.day, auth.currency);
       await tx.adStatsDaily.upsert({
         where: { adId_day: { adId, day: row.day } },
         create: {
@@ -119,7 +119,7 @@ async function pullFbStatsForCampaign(
           conversions: row.conversions,
           spendMinor: row.spendMinor,
           spendUsdMinor: toUsdMinor(row.spendMinor, rate),
-          currency: account.currency,
+          currency: auth.currency,
         },
         update: {
           impressions: row.impressions,
@@ -127,7 +127,7 @@ async function pullFbStatsForCampaign(
           conversions: row.conversions,
           spendMinor: row.spendMinor,
           spendUsdMinor: toUsdMinor(row.spendMinor, rate),
-          currency: account.currency,
+          currency: auth.currency,
         },
       });
       n += 1;
@@ -140,8 +140,9 @@ async function pullFbStatsForCampaign(
       try {
         const dimRows = await deps.fetchInsights({
           fbCampaignId: campaign.fbCampaignId,
-          accountId: account.fbAccountId,
-          accessToken: decryptToken(account.connection.accessTokenEnc),
+          accountId: auth.fbAccountId,
+          accessToken: auth.token,
+          appKind: auth.appKind,
           since,
           until,
           breakdown: dim,
@@ -149,14 +150,14 @@ async function pullFbStatsForCampaign(
         for (const row of dimRows) {
           const adId = adByFbId.get(row.fbAdId);
           if (!adId || !row.dimValue) continue;
-          const rate = await deps.getRate(tx, row.day, account.currency);
+          const rate = await deps.getRate(tx, row.day, auth.currency);
           const data = {
             impressions: row.impressions,
             clicks: row.clicks,
             conversions: row.conversions,
             spendMinor: row.spendMinor,
             spendUsdMinor: toUsdMinor(row.spendMinor, rate),
-            currency: account.currency,
+            currency: auth.currency,
           };
           await tx.adStatDimDaily.upsert({
             where: { adId_day_dim_dimValue: { adId, day: row.day, dim, dimValue: row.dimValue } },

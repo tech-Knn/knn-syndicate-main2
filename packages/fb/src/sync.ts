@@ -1,3 +1,4 @@
+import { type FbAppKind } from './app-creds.js';
 import { type GraphRequest, graphRequest } from './graph.js';
 
 export interface AdAccountDTO {
@@ -146,6 +147,7 @@ export async function fetchCampaignDelivery(
   fbAccountId: string,
   accessToken: string,
   fbCampaignId: string,
+  appKind?: FbAppKind,
 ): Promise<CampaignDeliveryDTO> {
   const node = await graphRequest<{
     effective_status?: string;
@@ -158,6 +160,7 @@ export async function fetchCampaignDelivery(
     },
     accessToken,
     accountId: fbAccountId,
+    appKind,
   });
   return {
     effectiveStatus: node.effective_status ?? '',

@@ -1,3 +1,4 @@
+import { type FbAppKind } from './app-creds.js';
 import { type FbRateLimiter, sharedRateLimiter } from './rate-limiter.js';
 import { graphRequest } from './graph.js';
 
@@ -85,6 +86,8 @@ export interface FetchAdInsightsParams {
   /** The ad account id (`act_…` numeric) — gates the call by that account's limiter. */
   accountId: string;
   accessToken: string;
+  /** The app that issued `accessToken`, so `appsecret_proof` is signed with the right secret. */
+  appKind?: FbAppKind;
   /** Inclusive date range (YYYY-MM-DD), in the ad account's reporting timezone. */
   since: string;
   until: string;
@@ -109,6 +112,7 @@ export async function fetchAdInsights(
         method: 'GET',
         accessToken: params.accessToken,
         accountId: params.accountId,
+        appKind: params.appKind,
         params: {
           level: 'ad',
           fields: 'ad_id,impressions,clicks,spend,actions',

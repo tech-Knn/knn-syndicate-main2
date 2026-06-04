@@ -1,7 +1,8 @@
 import { withSystem } from '@knn/db';
-import { type CampaignDeliveryDTO, decryptToken, fetchCampaignDelivery } from '@knn/fb';
+import { type CampaignDeliveryDTO, fetchCampaignDelivery } from '@knn/fb';
 import { CAMPAIGN_STATUS, type CampaignStatus, canTransitionCampaign } from '@knn/shared';
 import { releaseChannelForCampaign } from '../channel-pool/channel.service.js';
+import { resolveCampaignReadAuth } from '../lib/fb-read-auth.js';
 import { sendNotification } from '../lib/notify.js';
 import { resyncOffersToKv } from '../launch-trigger.js';
 
@@ -65,19 +66,13 @@ function fbStatusToTarget(fbStatus: string): CampaignStatus | null {
   }
 }
 
-/** Resolve the ad-account's connection token, then fetch the campaign's live delivery. */
+/** Fetch the campaign's live delivery using a token resolved by the STABLE Meta fbAccountId against
+ *  the buyer's CURRENT healthy connection (survives reconnects/app-switches — see resolveCampaignReadAuth). */
 async function defaultFetchDelivery(c: CampaignRow): Promise<CampaignDeliveryDTO> {
-  if (!c.fbCampaignId || !c.adAccountId) return { effectiveStatus: '', adSets: [], ads: [] };
-  // Use the token of the connection that owns the campaign's ad account (a buyer
-  // may have several connected profiles), not "the buyer's (only) connection".
-  const acc = await withSystem((tx) =>
-    tx.fbAdAccount.findUnique({
-      where: { id: c.adAccountId! },
-      select: { fbAccountId: true, connection: { select: { accessTokenEnc: true, status: true } } },
-    }),
-  );
-  if (!acc || acc.connection.status === 'CONNECTION_BROKEN') return { effectiveStatus: '', adSets: [], ads: [] };
-  return fetchCampaignDelivery(acc.fbAccountId, decryptToken(acc.connection.accessTokenEnc), c.fbCampaignId);
+  if (!c.fbCampaignId) return { effectiveStatus: '', adSets: [], ads: [] };
+  const auth = await resolveCampaignReadAuth(c.adAccountId);
+  if (!auth) return { effectiveStatus: '', adSets: [], ads: [] };
+  return fetchCampaignDelivery(auth.fbAccountId, auth.token, c.fbCampaignId, auth.appKind);
 }
 
 const defaultNotify = (n: Notification): void => sendNotification(n);
