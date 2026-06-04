@@ -1,4 +1,5 @@
-import { type TxClient } from '@knn/db';
+import { FbConnectionStatus, type TxClient } from '@knn/db';
+import { type FbAppKind, decryptToken, fetchCampaignDelivery } from '@knn/fb';
 import {
   AFS_CLICK_SUPPRESSION_THRESHOLD,
   type AdPerf,
@@ -240,6 +241,43 @@ export interface SyncFreshness {
  * NOT buyer-facing: there's no per-buyer fan-out, so it doesn't reintroduce the rate-limit risk of
  * a buyer refresh button; the scheduled cron remains the normal path.
  */
+/** TEMP super-admin diagnostic: trace, per launched campaign, exactly what the reconcile resolves
+ *  (stable fbAccountId → live connection) and what Facebook actually reports as effective_status,
+ *  so we can see WHY a status isn't flipping. Never returns the token. Remove after debugging. */
+export async function debugReconcile(auth: AuthContext): Promise<unknown> {
+  return runScoped(auth, async (tx) => {
+    const campaigns = await tx.campaign.findMany({
+      where: { status: { in: [CAMPAIGN_STATUS.ACTIVE, CAMPAIGN_STATUS.PAUSED] }, fbCampaignId: { not: null } },
+      select: { id: true, name: true, status: true, fbCampaignId: true, adAccountId: true, buyer: { select: { email: true } } },
+    });
+    const out: Record<string, unknown>[] = [];
+    for (const c of campaigns) {
+      const t: Record<string, unknown> = { name: c.name, buyer: c.buyer?.email, dbStatus: c.status, fbCampaignId: c.fbCampaignId, adAccountId: c.adAccountId };
+      if (!c.adAccountId) { t.resolve = 'no-adAccountId'; out.push(t); continue; }
+      const ref = await tx.fbAdAccount.findUnique({ where: { id: c.adAccountId }, select: { fbAccountId: true } });
+      if (!ref) { t.resolve = 'adAccount-row-missing'; out.push(t); continue; }
+      t.fbAccountId = ref.fbAccountId;
+      const live = await tx.fbAdAccount.findFirst({
+        where: { fbAccountId: ref.fbAccountId, connection: { status: FbConnectionStatus.ACTIVE } },
+        orderBy: { updatedAt: 'desc' },
+        select: { connection: { select: { accessTokenEnc: true, appKind: true } } },
+      });
+      if (!live) { t.resolve = 'no-healthy-connection'; out.push(t); continue; }
+      t.resolve = 'ok';
+      t.appKind = live.connection.appKind;
+      try {
+        const d = await fetchCampaignDelivery(ref.fbAccountId, decryptToken(live.connection.accessTokenEnc), c.fbCampaignId!, live.connection.appKind as FbAppKind);
+        t.fbEffectiveStatus = d.effectiveStatus;
+        t.fbAdCount = d.ads.length;
+      } catch (e) {
+        t.fetchError = (e as Error).message;
+      }
+      out.push(t);
+    }
+    return { campaigns: out };
+  });
+}
+
 export async function triggerCampaignReconcile(): Promise<{ enqueued: true }> {
   await getQueue(QUEUES.META_REJECTION_CHECK).add('admin-reconcile', {}, { removeOnComplete: 50, removeOnFail: 50 });
   return { enqueued: true };

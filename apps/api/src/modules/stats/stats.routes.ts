@@ -9,6 +9,7 @@ import {
   getCampaignOfferStats,
   getCampaignPerformance,
   getCompanyRollup,
+  debugReconcile,
   getSummary,
   getSyncStatus,
   parseRange,
@@ -54,6 +55,16 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     try {
       return reply.send(await triggerCampaignReconcile());
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // TEMP super-admin diagnostic: per-campaign reconcile trace (resolve + live FB effective_status).
+  app.get('/admin/reconcile-debug', { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await debugReconcile(req.auth));
     } catch (err) {
       return handleRouteError(err, reply);
     }
