@@ -1,5 +1,4 @@
-import { FbConnectionStatus, type TxClient } from '@knn/db';
-import { type FbAppKind, decryptToken, fetchCampaignDelivery } from '@knn/fb';
+import { type TxClient } from '@knn/db';
 import {
   AFS_CLICK_SUPPRESSION_THRESHOLD,
   type AdPerf,
@@ -16,7 +15,6 @@ import {
   ROLES,
   type StatDim,
   type StatsSummary,
-  CAMPAIGN_STATUS,
   SYNC_INTERVALS_SEC,
   SYNC_STATE_KEYS,
   addBusinessDays,
@@ -242,50 +240,6 @@ export interface SyncFreshness {
  * NOT buyer-facing: there's no per-buyer fan-out, so it doesn't reintroduce the rate-limit risk of
  * a buyer refresh button; the scheduled cron remains the normal path.
  */
-/** TEMP super-admin backfill: populate the new stable `Campaign.fbAccountId` for already-launched
- *  campaigns. From the internal fb_ad_accounts row when it still exists; for ORPHANED campaigns
- *  (row deleted on a disconnect) recover the Meta account_id by probing Facebook via the buyer's
- *  current healthy connections. Never returns a token. One-off — remove after running. */
-export async function backfillCampaignFbAccountId(auth: AuthContext): Promise<unknown> {
-  return runScoped(auth, async (tx) => {
-    const campaigns = await tx.campaign.findMany({
-      where: { status: { in: [CAMPAIGN_STATUS.ACTIVE, CAMPAIGN_STATUS.PAUSED] }, fbCampaignId: { not: null }, fbAccountId: null },
-      select: { id: true, name: true, buyerId: true, adAccountId: true, fbCampaignId: true, buyer: { select: { email: true } } },
-    });
-    const out: Record<string, unknown>[] = [];
-    for (const c of campaigns) {
-      let recovered: string | null = null;
-      let source = 'failed';
-      // 1) the pinned row still exists → take its stable Meta id.
-      if (c.adAccountId) {
-        const ref = await tx.fbAdAccount.findUnique({ where: { id: c.adAccountId }, select: { fbAccountId: true } });
-        if (ref) { recovered = ref.fbAccountId; source = 'row'; }
-      }
-      // 2) orphaned → probe Facebook for the campaign's account_id via the buyer's healthy connections.
-      if (!recovered) {
-        const conns = await tx.fbConnection.findMany({
-          where: { userId: c.buyerId, status: FbConnectionStatus.ACTIVE },
-          orderBy: { updatedAt: 'desc' },
-          select: { accessTokenEnc: true, appKind: true, adAccounts: { take: 1, select: { fbAccountId: true } } },
-        });
-        for (const conn of conns) {
-          const rateKey = conn.adAccounts[0]?.fbAccountId;
-          if (!rateKey || !c.fbCampaignId) continue;
-          try {
-            const d = await fetchCampaignDelivery(rateKey, decryptToken(conn.accessTokenEnc), c.fbCampaignId, conn.appKind as FbAppKind);
-            if (d.accountId) { recovered = d.accountId; source = 'fb-probe'; break; }
-          } catch {
-            /* this connection can't read the campaign — try the next */
-          }
-        }
-      }
-      if (recovered) await tx.campaign.update({ where: { id: c.id }, data: { fbAccountId: recovered } });
-      out.push({ name: c.name, buyer: c.buyer?.email, recovered, source });
-    }
-    return { scanned: campaigns.length, results: out };
-  });
-}
-
 export async function triggerCampaignReconcile(): Promise<{ enqueued: true }> {
   await getQueue(QUEUES.META_REJECTION_CHECK).add('admin-reconcile', {}, { removeOnComplete: 50, removeOnFail: 50 });
   return { enqueued: true };

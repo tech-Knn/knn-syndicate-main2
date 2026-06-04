@@ -9,7 +9,6 @@ import {
   getCampaignOfferStats,
   getCampaignPerformance,
   getCompanyRollup,
-  backfillCampaignFbAccountId,
   getSummary,
   getSyncStatus,
   parseRange,
@@ -55,17 +54,6 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     try {
       return reply.send(await triggerCampaignReconcile());
-    } catch (err) {
-      return handleRouteError(err, reply);
-    }
-  });
-
-  // TEMP super-admin one-off: backfill the stable Campaign.fbAccountId (incl. FB recovery for
-  // orphaned campaigns whose ad-account row was deleted). Remove after running.
-  app.post('/admin/backfill-fb-account', { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] }, async (req, reply) => {
-    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
-    try {
-      return reply.send(await backfillCampaignFbAccountId(req.auth));
     } catch (err) {
       return handleRouteError(err, reply);
     }
