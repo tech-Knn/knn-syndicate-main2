@@ -41,12 +41,19 @@ export async function withTenant<T>(orgId: string, fn: (tx: TxClient) => Promise
  * Run `fn` inside a transaction with RLS bypassed (sets `app.bypass_rls`). Use
  * for SUPER_ADMIN and trusted system/background work — auth lookups (which
  * happen before any org context exists), crons, and platform-wide queries.
+ *
+ * `opts` is forwarded to `$transaction` (e.g. a higher `timeout` for a batch that does many
+ * writes in one atomic unit, past the default 5s interactive-transaction limit). Existing callers
+ * pass nothing → unchanged default behaviour.
  */
-export async function withSystem<T>(fn: (tx: TxClient) => Promise<T>): Promise<T> {
+export async function withSystem<T>(
+  fn: (tx: TxClient) => Promise<T>,
+  opts?: { timeout?: number; maxWait?: number },
+): Promise<T> {
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true)`;
     return fn(tx);
-  });
+  }, opts);
 }
 
 export * from '@prisma/client';

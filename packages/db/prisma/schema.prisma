@@ -943,6 +943,10 @@ model GoogleConnection {
 
   domains Domain[]
 
+  /// One connection row per AdSense account — prevents two concurrent super-admin onboards from
+  /// racing the app-level findFirst-then-create and inserting duplicate rows for the same account.
+  /// Postgres treats NULLs as distinct, so the dormant/legacy null-account rows are unaffected.
+  @@unique([adsenseAccount])
   @@map("google_connections")
 }
 

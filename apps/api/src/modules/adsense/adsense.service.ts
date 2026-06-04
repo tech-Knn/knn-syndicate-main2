@@ -228,11 +228,27 @@ interface ConnRow {
   tokenExpiresAt: Date;
 }
 
+/** Mark a Google/AdSense connection broken (best-effort) so the UI prompts a reconnect. */
+async function markGoogleConnectionBroken(id: string, err: unknown): Promise<void> {
+  await withSystem((tx) =>
+    tx.googleConnection.update({ where: { id }, data: { status: 'CONNECTION_BROKEN', lastError: String(err).slice(0, 200) } }),
+  ).catch(() => undefined);
+}
+
 /** Decrypt the access token, refreshing (and persisting) if it's within 60s of expiry. */
 async function freshAccessToken(c: ConnRow): Promise<string> {
   if (c.tokenExpiresAt.getTime() - 60_000 > Date.now()) return decryptToken(c.accessTokenEnc);
   if (!c.refreshTokenEnc) throw new AppError(409, 'AdSense access token expired and no refresh token — reconnect');
-  const refreshed = await refreshGoogleToken(decryptToken(c.refreshTokenEnc));
+  let refreshed: { accessToken: string; expiresInSec: number };
+  try {
+    refreshed = await refreshGoogleToken(decryptToken(c.refreshTokenEnc));
+  } catch (err) {
+    // The refresh failed (e.g. the refresh token was revoked) → mark the connection broken so the
+    // UI prompts a reconnect, instead of silently looking healthy until the next worker pull finds
+    // it (the gap this fixes). Mirrors adsense-source.ts#freshTokenFor, but re-throws for the API.
+    await markGoogleConnectionBroken(PLATFORM, err);
+    throw new AppError(409, 'AdSense connection is broken — reconnect in Settings → AdSense');
+  }
   await withSystem((tx) =>
     tx.googleConnection.update({
       where: { id: PLATFORM },
@@ -302,7 +318,13 @@ export async function syncChannels(
 async function freshAccountToken(c: { id: string; accessTokenEnc: string; refreshTokenEnc: string | null; tokenExpiresAt: Date }): Promise<string> {
   if (c.tokenExpiresAt.getTime() - 60_000 > Date.now()) return decryptToken(c.accessTokenEnc);
   if (!c.refreshTokenEnc) throw new AppError(409, 'AFS access token expired and no refresh token — reconnect');
-  const r = await refreshGoogleToken(decryptToken(c.refreshTokenEnc));
+  let r: { accessToken: string; expiresInSec: number };
+  try {
+    r = await refreshGoogleToken(decryptToken(c.refreshTokenEnc));
+  } catch (err) {
+    await markGoogleConnectionBroken(c.id, err); // surface a dead AFS connection (see freshAccessToken)
+    throw new AppError(409, 'AdSense connection is broken — reconnect in Settings → AdSense');
+  }
   await withSystem((tx) =>
     tx.googleConnection.update({
       where: { id: c.id },

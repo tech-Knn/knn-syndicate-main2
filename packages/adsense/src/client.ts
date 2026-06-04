@@ -136,11 +136,12 @@ const defaultDeps: FetchDeps = { fetch, baseUrl: 'https://adsense.googleapis.com
 
 /**
  * Row cap for a per-day report fetched WITHOUT a server channel filter (the >1-channel
- * path — see `buildReportQuery`). 50k comfortably covers a very large AFS account's
- * (channels × days) over the finalization window; `fetchChannelReport` warns if a real
- * report ever hits it (signalling that pagination is needed).
+ * path — see `buildReportQuery`). Set to the AdSense Management API v2 JSON maximum (100k rows),
+ * i.e. the most a single `reports:generate` call can return — so we never truncate below what the
+ * API itself allows. `fetchChannelReport` still warns if a report actually hits it (the only case
+ * left would be a genuinely huge shared account, which then needs date-range splitting).
  */
-export const REPORT_ROW_LIMIT = 50_000;
+export const REPORT_ROW_LIMIT = 100_000;
 
 /**
  * Build the `reports:generate` query string for a per-channel per-day report.

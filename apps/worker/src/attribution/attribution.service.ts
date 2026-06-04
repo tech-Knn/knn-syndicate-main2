@@ -283,100 +283,105 @@ export async function pullAdsenseRevenue(
     accounts: [...channelsByAccount].map(([afsAccountId, channelIds]) => ({ afsAccountId, channelIds })),
   });
 
-  // Pass 1: write per-offer revenue + accumulate the campaign rollup (summed across channels).
-  const rollup = new Map<string, CampaignDayRollup>();
-  let offerRows = 0;
-  for (const r of report) {
-    const channelRef = channelRefByCh.get(r.channelId);
-    if (!channelRef) continue;
-    await withSystem(async (tx) => {
-      const rate = await deps.getRate(tx, r.day, r.currency);
-      const revenueUsdMinor = toUsdMinor(r.revenueMinor, rate);
-      const suppressed = r.afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD;
+  // Write per-offer revenue + the campaign rollup in ONE transaction, so a mid-pull crash can't
+  // leave a half-written day. The report was already fetched above (no network inside the txn), and
+  // the raised timeout covers a large report's many upserts past the default 5s interactive-tx limit.
+  // Re-pulls stay idempotent (every write is keyed on (entity, day)).
+  return withSystem(
+    async (tx): Promise<{ rows: number; offerRows: number }> => {
+      // Pass 1: per-offer revenue + accumulate the campaign rollup (summed across channels).
+      const rollup = new Map<string, CampaignDayRollup>();
+      let offerRows = 0;
+      for (const r of report) {
+        const channelRef = channelRefByCh.get(r.channelId);
+        if (!channelRef) continue;
+        const rate = await deps.getRate(tx, r.day, r.currency);
+        const revenueUsdMinor = toUsdMinor(r.revenueMinor, rate);
+        const suppressed = r.afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD;
 
-      // Per-offer: the offer that holds this channel (if any).
-      const fill = { afsRequests: r.requests ?? 0, afsMatchedRequests: r.matchedRequests ?? 0, afsImpressions: r.impressions ?? 0 };
-      const offer = await tx.offer.findFirst({ where: { channelRef }, select: { id: true, orgId: true, campaignId: true } });
-      if (offer) {
-        await tx.offerRevenueDaily.upsert({
-          where: { offerId_day: { offerId: offer.id, day: r.day } },
-          create: { orgId: offer.orgId, offerId: offer.id, campaignId: offer.campaignId, channelRef, day: r.day, afsClicks: r.afsClicks, revenueMinor: r.revenueMinor, revenueUsdMinor, currency: r.currency, suppressed, ...fill },
-          update: { campaignId: offer.campaignId, channelRef, afsClicks: r.afsClicks, revenueMinor: r.revenueMinor, revenueUsdMinor, currency: r.currency, suppressed, ...fill },
+        // Per-offer: the offer that holds this channel (if any).
+        const fill = { afsRequests: r.requests ?? 0, afsMatchedRequests: r.matchedRequests ?? 0, afsImpressions: r.impressions ?? 0 };
+        const offer = await tx.offer.findFirst({ where: { channelRef }, select: { id: true, orgId: true, campaignId: true } });
+        if (offer) {
+          await tx.offerRevenueDaily.upsert({
+            where: { offerId_day: { offerId: offer.id, day: r.day } },
+            create: { orgId: offer.orgId, offerId: offer.id, campaignId: offer.campaignId, channelRef, day: r.day, afsClicks: r.afsClicks, revenueMinor: r.revenueMinor, revenueUsdMinor, currency: r.currency, suppressed, ...fill },
+            update: { campaignId: offer.campaignId, channelRef, afsClicks: r.afsClicks, revenueMinor: r.revenueMinor, revenueUsdMinor, currency: r.currency, suppressed, ...fill },
+          });
+          offerRows += 1;
+        }
+
+        // Campaign rollup: the campaign holding this channel on day `r.day` (the span, D7).
+        const span = await tx.channelAssignment.findFirst({
+          where: { channelRef, forDay: r.day },
+          orderBy: { assignedAt: 'desc' },
+          select: { campaignId: true, orgId: true },
         });
-        offerRows += 1;
+        if (!span) continue;
+        const key = `${span.campaignId}|${r.day}`;
+        const cur = rollup.get(key);
+        if (cur) {
+          cur.revenueMinor += r.revenueMinor;
+          cur.revenueUsdMinor += revenueUsdMinor;
+          cur.afsClicks += r.afsClicks;
+          cur.afsRequests += fill.afsRequests;
+          cur.afsMatchedRequests += fill.afsMatchedRequests;
+          cur.afsImpressions += fill.afsImpressions;
+          cur.currencies.add(r.currency);
+        } else {
+          rollup.set(key, {
+            orgId: span.orgId,
+            campaignId: span.campaignId,
+            day: r.day,
+            channelRef,
+            revenueMinor: r.revenueMinor,
+            revenueUsdMinor,
+            afsClicks: r.afsClicks,
+            ...fill,
+            currencies: new Set([r.currency]),
+          });
+        }
       }
 
-      // Campaign rollup: the campaign holding this channel on day `r.day` (the span, D7).
-      const span = await tx.channelAssignment.findFirst({
-        where: { channelRef, forDay: r.day },
-        orderBy: { assignedAt: 'desc' },
-        select: { campaignId: true, orgId: true },
-      });
-      if (!span) return;
-      const key = `${span.campaignId}|${r.day}`;
-      const cur = rollup.get(key);
-      if (cur) {
-        cur.revenueMinor += r.revenueMinor;
-        cur.revenueUsdMinor += revenueUsdMinor;
-        cur.afsClicks += r.afsClicks;
-        cur.afsRequests += fill.afsRequests;
-        cur.afsMatchedRequests += fill.afsMatchedRequests;
-        cur.afsImpressions += fill.afsImpressions;
-        cur.currencies.add(r.currency);
-      } else {
-        rollup.set(key, {
-          orgId: span.orgId,
-          campaignId: span.campaignId,
-          day: r.day,
-          channelRef,
-          revenueMinor: r.revenueMinor,
-          revenueUsdMinor,
-          afsClicks: r.afsClicks,
-          ...fill,
-          currencies: new Set([r.currency]),
+      // Pass 2: upsert the campaign rollup (sum). When offers span >1 currency the native sum
+      // is meaningless (D15), so report USD as the native amount; USD is always summable.
+      let rows = 0;
+      for (const v of rollup.values()) {
+        const mixed = v.currencies.size > 1;
+        await tx.campaignRevenueDaily.upsert({
+          where: { campaignId_day: { campaignId: v.campaignId, day: v.day } },
+          create: {
+            orgId: v.orgId,
+            campaignId: v.campaignId,
+            channelRef: v.channelRef,
+            day: v.day,
+            afsClicks: v.afsClicks,
+            revenueMinor: mixed ? v.revenueUsdMinor : v.revenueMinor,
+            revenueUsdMinor: v.revenueUsdMinor,
+            currency: mixed ? 'USD' : [...v.currencies][0]!,
+            suppressed: v.afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD,
+            afsRequests: v.afsRequests,
+            afsMatchedRequests: v.afsMatchedRequests,
+            afsImpressions: v.afsImpressions,
+          },
+          update: {
+            channelRef: v.channelRef,
+            afsClicks: v.afsClicks,
+            revenueMinor: mixed ? v.revenueUsdMinor : v.revenueMinor,
+            revenueUsdMinor: v.revenueUsdMinor,
+            currency: mixed ? 'USD' : [...v.currencies][0]!,
+            suppressed: v.afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD,
+            afsRequests: v.afsRequests,
+            afsMatchedRequests: v.afsMatchedRequests,
+            afsImpressions: v.afsImpressions,
+          },
         });
+        rows += 1;
       }
-    });
-  }
-
-  // Pass 2: upsert the campaign rollup (sum). When offers span >1 currency the native sum
-  // is meaningless (D15), so report USD as the native amount; USD is always summable.
-  let rows = 0;
-  for (const v of rollup.values()) {
-    const mixed = v.currencies.size > 1;
-    await withSystem((tx) =>
-      tx.campaignRevenueDaily.upsert({
-        where: { campaignId_day: { campaignId: v.campaignId, day: v.day } },
-        create: {
-          orgId: v.orgId,
-          campaignId: v.campaignId,
-          channelRef: v.channelRef,
-          day: v.day,
-          afsClicks: v.afsClicks,
-          revenueMinor: mixed ? v.revenueUsdMinor : v.revenueMinor,
-          revenueUsdMinor: v.revenueUsdMinor,
-          currency: mixed ? 'USD' : [...v.currencies][0]!,
-          suppressed: v.afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD,
-          afsRequests: v.afsRequests,
-          afsMatchedRequests: v.afsMatchedRequests,
-          afsImpressions: v.afsImpressions,
-        },
-        update: {
-          channelRef: v.channelRef,
-          afsClicks: v.afsClicks,
-          revenueMinor: mixed ? v.revenueUsdMinor : v.revenueMinor,
-          revenueUsdMinor: v.revenueUsdMinor,
-          currency: mixed ? 'USD' : [...v.currencies][0]!,
-          suppressed: v.afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD,
-          afsRequests: v.afsRequests,
-          afsMatchedRequests: v.afsMatchedRequests,
-          afsImpressions: v.afsImpressions,
-        },
-      }),
-    );
-    rows += 1;
-  }
-  return { rows, offerRows };
+      return { rows, offerRows };
+    },
+    { timeout: 120_000 },
+  );
 }
 
 // ── 3. Allocate campaign revenue across ads → ad_revenue_daily ────────────────
