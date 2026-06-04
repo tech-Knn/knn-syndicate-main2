@@ -3,7 +3,6 @@ import { ROLES } from '@knn/shared';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate, requireRole } from '../../middleware/authenticate.js';
 import {
-  campaignReconcileTrace,
   getBuyerRollup,
   getCampaignBreakdown,
   getCampaignDimBreakdown,
@@ -55,16 +54,6 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     try {
       return reply.send(await triggerCampaignReconcile());
-    } catch (err) {
-      return handleRouteError(err, reply);
-    }
-  });
-
-  // TEMP super-admin read-only trace: real FB effective_status per campaign. Remove after debugging.
-  app.get('/admin/reconcile-trace', { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] }, async (req, reply) => {
-    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
-    try {
-      return reply.send(await campaignReconcileTrace(req.auth));
     } catch (err) {
       return handleRouteError(err, reply);
     }
