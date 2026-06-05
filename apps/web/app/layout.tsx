@@ -25,11 +25,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={inter.variable} suppressHydrationWarning>
-      <head>
-        {/* Sets data-theme before first paint (no flash of the wrong theme). */}
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
-      </head>
       <body>
+        {/* Sets data-theme before first paint (no flash). First body child + not in a manual
+            <head> — Next manages <head> via metadata and can reorder it, which broke hydration. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <ThemeProvider>
           <AuthProvider>
             <UIProvider>{children}</UIProvider>
