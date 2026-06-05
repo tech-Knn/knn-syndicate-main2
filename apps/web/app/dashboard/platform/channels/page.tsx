@@ -197,7 +197,7 @@ export default function ChannelsPage() {
         <div>
           <span className="eyebrow">Platform</span>
           <h1 className={`serif ${styles.title}`}>Channels</h1>
-          <p className={styles.sub}>The AdSense channel pool — summary, per-website import, and where each channel id is used.</p>
+          <p className={styles.sub}>Your AdSense channel pool — import channels to websites and trace where each one earns.</p>
         </div>
       </div>
 

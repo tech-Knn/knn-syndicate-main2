@@ -114,9 +114,13 @@
   margin-left: 0.15rem;
 }
 
-/* Low-priority columns: hidden on narrow viewports (see media query below). */
+/* Secondary metric columns: hidden by default in "Compact" view (.compactCols) and on narrow
+   viewports (media query below); shown when the user picks "All columns". */
 .lowPriority {
   /* shown by default */
+}
+.compactCols .lowPriority {
+  display: none;
 }
 
 .totalsRow td {

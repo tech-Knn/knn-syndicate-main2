@@ -124,8 +124,8 @@ export default function TeamPage() {
       <div className={styles.head}>
         <div>
           <span className="eyebrow">Team</span>
-          <h1 className={`serif ${styles.title}`}>Your organization</h1>
-          <p className={styles.sub}>Manage members and see performance by buyer.</p>
+          <h1 className={`serif ${styles.title}`}>Team</h1>
+          <p className={styles.sub}>Invite members, set roles, and track performance by buyer.</p>
         </div>
       </div>
 

@@ -217,6 +217,9 @@ export default function AnalyticsPage() {
   // cheap and refreshed alongside the 60s data poll.
   const [sync, setSync] = useState<Awaited<ReturnType<typeof stats.syncStatus>> | null>(null);
   const [brokenConns, setBrokenConns] = useState<{ id: string; name: string }[]>([]);
+  // Compact view (default) shows the core money columns; "All columns" reveals the secondary
+  // metrics (CPA/CPC/CTR/Impr/RPC), which are marked .lowPriority. CSV export stays full either way.
+  const [showAllCols, setShowAllCols] = useState(false);
 
   const load = useCallback(async (r: DateRange, silent = false) => {
     if (!silent) setRows(null);
@@ -397,6 +400,13 @@ export default function AnalyticsPage() {
   };
 
   const num = (n: number): string => formatUsd(n);
+  // Counts: exact below 10k, compact (K/M) above — small numbers stay precise, big ones scannable.
+  const fmtCount = (n: number): string => {
+    const a = Math.abs(n);
+    if (a < 10_000) return n.toLocaleString();
+    if (a < 1_000_000) return `${(n / 1_000).toFixed(1)}K`;
+    return `${(n / 1_000_000).toFixed(2)}M`;
+  };
   const arrow = (key: SortKey): string => (sortKey !== key ? '' : sortDir === 'asc' ? '▲' : '▼');
   const colSpan = 15 + (isAdmin ? 1 : 0) + (isSuper ? 1 : 0); // total columns incl. budget + actions
 
@@ -497,6 +507,15 @@ export default function AnalyticsPage() {
             </span>
           )}
           <SyncIndicator sync={sync} />
+          <button
+            type="button"
+            className={admin.actionBtn}
+            onClick={() => setShowAllCols((v) => !v)}
+            aria-pressed={showAllCols}
+            title={showAllCols ? 'Show only the core metrics' : 'Show every metric column'}
+          >
+            {showAllCols ? 'Compact view' : 'All columns'}
+          </button>
           <button type="button" className={admin.actionBtn} onClick={exportCsv} disabled={filtered.length === 0}>
             Export CSV
           </button>
@@ -541,7 +560,7 @@ export default function AnalyticsPage() {
         />
       ) : (
         <>
-          <div className={`${admin.tableWrap} ${styles.tableScroll}`}>
+          <div className={`${admin.tableWrap} ${styles.tableScroll} ${showAllCols ? '' : styles.compactCols}`}>
             <table className={admin.table}>
               <thead>
                 <tr>
@@ -555,7 +574,7 @@ export default function AnalyticsPage() {
                   <Th k="profitUsd" label="Profit" />
                   <Th k="roi" label="ROI" />
                   <Th k="conversions" label="Conv" />
-                  <Th k="cpa" label="CPA" />
+                  <Th k="cpa" label="CPA" lowPriority />
                   <Th k="clicks" label="Clicks" />
                   <Th k="cpc" label="CPC" lowPriority />
                   <Th k="ctr" label="CTR" lowPriority />
@@ -610,12 +629,12 @@ export default function AnalyticsPage() {
                         <td className={admin.num}>{num(r.revenueUsd)}</td>
                         <td className={`${admin.num} ${r.profitUsd > 0 ? styles.pos : r.profitUsd < 0 ? styles.neg : ''}`}>{num(r.profitUsd)}</td>
                         <td className={`${admin.num} ${r.roi > 0 ? styles.pos : r.roi < 0 ? styles.neg : ''}`}>{formatRoi(r.roi)}</td>
-                        <td className={admin.num}>{r.conversions.toLocaleString()}</td>
-                        <td className={admin.num}>{r.conversions ? num(cpa(r)) : '—'}</td>
-                        <td className={admin.num}>{r.clicks.toLocaleString()}</td>
+                        <td className={admin.num}>{fmtCount(r.conversions)}</td>
+                        <td className={`${admin.num} ${styles.lowPriority}`}>{r.conversions ? num(cpa(r)) : '—'}</td>
+                        <td className={admin.num}>{fmtCount(r.clicks)}</td>
                         <td className={`${admin.num} ${styles.lowPriority}`}>{r.clicks ? num(cpc(r)) : '—'}</td>
                         <td className={`${admin.num} ${styles.lowPriority}`}>{ctr(r).toFixed(2)}%</td>
-                        <td className={`${admin.num} ${styles.lowPriority}`}>{r.impressions.toLocaleString()}</td>
+                        <td className={`${admin.num} ${styles.lowPriority}`}>{fmtCount(r.impressions)}</td>
                         <td className={`${admin.num} ${styles.lowPriority}`}>{r.clicks ? num(rpc(r)) : '—'}</td>
                         <td>
                           {r.status === 'ACTIVE' ? (
@@ -651,12 +670,12 @@ export default function AnalyticsPage() {
                   <td className={admin.num}>{num(totals.revenue)}</td>
                   <td className={`${admin.num} ${totals.profit >= 0 ? styles.pos : styles.neg}`}>{num(totals.profit)}</td>
                   <td className={admin.num}>{formatRoi(totals.roi)}</td>
-                  <td className={admin.num}>{totals.conv.toLocaleString()}</td>
-                  <td className={admin.num}>{totals.conv ? num(totals.cpa) : '—'}</td>
-                  <td className={admin.num}>{totals.clicks.toLocaleString()}</td>
+                  <td className={admin.num}>{fmtCount(totals.conv)}</td>
+                  <td className={`${admin.num} ${styles.lowPriority}`}>{totals.conv ? num(totals.cpa) : '—'}</td>
+                  <td className={admin.num}>{fmtCount(totals.clicks)}</td>
                   <td className={`${admin.num} ${styles.lowPriority}`}>{totals.clicks ? num(totals.cpc) : '—'}</td>
                   <td className={`${admin.num} ${styles.lowPriority}`}>{totals.ctr.toFixed(2)}%</td>
-                  <td className={`${admin.num} ${styles.lowPriority}`}>{totals.impr.toLocaleString()}</td>
+                  <td className={`${admin.num} ${styles.lowPriority}`}>{fmtCount(totals.impr)}</td>
                   <td className={`${admin.num} ${styles.lowPriority}`}>{totals.clicks ? num(totals.rpc) : '—'}</td>
                   <td></td>
                 </tr>

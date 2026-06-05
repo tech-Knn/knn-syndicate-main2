@@ -121,9 +121,9 @@ export default function DomainsPage() {
     <div className={styles.page}>
       <div className={styles.head}>
         <div>
-          <span className="eyebrow">Domains</span>
-          <h1 className={`serif ${styles.title}`}>Websites &amp; AFS</h1>
-          <p className={styles.sub}>Register article domains, map each to an AFS account, and verify DNS. Import &amp; browse a domain&apos;s channels from the Channels page.</p>
+          <span className="eyebrow">Platform</span>
+          <h1 className={`serif ${styles.title}`}>Domains</h1>
+          <p className={styles.sub}>Register article domains, map each to an AFS account, and verify DNS.</p>
         </div>
       </div>
 

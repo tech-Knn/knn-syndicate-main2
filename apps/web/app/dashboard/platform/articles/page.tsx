@@ -58,7 +58,7 @@ export default function ArticlesPage() {
         <div>
           <span className="eyebrow">Platform</span>
           <h1 className={`serif ${styles.title}`}>Articles</h1>
-          <p className={styles.sub}>Every generated article and where it&apos;s live — which campaigns, domains, channels, and for what time.</p>
+          <p className={styles.sub}>Every AI-generated article and where it&apos;s earning — by campaign, domain, and channel.</p>
         </div>
       </div>
 

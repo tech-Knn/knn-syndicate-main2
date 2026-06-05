@@ -300,7 +300,7 @@ export default function CompaniesPage() {
         <div>
           <span className="eyebrow">Platform</span>
           <h1 className={`serif ${styles.title}`}>Companies</h1>
-          <p className={styles.sub}>Create client companies, manage their members &amp; revenue cut, and review platform activity.</p>
+          <p className={styles.sub}>Client companies — their members, revenue cut, and activity at a glance.</p>
         </div>
       </div>
 
