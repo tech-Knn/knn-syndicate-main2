@@ -1,72 +1,55 @@
+/* Platform hub — a horizontal underline tab bar over the super-admin setup surfaces (sits inside
+   the main app shell, so it's a secondary nav, not a second sidebar). */
 .hub {
   display: flex;
-  gap: var(--space-6);
-  align-items: flex-start;
+  flex-direction: column;
+  gap: var(--space-5);
 }
 .sidebar {
-  flex: 0 0 11rem;
-  position: sticky;
-  top: var(--space-4);
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  gap: var(--space-1);
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.sidebar::-webkit-scrollbar {
+  display: none;
 }
 .eyebrow {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--muted);
-  padding: 0 var(--space-3) var(--space-2);
+  display: none;
 }
 .link {
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-md);
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  font-weight: var(--weight-medium);
   text-decoration: none;
   color: var(--muted);
-  border-left: 2px solid transparent;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
   transition:
     color 0.15s ease,
-    background 0.15s ease;
-  white-space: nowrap;
+    border-color 0.15s ease;
 }
 .link:hover {
   color: var(--cream);
-  background: var(--surface-2);
 }
-.active {
-  color: var(--cream);
-  background: rgba(var(--rust-rgb), 0.12);
-  border-left-color: var(--rust);
+.active,
+.active:hover {
+  color: var(--rust);
+  border-bottom-color: var(--rust);
   font-weight: var(--weight-semibold);
 }
 .body {
-  flex: 1 1 auto;
   min-width: 0;
 }
 
-/* Below the content max-width, the sidebar becomes a horizontal scroller above the content. */
-@media (max-width: 760px) {
-  .hub {
-    flex-direction: column;
-    gap: var(--space-4);
-  }
-  .sidebar {
-    flex: none;
-    position: static;
-    flex-direction: row;
-    gap: var(--space-1);
-    overflow-x: auto;
-    width: 100%;
-    padding-bottom: var(--space-1);
-    -webkit-overflow-scrolling: touch;
-  }
-  .eyebrow {
-    display: none;
-  }
-  .active {
-    border-left: none;
-    box-shadow: inset 0 -2px 0 var(--rust);
+@media (pointer: coarse) {
+  .link {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
   }
 }

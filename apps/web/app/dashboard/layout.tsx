@@ -1,10 +1,22 @@
 'use client';
 
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ComponentType, type ReactNode, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import {
+  IconAnalytics,
+  IconApprovals,
+  IconCampaigns,
+  IconClose,
+  IconFacebook,
+  IconMenu,
+  IconOverview,
+  IconPlatform,
+  IconSignOut,
+  IconTeam,
+} from '@/components/icons';
 import { ThemeToggle } from '@/components/theme';
-import { Badge, Button, Spinner } from '@/components/ui';
+import { Spinner } from '@/components/ui';
 import { type Role } from '@/lib/types';
 import { useAuth } from '../providers';
 import styles from './dashboard.module.css';
@@ -15,7 +27,7 @@ const ROLE_LABEL: Record<Role, string> = {
   MEDIA_BUYER: 'Buyer',
 };
 
-// Per-route document title (client pages can't export `metadata`); longest-prefix match.
+// Per-route document title + topbar heading (client pages can't export `metadata`); longest-prefix.
 const TITLES: { prefix: string; label: string }[] = [
   { prefix: '/dashboard/campaigns/new', label: 'New campaign' },
   { prefix: '/dashboard/campaigns', label: 'Campaigns' },
@@ -23,10 +35,11 @@ const TITLES: { prefix: string; label: string }[] = [
   { prefix: '/dashboard/approvals', label: 'Approvals' },
   { prefix: '/dashboard/team', label: 'Team' },
   { prefix: '/dashboard/facebook', label: 'Facebook' },
-  { prefix: '/dashboard/platform/companies', label: 'Companies · Platform' },
-  { prefix: '/dashboard/platform/domains', label: 'Domains · Platform' },
-  { prefix: '/dashboard/platform/channels', label: 'Channels · Platform' },
-  { prefix: '/dashboard/platform/articles', label: 'Articles · Platform' },
+  { prefix: '/dashboard/platform/companies', label: 'Companies' },
+  { prefix: '/dashboard/platform/domains', label: 'Domains' },
+  { prefix: '/dashboard/platform/channels', label: 'Channels' },
+  { prefix: '/dashboard/platform/articles', label: 'Articles' },
+  { prefix: '/dashboard/platform/cloaker', label: 'Cloaker' },
   { prefix: '/dashboard/platform', label: 'Platform' },
   { prefix: '/dashboard', label: 'Overview' },
 ];
@@ -34,19 +47,29 @@ function titleFor(pathname: string): string {
   return TITLES.find((t) => pathname === t.prefix || pathname.startsWith(`${t.prefix}/`))?.label ?? 'Dashboard';
 }
 
-function navFor(role: Role): { href: string; label: string }[] {
+type NavItem = { href: string; label: string; Icon: ComponentType<{ size?: number }> };
+function navFor(role: Role): NavItem[] {
   const isAdmin = role === 'SUPER_ADMIN' || role === 'COMPANY_ADMIN';
   return [
-    { href: '/dashboard', label: 'Overview' },
-    { href: '/dashboard/analytics', label: 'Analytics' },
-    { href: '/dashboard/campaigns', label: 'Campaigns' },
-    ...(isAdmin ? [{ href: '/dashboard/approvals', label: 'Approvals' }] : []),
-    ...(role === 'COMPANY_ADMIN' ? [{ href: '/dashboard/team', label: 'Team' }] : []),
-    // Super-admin: Companies / Domains / Channels / Articles / AdSense / Facebook all live
-    // inside the Platform hub (a left sub-nav). Facebook stays a top tab for the other roles.
-    ...(role === 'SUPER_ADMIN' ? [{ href: '/dashboard/platform', label: 'Platform' }] : []),
-    ...(role !== 'SUPER_ADMIN' ? [{ href: '/dashboard/facebook', label: 'Facebook' }] : []),
+    { href: '/dashboard', label: 'Overview', Icon: IconOverview },
+    { href: '/dashboard/analytics', label: 'Analytics', Icon: IconAnalytics },
+    { href: '/dashboard/campaigns', label: 'Campaigns', Icon: IconCampaigns },
+    ...(isAdmin ? [{ href: '/dashboard/approvals', label: 'Approvals', Icon: IconApprovals }] : []),
+    ...(role === 'COMPANY_ADMIN' ? [{ href: '/dashboard/team', label: 'Team', Icon: IconTeam }] : []),
+    ...(role === 'SUPER_ADMIN' ? [{ href: '/dashboard/platform', label: 'Platform', Icon: IconPlatform }] : []),
+    ...(role !== 'SUPER_ADMIN' ? [{ href: '/dashboard/facebook', label: 'Facebook', Icon: IconFacebook }] : []),
   ];
+}
+
+function initialsOf(name: string, email: string): string {
+  const fromName = name
+    .trim()
+    .split(/\s+/)
+    .map((w) => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('');
+  return (fromName || email[0] || '?').toUpperCase();
 }
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
@@ -60,7 +83,6 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     if (state === 'anon') router.replace('/login');
   }, [state, router]);
 
-  // Keep the document title in sync with the route (client pages have no metadata export).
   useEffect(() => {
     document.title = `${titleFor(pathname)} · KNN Syndicate`;
   }, [pathname]);
@@ -101,94 +123,79 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       <a href="#main-content" className="skipLink">
         Skip to content
       </a>
-      <header className={styles.topbar}>
-        <div className={styles.topbarInner}>
-        <Link href="/dashboard" className={styles.brand} aria-label="KNN Syndicate — home">
-          <span className={styles.brandMark}>KNN</span>
-          <span className={styles.brandName}>Syndicate</span>
-        </Link>
+
+      {menuOpen && (
+        <button type="button" className={styles.scrim} aria-label="Close menu" tabIndex={-1} onClick={() => setMenuOpen(false)} />
+      )}
+
+      <aside className={`${styles.sidebar} ${menuOpen ? styles.sidebarOpen : ''}`}>
+        <div className={styles.brand}>
+          <Link href="/dashboard" className={styles.brandLink} aria-label="KNN Syndicate — home">
+            <span className={styles.brandLogo} aria-hidden>
+              K
+            </span>
+            <span className={styles.brandText}>
+              <span className={styles.brandMark}>KNN</span>
+              <span className={styles.brandName}>Syndicate</span>
+            </span>
+          </Link>
+          <button type="button" className={styles.drawerClose} aria-label="Close menu" onClick={() => setMenuOpen(false)}>
+            <IconClose size={20} />
+          </button>
+        </div>
 
         <nav className={styles.nav} aria-label="Primary">
-          {items.map((item) => {
-            const active = isActive(item.href);
+          {items.map(({ href, label, Icon }) => {
+            const active = isActive(href);
             return (
               <Link
-                key={item.href}
-                href={item.href}
+                key={href}
+                href={href}
                 aria-current={active ? 'page' : undefined}
                 className={`${styles.navLink} ${active ? styles.navActive : ''}`}
               >
-                {item.label}
+                <Icon size={18} />
+                <span>{label}</span>
               </Link>
             );
           })}
         </nav>
 
-        <div className={styles.spacer} />
-
-        <ThemeToggle className={styles.themeToggle} />
-
-        <div className={styles.user}>
-          <div className={styles.userMeta}>
-            <div className={styles.userName}>{user.name}</div>
-            <div className={styles.userEmail}>{user.email}</div>
+        <div className={styles.sidebarFoot}>
+          <div className={styles.userCard}>
+            <span className={styles.avatar} aria-hidden>
+              {initialsOf(user.name, user.email)}
+            </span>
+            <span className={styles.userMeta}>
+              <span className={styles.userName}>{user.name}</span>
+              <span className={styles.userEmail}>{user.email}</span>
+            </span>
           </div>
-          <Badge tone={user.role === 'SUPER_ADMIN' ? 'brand' : 'neutral'}>{ROLE_LABEL[user.role]}</Badge>
-          <Button variant="ghost" onClick={() => void onSignOut()} loading={signingOut} className={styles.signOut}>
-            Sign out
-          </Button>
+          <div className={styles.footActions}>
+            <ThemeToggle className={styles.themeToggle} />
+            <button type="button" className={styles.signOut} onClick={() => void onSignOut()} disabled={signingOut}>
+              {signingOut ? <Spinner /> : <IconSignOut size={16} />}
+              <span>Sign out</span>
+            </button>
+          </div>
         </div>
+      </aside>
 
-        <button
-          type="button"
-          className={styles.hamburger}
-          aria-label={menuOpen ? 'Close menu' : 'Open menu'}
-          aria-expanded={menuOpen}
-          aria-controls="mobile-nav"
-          onClick={() => setMenuOpen((o) => !o)}
-        >
-          <span aria-hidden>{menuOpen ? '✕' : '☰'}</span>
-        </button>
-        </div>
-      </header>
+      <div className={styles.content}>
+        <header className={styles.topbar}>
+          <button type="button" className={styles.hamburger} aria-label="Open menu" onClick={() => setMenuOpen(true)}>
+            <IconMenu size={22} />
+          </button>
+          <h1 className={styles.pageTitle}>{titleFor(pathname)}</h1>
+          <div className={styles.topbarRight}>
+            <span className={styles.roleBadge}>{ROLE_LABEL[user.role]}</span>
+          </div>
+        </header>
 
-      {menuOpen && (
-        <>
-          <button
-            type="button"
-            className={styles.drawerScrim}
-            aria-label="Close menu"
-            tabIndex={-1}
-            onClick={() => setMenuOpen(false)}
-          />
-          <nav id="mobile-nav" className={styles.drawer} aria-label="Primary">
-            {items.map((item) => {
-              const active = isActive(item.href);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  aria-current={active ? 'page' : undefined}
-                  className={`${styles.drawerLink} ${active ? styles.drawerActive : ''}`}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-            <div className={styles.drawerUser}>
-              <div className={styles.userName}>{user.name}</div>
-              <div className={styles.userEmail}>{user.email}</div>
-            </div>
-            <Button variant="ghost" block onClick={() => void onSignOut()} loading={signingOut}>
-              Sign out
-            </Button>
-          </nav>
-        </>
-      )}
-
-      <main id="main-content" tabIndex={-1} className={styles.main}>
-        {children}
-      </main>
+        <main id="main-content" tabIndex={-1} className={styles.main}>
+          {children}
+        </main>
+      </div>
     </div>
   );
 }

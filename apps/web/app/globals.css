@@ -1,64 +1,61 @@
 /*
- * KNN Syndicate — design tokens (light + dark).
+ * KNN Syndicate — design tokens (light + dark). Stripe-inspired: spacious, soft layered shadows,
+ * cool neutral surfaces, a navy-slate ink, and a single INDIGO accent.
  *
- * One token layer drives the whole dashboard. Every component + page reads these names, so the
- * theme is swapped by re-defining the VALUES, never by touching component CSS. `:root` is the
- * LIGHT theme (also the SSR default before the no-FOUC script runs); `[data-theme="dark"]` overrides
- * the colour/shadow tokens for dark. The non-colour tokens (type, spacing, radius, z, motion) are
- * shared and live only in `:root`.
+ * One token layer drives the whole dashboard — the theme swaps by re-defining VALUES, never by
+ * touching component CSS. `:root` is LIGHT (also the SSR default before the no-FOUC script runs);
+ * `[data-theme="dark"]` overrides the colour/shadow tokens. Non-colour tokens (type, spacing,
+ * radius, z, motion) are shared and live only in `:root`.
  *
- * Token NAMES are stable (kept from the prior dark-only system) so nothing downstream breaks —
- * notably `--cream` is "primary text" in BOTH themes (near-black in light, near-white in dark),
- * `--bg`/`--surface` are the page/card fills, `--rust` is the single accent.
+ * Token NAMES are stable so nothing downstream breaks: `--cream` = primary text (ink) in BOTH
+ * themes; `--rust` = the single accent (now indigo) used app-wide; `--bg`/`--surface` = page/card.
  */
 :root {
   /* ---- Light theme colours (default) ---- */
-  --bg: #fbfbfb;
-  --surface: #ffffff;
-  --surface-2: #f4f5f7;
-  --surface-3: #eceef1;
-  /* A control that should visually "pop" above a surface (active segmented pill, raised chip) —
-     lighter than the surface in BOTH themes (white in light, a lifted gray in dark). */
-  --raised: #ffffff;
-  --border: #e7e8eb;
-  --border-strong: #d9dbe0;
-  /* Interactive control boundary — ~3:1 on white for WCAG 2.2 SC 1.4.11 (non-text contrast). */
-  --border-interactive: #b9bdc4;
-  --rust: #d24d22; /* accent: links, focus, active nav, dots */
-  --rust-rgb: 210, 77, 34;
-  --rust-strong: #bd441c; /* primary-button fill — white label ≈5.0:1 (AA) */
-  --gold: #9a6f1e; /* brand badge text — AA on its tint */
-  --gold-rgb: 154, 111, 30;
-  --cream: #1a1c20; /* PRIMARY TEXT (near-black in light) */
-  --muted: #585e67; /* secondary text — ≈6.6:1 on white */
-  --muted-2: #6f757e; /* tertiary text — ≈4.9:1 on white (AA) */
-  --green: #128a52;
-  --green-rgb: 18, 138, 82;
-  --amber: #9a6a12;
-  --amber-rgb: 154, 106, 18;
-  --red: #d23b2a;
-  --red-rgb: 210, 59, 42;
-  --red-text: #bf3320; /* red TEXT — AA on white + on red tint */
+  --bg: #f6f7f9; /* app/content background (cool light gray) */
+  --surface: #ffffff; /* cards, sidebar */
+  --surface-2: #f1f2f4; /* insets, hovers, segmented track */
+  --surface-3: #e8eaee;
+  --raised: #ffffff; /* control that "pops" above a surface */
+  --border: #e6e8ec;
+  --border-strong: #d6d9df;
+  --border-interactive: #b6bcc6; /* ~3:1 on white (WCAG 2.2 SC 1.4.11) */
+  --rust: #4f46e5; /* ACCENT (indigo-600): links, focus, active, dots */
+  --rust-rgb: 79, 70, 229;
+  --rust-strong: #4338ca; /* primary-button fill — white label ≈7:1 (AA) */
+  --gold: #7c3aed; /* secondary accent (violet) — brand badges */
+  --gold-rgb: 124, 58, 237;
+  --cream: #1a1f36; /* PRIMARY TEXT / ink (navy-slate) */
+  --muted: #515a6e; /* secondary text — AA on white */
+  --muted-2: #6a7283; /* tertiary text — AA on white */
+  --green: #1a8f5a;
+  --green-rgb: 26, 143, 90;
+  --amber: #b45309;
+  --amber-rgb: 180, 83, 9;
+  --red: #d6303e;
+  --red-rgb: 214, 48, 62;
+  --red-text: #c11f2e;
 
-  --overlay: rgba(22, 24, 28, 0.42); /* modal scrim */
-  --topbar-bg: rgba(255, 255, 255, 0.72); /* translucent sticky topbar (blurred) */
-  --hairline: rgba(15, 18, 22, 0.04); /* faint top-edge highlight on raised fills */
-  --ring: rgba(210, 77, 34, 0.28); /* focus ring */
-  --scrollbar: #cdd0d5;
-  --shadow: 0 1px 2px rgba(17, 24, 39, 0.05), 0 2px 6px -2px rgba(17, 24, 39, 0.07);
-  --shadow-lg: 0 18px 44px -16px rgba(17, 24, 39, 0.22);
+  --overlay: rgba(20, 23, 33, 0.45);
+  --topbar-bg: rgba(255, 255, 255, 0.8);
+  --hairline: rgba(12, 16, 26, 0.04);
+  --ring: rgba(79, 70, 229, 0.28);
+  --scrollbar: #ccd0d7;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 4px 12px -2px rgba(16, 24, 40, 0.08);
+  --shadow-lg: 0 12px 28px -8px rgba(16, 24, 40, 0.14), 0 28px 56px -20px rgba(16, 24, 40, 0.16);
   --elevation-1: var(--shadow);
-  --elevation-2: 0 6px 18px -10px rgba(17, 24, 39, 0.18);
+  --elevation-2: 0 4px 16px -4px rgba(16, 24, 40, 0.12);
   --elevation-3: var(--shadow-lg);
 
   /* ---- Type ---- */
   --font-sans:
     system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  --font-serif: var(--font-sans); /* dashboard headings are sans now; alias kept for any references */
+  --font-serif: var(--font-sans); /* dashboard headings are sans; alias kept for any references */
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
 
-  --radius: 12px;
-  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-sm: 9px;
+  --radius-lg: 18px;
 
   /* Spacing scale (8px base, 4px half-step). */
   --space-1: 4px;
@@ -69,8 +66,9 @@
   --space-6: 32px;
   --space-8: 48px;
 
-  /* Shell content width — full-bleed below the cap (data tool), capped so tables stay readable. */
-  --shell-max: 2560px;
+  --sidebar-w: 252px;
+  /* Content column cap — readable max for the spacious Stripe layout (full-bleed below it). */
+  --shell-max: 1480px;
 
   /* Type scale (rem) + line-heights + weights. */
   --text-xs: 0.72rem;
@@ -78,8 +76,8 @@
   --text-md: 0.9rem;
   --text-base: 0.95rem;
   --text-lg: 1.15rem;
-  --text-xl: 1.45rem;
-  --text-2xl: 1.7rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 1.85rem;
   --leading-tight: 1.15;
   --leading-snug: 1.35;
   --leading-normal: 1.55;
@@ -93,45 +91,45 @@
   --z-toast: 80;
 
   --disabled-opacity: 0.55;
-  --control-h: 38px;
+  --control-h: 40px;
 
   color-scheme: light;
 }
 
 /* ---- Dark theme colour overrides ---- */
 [data-theme='dark'] {
-  --bg: #0b0c0e;
-  --surface: #141619;
-  --surface-2: #1b1e22;
-  --surface-3: #23262b;
-  --raised: #2a2e35;
-  --border: #24272c;
-  --border-strong: #30343b;
-  --border-interactive: #545a63;
-  --rust: #f0652f;
-  --rust-rgb: 240, 101, 47;
-  --rust-strong: #e2531f;
-  --gold: #d3a345;
-  --gold-rgb: 211, 163, 69;
-  --cream: #e7e9ec; /* PRIMARY TEXT (near-white in dark) */
-  --muted: #9aa0a9;
-  --muted-2: #767d86;
-  --green: #45c089;
-  --green-rgb: 69, 192, 137;
-  --amber: #d9a23c;
-  --amber-rgb: 217, 162, 60;
-  --red: #e0584a;
-  --red-rgb: 224, 88, 74;
-  --red-text: #f2897c;
+  --bg: #0b0d12;
+  --surface: #14171d;
+  --surface-2: #1b1f27;
+  --surface-3: #232833;
+  --raised: #2a3039;
+  --border: #262b34;
+  --border-strong: #333a45;
+  --border-interactive: #4c5462;
+  --rust: #818cf8; /* bright indigo accent for dark */
+  --rust-rgb: 129, 140, 248;
+  --rust-strong: #4f46e5; /* button fill — white label AA on dark */
+  --gold: #a78bfa;
+  --gold-rgb: 167, 139, 250;
+  --cream: #e7e9ef;
+  --muted: #98a0ad;
+  --muted-2: #6d7682;
+  --green: #3ddc97;
+  --green-rgb: 61, 220, 151;
+  --amber: #f0a64a;
+  --amber-rgb: 240, 166, 74;
+  --red: #f0676a;
+  --red-rgb: 240, 103, 106;
+  --red-text: #f78b8d;
 
-  --overlay: rgba(4, 5, 7, 0.66);
-  --topbar-bg: rgba(13, 14, 16, 0.72);
-  --hairline: rgba(255, 255, 255, 0.04);
-  --ring: rgba(240, 101, 47, 0.34);
-  --scrollbar: #30343b;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 12px 28px -16px rgba(0, 0, 0, 0.6);
-  --shadow-lg: 0 26px 60px -24px rgba(0, 0, 0, 0.78);
-  --elevation-2: 0 14px 36px -18px rgba(0, 0, 0, 0.72);
+  --overlay: rgba(3, 5, 9, 0.66);
+  --topbar-bg: rgba(13, 16, 21, 0.78);
+  --hairline: rgba(255, 255, 255, 0.05);
+  --ring: rgba(129, 140, 248, 0.36);
+  --scrollbar: #333a45;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 18px 48px -12px rgba(0, 0, 0, 0.7);
+  --elevation-2: 0 8px 28px -10px rgba(0, 0, 0, 0.6);
 
   color-scheme: dark;
 }
@@ -160,8 +158,6 @@ button {
   font-family: inherit;
 }
 
-/* iOS Safari auto-zooms when a focused control has font-size < 16px — force a 16px floor on phones.
-   The `:not()`s raise specificity above the CSS-module .input/.select rules so this wins. */
 @media (max-width: 768px) {
   input:not([type='checkbox']):not([type='radio']):not([type='range']),
   select:not([multiple]),
@@ -171,7 +167,7 @@ button {
 }
 
 ::selection {
-  background: rgba(var(--rust-rgb), 0.22);
+  background: rgba(var(--rust-rgb), 0.18);
   color: var(--cream);
 }
 
@@ -179,10 +175,9 @@ button {
   outline: 2px solid var(--rust);
   outline-offset: 2px;
   box-shadow: 0 0 0 4px var(--ring);
-  border-radius: 5px;
+  border-radius: 6px;
 }
 
-/* Visually-hidden utility (skip links, SR-only labels, chart data tables). */
 .srOnly {
   position: absolute;
   width: 1px;
@@ -194,7 +189,6 @@ button {
   white-space: nowrap;
   border: 0;
 }
-/* Skip-to-content link — off-screen until focused. */
 .skipLink {
   position: fixed;
   top: var(--space-2);
@@ -227,20 +221,20 @@ button {
   background: var(--muted-2);
 }
 
-/* Display heading helper — modern tight sans (was an italic serif). Class name kept; look modernized. */
+/* Display heading helper — modern tight sans (class name kept; look modernized). */
 .serif {
   font-family: var(--font-sans);
   font-style: normal;
-  font-weight: 680;
-  letter-spacing: -0.02em;
+  font-weight: 700;
+  letter-spacing: -0.025em;
 }
 
 /* Eyebrow / section kicker. */
 .eyebrow {
   font-family: var(--font-mono);
-  letter-spacing: 0.16em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: var(--weight-semibold);
   color: var(--muted-2);
 }
@@ -266,7 +260,6 @@ button {
   }
 }
 
-/* Respect reduced-motion: neutralize spinner/shimmer/rise + all transitions. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
