@@ -1,0 +1,119 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh var(--space-4) var(--space-4);
+  background: var(--overlay);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  animation: knn-fade 0.12s ease;
+}
+.palette {
+  width: 100%;
+  max-width: 560px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  animation: knn-rise 0.14s ease;
+}
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.searchIcon {
+  display: inline-flex;
+  color: var(--muted-2);
+  flex-shrink: 0;
+}
+.input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--cream);
+  font-size: 1rem;
+  font-family: inherit;
+}
+.input::placeholder {
+  color: var(--muted-2);
+}
+.kbd {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--muted-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+.list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2);
+  max-height: 56vh;
+  overflow-y: auto;
+}
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--cream);
+  font-size: 0.9rem;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.itemActive {
+  background: rgba(var(--rust-rgb), 0.1);
+  color: var(--rust);
+}
+.itemIcon {
+  display: inline-flex;
+  width: 16px;
+  color: var(--muted-2);
+  flex-shrink: 0;
+}
+.itemActive .itemIcon {
+  color: var(--rust);
+}
+.itemLabel {
+  flex: 1;
+  min-width: 0;
+  font-weight: var(--weight-medium);
+}
+.itemHint {
+  font-size: var(--text-xs);
+  color: var(--muted-2);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+.empty {
+  padding: var(--space-5);
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+@keyframes knn-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

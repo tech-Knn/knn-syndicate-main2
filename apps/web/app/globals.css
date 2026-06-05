@@ -49,7 +49,7 @@
 
   /* ---- Type ---- */
   --font-sans:
-    system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-serif: var(--font-sans); /* dashboard headings are sans; alias kept for any references */
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
 
@@ -145,7 +145,10 @@ body {
   background: var(--bg);
   color: var(--cream);
   font-family: var(--font-sans);
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11'; /* Inter's refined glyphs (1, a, g, etc.) */
+  letter-spacing: -0.006em;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
 

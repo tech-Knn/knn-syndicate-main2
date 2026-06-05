@@ -3,6 +3,7 @@
 import { type ComponentType, type ReactNode, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { CommandPalette, type Command } from '@/components/command-palette';
 import {
   IconAnalytics,
   IconApprovals,
@@ -12,10 +13,11 @@ import {
   IconMenu,
   IconOverview,
   IconPlatform,
+  IconSearch,
   IconSignOut,
   IconTeam,
 } from '@/components/icons';
-import { ThemeToggle } from '@/components/theme';
+import { ThemeToggle, useTheme } from '@/components/theme';
 import { Spinner } from '@/components/ui';
 import { type Role } from '@/lib/types';
 import { useAuth } from '../providers';
@@ -74,14 +76,28 @@ function initialsOf(name: string, email: string): string {
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const { user, state, logout } = useAuth();
+  const { toggle: toggleTheme } = useTheme();
   const router = useRouter();
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [cmdOpen, setCmdOpen] = useState(false);
 
   useEffect(() => {
     if (state === 'anon') router.replace('/login');
   }, [state, router]);
+
+  // ⌘K / Ctrl-K toggles the command palette anywhere in the dashboard.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setCmdOpen((o) => !o);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     document.title = `${titleFor(pathname)} · KNN Syndicate`;
@@ -117,6 +133,15 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       setSigningOut(false);
     }
   };
+
+  const commands: Command[] = [
+    ...items.map((it) => ({ id: `nav-${it.href}`, label: it.label, hint: 'Page', href: it.href, Icon: it.Icon, keywords: 'go to navigate open' })),
+    ...(user.role !== 'SUPER_ADMIN'
+      ? [{ id: 'new-campaign', label: 'New campaign', hint: 'Action', href: '/dashboard/campaigns/new', Icon: IconCampaigns, keywords: 'create launch build' }]
+      : []),
+    { id: 'toggle-theme', label: 'Toggle light / dark theme', hint: 'Action', action: toggleTheme, keywords: 'dark light mode appearance color' },
+    { id: 'sign-out', label: 'Sign out', hint: 'Action', action: () => void onSignOut(), Icon: IconSignOut, keywords: 'logout log out exit' },
+  ];
 
   return (
     <div className={styles.shell}>
@@ -188,6 +213,11 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           </button>
           <h1 className={styles.pageTitle}>{titleFor(pathname)}</h1>
           <div className={styles.topbarRight}>
+            <button type="button" className={styles.searchTrigger} onClick={() => setCmdOpen(true)} aria-label="Search — Command or Control K">
+              <IconSearch size={15} />
+              <span className={styles.searchText}>Search…</span>
+              <kbd className={styles.searchKbd}>⌘K</kbd>
+            </button>
             <span className={styles.roleBadge}>{ROLE_LABEL[user.role]}</span>
           </div>
         </header>
@@ -196,6 +226,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           {children}
         </main>
       </div>
+
+      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} commands={commands} />
     </div>
   );
 }
