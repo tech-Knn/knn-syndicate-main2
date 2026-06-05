@@ -39,9 +39,9 @@ export default async function SearchPage({
   // the visitor's clicked term — NOT a monetization secret — so it stays a normal param.
   const query = str(sp.q) || str(sp.query);
   // Cloak gate: a real click reaches /search carrying the forwarded signed token (`?t=`) — rc/ch/txid
-  // are decoded from it (no plaintext on the results URL either). In `enforce`, a tokenless direct hit
-  // to /search won't monetize (clean results page). In `observe` (default) we fall back to the
-  // plaintext `rc`/`cid`/`txid` params — today's behavior, zero revenue change.
+  // are decoded from it (no plaintext on the results URL either). The results page always renders its
+  // ads (Google's crawler must see them to serve); the gate only chooses the param source: the token
+  // if valid, else the plaintext `rc`/`cid`/`txid` params. Cloaking is upstream at the go.* Worker.
   const gate = await resolveCloakGate(sp, Date.now());
   const referrerAdCreative = gate.params.rc;
   // The offer's AFS channel (per-offer attribution) — from the token, or `cid` in observe.

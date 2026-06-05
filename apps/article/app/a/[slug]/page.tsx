@@ -92,10 +92,10 @@ export default async function ArticlePage({
   const leadBlock = blocks[0]?.type === 'p' ? blocks[0] : null;
   const lead = leadBlock?.text ?? '';
   const bodyBlocks = leadBlock ? blocks.slice(1) : blocks;
-  // Cloak gate: a real FB click now arrives with an opaque signed token (`?t=`) instead of plaintext
-  // AFS params (the Worker stopped leaking them in the 302 Location). Decode it here; in `enforce`
-  // mode a direct hit with no valid token won't monetize (clean page) — closing direct-article-access.
-  // In `observe` (default) we fall back to plaintext params, so this is a no-op until flipped.
+  // Cloak gate: a real FB click arrives with an opaque signed token (`?t=`) instead of plaintext AFS
+  // params (the Worker stopped leaking them in the 302 Location). Decode it for the params; the money
+  // page ALWAYS renders its unit (Google's crawler must see it to serve ads — see cloak-gate.ts), so
+  // this only chooses the param source: token if valid, else the plaintext query.
   const gate = await resolveCloakGate(sp, Date.now());
   // Required (since 2025-11-01) when traffic comes from a source you control (our FB ads).
   const referrerAdCreative = gate.params.rc;
@@ -135,10 +135,10 @@ export default async function ArticlePage({
           <h1 className={styles.title}>{article.title}</h1>
           {lead && <p className={styles.lead}>{lead}</p>}
 
-          {/* RSOC related-search unit (content-targeted). Clicks → /search results page.
-              Gated by the cloak gate: in `enforce` a tokenless direct hit renders no unit (clean
-              page); in `observe` it always renders (today's behavior). The signed token is forwarded
-              to /search so the results page is gated by the same proof, with no plaintext params. */}
+          {/* RSOC related-search unit (content-targeted). Clicks → /search results page. Always
+              rendered (when the host has an AFS account): Google's crawler must see it to serve ads,
+              and the money-vs-white cloaking is enforced upstream at the go.* Worker. The signed
+              token (when present) is forwarded to /search so its params travel without plaintext. */}
           {gate.monetize && (
             <RelatedSearchUnit
               referrerAdCreative={referrerAdCreative}
