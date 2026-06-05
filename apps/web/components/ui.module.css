@@ -30,21 +30,22 @@
   /* --rust-strong (not --rust) so the white label clears WCAG AA (~5.0:1 vs 4.07:1). */
   background: var(--rust-strong);
   color: #fff;
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 8px 22px -12px rgba(var(--rust-rgb), 0.9);
+  border-color: transparent;
+  box-shadow: 0 1px 2px rgba(var(--rust-rgb), 0.25);
 }
 .primary:hover:not(:disabled) {
-  background: #d14e26;
+  background: var(--rust);
 }
 
 .secondary {
-  background: var(--surface-2);
+  background: var(--surface);
   color: var(--cream);
   border-color: var(--border-strong);
+  box-shadow: var(--shadow);
 }
 .secondary:hover:not(:disabled) {
-  border-color: var(--muted);
-  background: #24242c;
+  border-color: var(--border-interactive);
+  background: var(--surface-2);
 }
 
 .ghost {
@@ -72,10 +73,10 @@
 .danger-solid {
   background: var(--red);
   color: #fff;
-  border-color: rgba(255, 255, 255, 0.1);
+  border-color: transparent;
 }
 .danger-solid:hover:not(:disabled) {
-  background: #e25244;
+  filter: brightness(1.08);
 }
 
 .block {
@@ -107,7 +108,7 @@
 
 /* Card */
 .card {
-  background: linear-gradient(180deg, var(--surface), var(--surface-2));
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
@@ -143,13 +144,13 @@
 }
 .success {
   color: var(--green);
-  border-color: rgba(63, 178, 127, 0.4);
-  background: rgba(63, 178, 127, 0.1);
+  border-color: rgba(var(--green-rgb), 0.4);
+  background: rgba(var(--green-rgb), 0.12);
 }
 .warning {
   color: var(--amber);
-  border-color: rgba(216, 161, 58, 0.4);
-  background: rgba(216, 161, 58, 0.1);
+  border-color: rgba(var(--amber-rgb), 0.4);
+  background: rgba(var(--amber-rgb), 0.12);
 }
 .danger-badge {
   /* --red-text (≈6.5:1 on the tint) not --red (4.19:1, failed AA). */
@@ -160,7 +161,7 @@
 
 /* StatTile */
 .stat {
-  background: linear-gradient(180deg, var(--surface), var(--surface-2));
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
@@ -213,8 +214,8 @@
 /* Segmented control */
 .segmented {
   display: inline-flex;
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 3px;
   gap: 2px;
@@ -236,9 +237,9 @@
   color: var(--cream);
 }
 .segActive {
-  background: var(--surface-2);
+  background: var(--raised);
   color: var(--cream);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  box-shadow: var(--shadow);
 }
 
 /* Skeleton */
@@ -427,8 +428,8 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-4);
-  background: rgba(6, 6, 8, 0.66);
-  backdrop-filter: blur(2px);
+  background: var(--overlay);
+  backdrop-filter: blur(3px);
   animation: knn-fade 0.12s ease;
 }
 .modal {
@@ -436,7 +437,7 @@
   max-width: 480px;
   max-height: calc(100vh - 2 * var(--space-5));
   overflow: auto;
-  background: linear-gradient(180deg, var(--surface), var(--surface-2));
+  background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: var(--elevation-3);
@@ -521,7 +522,7 @@
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
-  background: linear-gradient(180deg, var(--surface), var(--surface-2));
+  background: var(--surface);
   box-shadow: var(--elevation-3);
   font-size: var(--text-md);
   color: var(--cream);

@@ -10,10 +10,10 @@
   z-index: var(--z-sticky);
   /* Full-bleed sticky bar: the background/border span the whole viewport while the inner
      content (.topbarInner) is centered + width-capped so it aligns with .main at any width. */
-  background: rgba(14, 14, 16, 0.8);
-  backdrop-filter: blur(12px);
+  background: var(--topbar-bg);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  backdrop-filter: blur(12px) saturate(1.4);
   border-bottom: 1px solid var(--border);
-  box-shadow: 0 6px 16px -14px rgba(0, 0, 0, 0.9);
 }
 .topbarInner {
   width: 100%;
@@ -27,7 +27,7 @@
 /* Browsers without backdrop-filter (the blur) need an opaque bar so content doesn't bleed through. */
 @supports not ((backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px))) {
   .topbar {
-    background: rgba(14, 14, 16, 0.97);
+    background: var(--surface);
   }
 }
 
@@ -39,14 +39,17 @@
 }
 .brandMark {
   font-family: var(--font-mono);
-  letter-spacing: 0.32em;
-  font-size: 0.62rem;
-  color: var(--muted);
+  letter-spacing: 0.28em;
+  font-size: 0.6rem;
+  font-weight: var(--weight-semibold);
+  color: var(--rust);
 }
 .brandName {
-  font-family: var(--font-serif);
-  font-style: italic;
-  font-size: 1.05rem;
+  font-family: var(--font-sans);
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  font-size: 1.02rem;
 }
 
 .nav {
@@ -97,7 +100,7 @@
   inset: 0;
   top: 0;
   z-index: var(--z-overlay);
-  background: rgba(6, 6, 8, 0.55);
+  background: var(--overlay);
   border: none;
   cursor: pointer;
 }
@@ -112,7 +115,7 @@
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-5) var(--space-4);
-  background: linear-gradient(180deg, var(--surface), var(--surface-2));
+  background: var(--surface);
   border-left: 1px solid var(--border-strong);
   box-shadow: var(--elevation-3);
   animation: knn-rise 0.18s ease;
@@ -138,6 +141,30 @@
   margin-top: auto;
   padding: var(--space-3) var(--space-3) var(--space-2);
   border-top: 1px solid var(--border);
+}
+
+/* Theme toggle — icon button in the topbar (and full-width row in the drawer). */
+.themeToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.themeToggle:hover {
+  color: var(--cream);
+  border-color: var(--border-interactive);
+  background: var(--surface-2);
 }
 
 .user {

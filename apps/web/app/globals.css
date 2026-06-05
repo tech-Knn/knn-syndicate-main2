@@ -1,49 +1,66 @@
+/*
+ * KNN Syndicate — design tokens (light + dark).
+ *
+ * One token layer drives the whole dashboard. Every component + page reads these names, so the
+ * theme is swapped by re-defining the VALUES, never by touching component CSS. `:root` is the
+ * LIGHT theme (also the SSR default before the no-FOUC script runs); `[data-theme="dark"]` overrides
+ * the colour/shadow tokens for dark. The non-colour tokens (type, spacing, radius, z, motion) are
+ * shared and live only in `:root`.
+ *
+ * Token NAMES are stable (kept from the prior dark-only system) so nothing downstream breaks —
+ * notably `--cream` is "primary text" in BOTH themes (near-black in light, near-white in dark),
+ * `--bg`/`--surface` are the page/card fills, `--rust` is the single accent.
+ */
 :root {
-  /* KNN Syndicate brand tokens (from the product doc) */
-  --bg: #0e0e10;
-  --surface: #16161a;
-  --surface-2: #1c1c22;
-  --border: #26262c;
-  --border-strong: #34343c;
-  /* Boundary for INTERACTIVE controls (inputs/selects/textarea/combobox triggers). ~3:1 against
-     --bg/--surface to satisfy WCAG 2.2 SC 1.4.11 (non-text contrast) — the resting --border-strong
-     (#34343c) is only ~1.5:1, so a control whose border is its sole affordance was failing. Keep
-     --border/--border-strong for decorative card edges (they pair with fills + shadow). */
-  --border-interactive: #5a5a64;
-  --rust: #d9512c;
-  --rust-rgb: 217, 81, 44;
-  /* Darker rust used for the white-on-rust primary button fill so the label clears WCAG AA
-     (white on --rust is only 4.07:1; on --rust-strong it is ~5.0:1). --rust stays for accents/links. */
-  --rust-strong: #c2461f;
-  --gold: #c89b3c;
-  --gold-rgb: 200, 155, 60;
-  --cream: #f4ede0;
-  /* Muted text ramp — both tiers now clear WCAG AA (4.5:1) on every surface, ordered light→dim:
-     --muted #9a958c ≈6.5:1, --muted-2 #928c80 ≈5.8:1 on --bg. (Were #8a857a / #6a665e — the
-     latter failed AA at 3.0–3.4:1 yet was used for table headers, hints, timestamps, presets.) */
-  --muted: #9a958c;
-  --muted-2: #928c80;
-  --green: #3fb27f;
-  --green-rgb: 63, 178, 127;
-  --amber: #d8a13a;
-  --amber-rgb: 216, 161, 58;
-  --red: #d9483b;
-  --red-rgb: 217, 72, 59;
-  /* Brighter red for red-on-dark TEXT (errors, negative deltas, danger badges); --red itself
-     (4.2:1 as text on a red tint) stays for borders/fills/dots. --red-text ≈6.5:1 on the tint. */
-  --red-text: #f0796c;
+  /* ---- Light theme colours (default) ---- */
+  --bg: #fbfbfb;
+  --surface: #ffffff;
+  --surface-2: #f4f5f7;
+  --surface-3: #eceef1;
+  /* A control that should visually "pop" above a surface (active segmented pill, raised chip) —
+     lighter than the surface in BOTH themes (white in light, a lifted gray in dark). */
+  --raised: #ffffff;
+  --border: #e7e8eb;
+  --border-strong: #d9dbe0;
+  /* Interactive control boundary — ~3:1 on white for WCAG 2.2 SC 1.4.11 (non-text contrast). */
+  --border-interactive: #b9bdc4;
+  --rust: #d24d22; /* accent: links, focus, active nav, dots */
+  --rust-rgb: 210, 77, 34;
+  --rust-strong: #bd441c; /* primary-button fill — white label ≈5.0:1 (AA) */
+  --gold: #9a6f1e; /* brand badge text — AA on its tint */
+  --gold-rgb: 154, 111, 30;
+  --cream: #1a1c20; /* PRIMARY TEXT (near-black in light) */
+  --muted: #585e67; /* secondary text — ≈6.6:1 on white */
+  --muted-2: #6f757e; /* tertiary text — ≈4.9:1 on white (AA) */
+  --green: #128a52;
+  --green-rgb: 18, 138, 82;
+  --amber: #9a6a12;
+  --amber-rgb: 154, 106, 18;
+  --red: #d23b2a;
+  --red-rgb: 210, 59, 42;
+  --red-text: #bf3320; /* red TEXT — AA on white + on red tint */
 
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  --font-serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif;
-  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  --overlay: rgba(22, 24, 28, 0.42); /* modal scrim */
+  --topbar-bg: rgba(255, 255, 255, 0.72); /* translucent sticky topbar (blurred) */
+  --hairline: rgba(15, 18, 22, 0.04); /* faint top-edge highlight on raised fills */
+  --ring: rgba(210, 77, 34, 0.28); /* focus ring */
+  --scrollbar: #cdd0d5;
+  --shadow: 0 1px 2px rgba(17, 24, 39, 0.05), 0 2px 6px -2px rgba(17, 24, 39, 0.07);
+  --shadow-lg: 0 18px 44px -16px rgba(17, 24, 39, 0.22);
+  --elevation-1: var(--shadow);
+  --elevation-2: 0 6px 18px -10px rgba(17, 24, 39, 0.18);
+  --elevation-3: var(--shadow-lg);
 
-  --radius: 14px;
-  --radius-sm: 9px;
-  --shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 12px 32px -16px rgba(0, 0, 0, 0.7);
-  --shadow-lg: 0 24px 64px -24px rgba(0, 0, 0, 0.8);
+  /* ---- Type ---- */
+  --font-sans:
+    system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-serif: var(--font-sans); /* dashboard headings are sans now; alias kept for any references */
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
 
-  /* Spacing scale (8px base, 4px half-step) — replaces ad-hoc rem literals so density is consistent
-     and retunable from one place. */
+  --radius: 12px;
+  --radius-sm: 8px;
+
+  /* Spacing scale (8px base, 4px half-step). */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -52,9 +69,7 @@
   --space-6: 32px;
   --space-8: 48px;
 
-  /* Shell content width — the dashboard topbar + main share this so the app uses the full
-     viewport (like a proper data tool) instead of a narrow centered column. Capped only so
-     tables/cards don't stretch unreadably on 4K/ultrawide; full-bleed below the cap. */
+  /* Shell content width — full-bleed below the cap (data tool), capped so tables stay readable. */
   --shell-max: 2560px;
 
   /* Type scale (rem) + line-heights + weights. */
@@ -71,10 +86,6 @@
   --weight-medium: 500;
   --weight-semibold: 600;
 
-  /* Elevation + stacking. */
-  --elevation-1: var(--shadow);
-  --elevation-2: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 18px 44px -20px rgba(0, 0, 0, 0.78);
-  --elevation-3: var(--shadow-lg);
   --z-sticky: 20;
   --z-dropdown: 40;
   --z-overlay: 60;
@@ -83,6 +94,46 @@
 
   --disabled-opacity: 0.55;
   --control-h: 38px;
+
+  color-scheme: light;
+}
+
+/* ---- Dark theme colour overrides ---- */
+[data-theme='dark'] {
+  --bg: #0b0c0e;
+  --surface: #141619;
+  --surface-2: #1b1e22;
+  --surface-3: #23262b;
+  --raised: #2a2e35;
+  --border: #24272c;
+  --border-strong: #30343b;
+  --border-interactive: #545a63;
+  --rust: #f0652f;
+  --rust-rgb: 240, 101, 47;
+  --rust-strong: #e2531f;
+  --gold: #d3a345;
+  --gold-rgb: 211, 163, 69;
+  --cream: #e7e9ec; /* PRIMARY TEXT (near-white in dark) */
+  --muted: #9aa0a9;
+  --muted-2: #767d86;
+  --green: #45c089;
+  --green-rgb: 69, 192, 137;
+  --amber: #d9a23c;
+  --amber-rgb: 217, 162, 60;
+  --red: #e0584a;
+  --red-rgb: 224, 88, 74;
+  --red-text: #f2897c;
+
+  --overlay: rgba(4, 5, 7, 0.66);
+  --topbar-bg: rgba(13, 14, 16, 0.72);
+  --hairline: rgba(255, 255, 255, 0.04);
+  --ring: rgba(240, 101, 47, 0.34);
+  --scrollbar: #30343b;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 12px 28px -16px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 26px 60px -24px rgba(0, 0, 0, 0.78);
+  --elevation-2: 0 14px 36px -18px rgba(0, 0, 0, 0.72);
+
+  color-scheme: dark;
 }
 
 * {
@@ -100,18 +151,6 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* Ambient brand glow behind everything. */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background:
-    radial-gradient(60rem 40rem at 12% -10%, rgba(var(--rust-rgb), 0.1), transparent 60%),
-    radial-gradient(50rem 40rem at 100% 0%, rgba(var(--gold-rgb), 0.07), transparent 55%);
-  pointer-events: none;
-}
-
 a {
   color: var(--rust);
   text-decoration: none;
@@ -121,10 +160,8 @@ button {
   font-family: inherit;
 }
 
-/* iOS Safari auto-zooms the page whenever a focused form control has font-size < 16px — jarring
-   on every field tap (the launcher especially). Force a 16px floor on phones for every native
-   control. The `:not()`s raise specificity above the CSS-module .input/.select/.textarea rules so
-   this actually wins (a bare `input{}` element selector would lose to a `.input` class). */
+/* iOS Safari auto-zooms when a focused control has font-size < 16px — force a 16px floor on phones.
+   The `:not()`s raise specificity above the CSS-module .input/.select rules so this wins. */
 @media (max-width: 768px) {
   input:not([type='checkbox']):not([type='radio']):not([type='range']),
   select:not([multiple]),
@@ -134,17 +171,15 @@ button {
 }
 
 ::selection {
-  background: rgba(var(--rust-rgb), 0.3);
+  background: rgba(var(--rust-rgb), 0.22);
   color: var(--cream);
 }
 
 :focus-visible {
-  /* Solid rust (was rgba(...,0.7) ≈2.8:1 — failed WCAG 2.2 SC 1.4.11/2.4.13). Solid --rust is
-     ~4.7:1 on --bg; the outer dark halo keeps it visible even on rust-filled primary buttons. */
   outline: 2px solid var(--rust);
   outline-offset: 2px;
-  box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.55);
-  border-radius: 4px;
+  box-shadow: 0 0 0 4px var(--ring);
+  border-radius: 5px;
 }
 
 /* Visually-hidden utility (skip links, SR-only labels, chart data tables). */
@@ -166,12 +201,13 @@ button {
   left: var(--space-2);
   z-index: var(--z-toast);
   transform: translateY(-150%);
-  background: var(--surface-2);
+  background: var(--surface);
   color: var(--cream);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-4);
   font-weight: var(--weight-semibold);
+  box-shadow: var(--shadow);
   transition: transform 0.15s ease;
 }
 .skipLink:focus-visible {
@@ -179,11 +215,11 @@ button {
 }
 
 ::-webkit-scrollbar {
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
+  background: var(--scrollbar);
   border: 3px solid var(--bg);
   border-radius: 8px;
 }
@@ -191,20 +227,22 @@ button {
   background: var(--muted-2);
 }
 
-/* Display heading helper. */
+/* Display heading helper — modern tight sans (was an italic serif). Class name kept; look modernized. */
 .serif {
-  font-family: var(--font-serif);
-  font-style: italic;
-  letter-spacing: -0.01em;
+  font-family: var(--font-sans);
+  font-style: normal;
+  font-weight: 680;
+  letter-spacing: -0.02em;
 }
 
-/* Wordmark / eyebrow label. */
+/* Eyebrow / section kicker. */
 .eyebrow {
   font-family: var(--font-mono);
-  letter-spacing: 0.4em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   font-size: 0.7rem;
-  color: var(--muted);
+  font-weight: var(--weight-semibold);
+  color: var(--muted-2);
 }
 
 .mono {
@@ -228,7 +266,7 @@ button {
   }
 }
 
-/* Respect users who ask for reduced motion: neutralize spinner/shimmer/rise + all transitions. */
+/* Respect reduced-motion: neutralize spinner/shimmer/rise + all transitions. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

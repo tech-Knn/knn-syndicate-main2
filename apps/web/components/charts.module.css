@@ -118,14 +118,14 @@
   position: absolute;
   top: 4px;
   pointer-events: none;
-  background: rgba(20, 20, 24, 0.92);
+  background: var(--surface);
+  color: var(--cream);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
   font-size: 0.72rem;
   white-space: nowrap;
   box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(8px);
   z-index: 5;
 }
 

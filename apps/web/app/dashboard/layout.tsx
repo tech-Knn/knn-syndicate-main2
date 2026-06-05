@@ -3,6 +3,7 @@
 import { type ReactNode, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { ThemeToggle } from '@/components/theme';
 import { Badge, Button, Spinner } from '@/components/ui';
 import { type Role } from '@/lib/types';
 import { useAuth } from '../providers';
@@ -124,6 +125,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         </nav>
 
         <div className={styles.spacer} />
+
+        <ThemeToggle className={styles.themeToggle} />
 
         <div className={styles.user}>
           <div className={styles.userMeta}>

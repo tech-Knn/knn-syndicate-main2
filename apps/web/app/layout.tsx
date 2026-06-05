@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import './globals.css';
+import { THEME_INIT_SCRIPT, ThemeProvider } from '@/components/theme';
 import { UIProvider } from '@/components/ui';
 import { AuthProvider } from './providers';
 
@@ -14,11 +15,17 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Sets data-theme before first paint (no flash of the wrong theme). */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body>
-        <AuthProvider>
-          <UIProvider>{children}</UIProvider>
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <UIProvider>{children}</UIProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
