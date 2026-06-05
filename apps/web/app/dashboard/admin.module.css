@@ -33,9 +33,11 @@
   flex-wrap: wrap;
 }
 .sectionTitle {
-  font-family: var(--font-serif);
-  font-style: italic;
-  font-size: 1.2rem;
+  font-family: var(--font-sans);
+  font-style: normal;
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  font-size: 1.1rem;
   color: var(--cream);
 }
 
@@ -49,12 +51,12 @@
 }
 .table thead th {
   text-align: right;
-  font-weight: 600;
-  font-size: 0.66rem;
-  letter-spacing: 0.08em;
+  font-weight: var(--weight-semibold);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--muted-2);
-  padding: 0.5rem 0.6rem;
+  padding: 0.55rem 0.75rem 0.65rem;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
@@ -62,12 +64,17 @@
   text-align: left !important;
 }
 .table tbody td {
-  padding: 0.7rem 0.6rem;
+  padding: 0.82rem 0.75rem;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
+  transition: background 0.12s ease;
 }
 .table tbody tr:last-child td {
   border-bottom: none;
+}
+/* Subtle row hover (Stripe-style) — skips the totals row. */
+.table tbody tr:hover:not(.totalsRow) td {
+  background: var(--surface-2);
 }
 .name {
   font-weight: 600;

@@ -179,7 +179,7 @@ export default function PlatformPage() {
         <div>
           <span className="eyebrow">Platform</span>
           <h1 className={`serif ${styles.title}`}>Setup</h1>
-          <p className={styles.sub}>Data sync, AdSense accounts, redirect domains, and platform settings. Companies, Domains, Channels &amp; Articles are in the left nav.</p>
+          <p className={styles.sub}>Connect AdSense, manage redirect &amp; white domains, and force a fresh sync. Companies, channels, and articles live in the tabs above.</p>
         </div>
       </div>
 
