@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   type CampaignBreakdown,
@@ -178,6 +178,29 @@ export default function DashboardHome() {
   const t = summary?.totals;
   const series = summary?.series ?? [];
 
+  // "Decisions, not data" — derive what needs the buyer's attention from the campaigns we already
+  // have (no extra fetch): money-losers, Facebook rejections, and the top performer to scale.
+  const attention = useMemo(() => {
+    type Item = { key: string; tone: 'danger' | 'warning' | 'success'; icon: string; label: string; detail?: string; href: string; cta: string };
+    const items: Item[] = [];
+    if (!campaigns || campaigns.length === 0) return items;
+    const losers = campaigns.filter((c) => c.status === 'ACTIVE' && c.spendUsd > 0 && c.profitUsd < 0);
+    if (losers.length > 0) {
+      const bleed = losers.reduce((s, c) => s + c.profitUsd, 0);
+      items.push({ key: 'losing', tone: 'danger', icon: '↘', label: `${losers.length} active campaign${losers.length === 1 ? ' is' : 's are'} losing money`, detail: `${formatUsd(bleed)} combined this period — pause or fix them`, href: '/dashboard/analytics', cta: 'Review' });
+    }
+    const rejected = campaigns.filter((c) => c.status === 'META_REJECTED' || c.status === 'REJECTED');
+    if (rejected.length > 0) {
+      items.push({ key: 'rejected', tone: 'danger', icon: '!', label: `${rejected.length} campaign${rejected.length === 1 ? ' was' : 's were'} rejected by Facebook`, detail: 'Fix the creative, then relaunch', href: '/dashboard/campaigns', cta: 'Fix' });
+    }
+    const winners = campaigns.filter((c) => c.status === 'ACTIVE' && c.profitUsd > 0 && c.roi > 0.2);
+    if (winners.length > 0) {
+      const top = winners.reduce((a, b) => (b.profitUsd > a.profitUsd ? b : a));
+      items.push({ key: 'winner', tone: 'success', icon: '↗', label: `“${top.name}” is profitable at ${formatRoi(top.roi)} ROI`, detail: `${formatUsd(top.profitUsd)} profit — consider scaling its budget`, href: '/dashboard/analytics', cta: 'Scale' });
+    }
+    return items;
+  }, [campaigns]);
+
   // A brand-new buyer with zero campaigns: this is the #1 conversion moment, so
   // we lead with an activation CTA and de-emphasize the (all-zero) KPIs + chart.
   const isNewBuyer = !error && !loading && campaigns !== null && campaigns.length === 0;
@@ -245,6 +268,30 @@ export default function DashboardHome() {
                   </Link>
                 }
               />
+            </Card>
+          )}
+
+          {!isNewBuyer && attention.length > 0 && (
+            <Card className={styles.attentionCard}>
+              <div className={styles.attentionHead}>
+                <span className={styles.cardTitle}>Needs attention</span>
+              </div>
+              <ul className={styles.attentionList}>
+                {attention.map((a) => (
+                  <li key={a.key} className={`${styles.attentionItem} ${styles[`att-${a.tone}`]}`}>
+                    <span className={styles.attIcon} aria-hidden>
+                      {a.icon}
+                    </span>
+                    <span className={styles.attBody}>
+                      <span className={styles.attLabel}>{a.label}</span>
+                      {a.detail && <span className={styles.attDetail}>{a.detail}</span>}
+                    </span>
+                    <Link href={a.href} className={styles.attCta}>
+                      {a.cta} →
+                    </Link>
+                  </li>
+                ))}
+              </ul>
             </Card>
           )}
 
@@ -381,6 +428,8 @@ function CampaignRows({
   onRetry: () => void;
 }) {
   const detailId = `${useId()}-detail`;
+  const flag: 'losing' | 'winner' | null =
+    c.status === 'ACTIVE' && c.spendUsd > 0 ? (c.profitUsd < 0 ? 'losing' : c.roi > 0.2 ? 'winner' : null) : null;
   return (
     <>
       <tr className={`${styles.row} ${open ? styles.rowOpen : ''}`}>
@@ -397,6 +446,8 @@ function CampaignRows({
             </span>
             <span className={styles.cName}>{c.name}</span>
           </button>
+          {flag === 'losing' && <span className={styles.flagLosing}>Losing</span>}
+          {flag === 'winner' && <span className={styles.flagWinner}>Winner</span>}
           {c.channelLabel && <span className={styles.chTag}>{c.channelLabel}</span>}
           <span className={styles.adCount}>
             {c.adSetCount} set{c.adSetCount === 1 ? '' : 's'} · {c.adCount} ad{c.adCount === 1 ? '' : 's'}
