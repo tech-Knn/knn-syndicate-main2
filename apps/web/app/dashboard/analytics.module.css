@@ -74,6 +74,14 @@
   padding: 0 !important;
   white-space: nowrap;
 }
+/* Wraps the sort button + its (i) tooltip so they stay adjacent in the header cell. */
+.thInner {
+  display: inline-flex;
+  align-items: center;
+}
+.thInner .sortBtn {
+  width: auto;
+}
 /* The actual interactive control inside each sortable <th>. */
 .sortBtn {
   display: inline-flex;

@@ -19,6 +19,7 @@ import {
   type DateRange,
   DateRangePicker,
   EmptyState,
+  InfoTip,
   type SearchOption,
   SearchSelect,
   Segmented,
@@ -420,19 +421,32 @@ export default function AnalyticsPage() {
   };
   const hasFilters = search !== '' || statusSel.size > 0 || buyerSel !== '' || companySel !== '' || profitSel !== 'all';
 
-  const Th = ({ k, label, lowPriority }: { k: SortKey; label: string; lowPriority?: boolean }): React.ReactNode => {
+  const Th = ({
+    k,
+    label,
+    lowPriority,
+    info,
+  }: {
+    k: SortKey;
+    label: string;
+    lowPriority?: boolean;
+    info?: string;
+  }): React.ReactNode => {
     const active = sortKey === k;
     return (
       <th
         className={`${admin.thLeft} ${styles.sortable} ${lowPriority ? styles.lowPriority : ''}`}
         aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
       >
-        <button type="button" className={styles.sortBtn} onClick={() => sortBy(k)}>
-          {label}
-          <span className={styles.arrow} aria-hidden>
-            {arrow(k)}
-          </span>
-        </button>
+        <span className={styles.thInner}>
+          <button type="button" className={styles.sortBtn} onClick={() => sortBy(k)}>
+            {label}
+            <span className={styles.arrow} aria-hidden>
+              {arrow(k)}
+            </span>
+          </button>
+          {info && <InfoTip>{info}</InfoTip>}
+        </span>
       </th>
     );
   };
@@ -568,18 +582,35 @@ export default function AnalyticsPage() {
                   <Th k="status" label="Status" />
                   {isAdmin && <Th k="buyerName" label="Buyer" />}
                   {isSuper && <Th k="companyName" label="Company" />}
-                  <Th k="spendUsd" label="Spend" />
-                  <th style={{ textAlign: 'right' }}>Budget</th>
-                  <Th k="revenueUsd" label="Revenue" />
-                  <Th k="profitUsd" label="Profit" />
-                  <Th k="roi" label="ROI" />
-                  <Th k="conversions" label="Conv" />
-                  <Th k="cpa" label="CPA" lowPriority />
-                  <Th k="clicks" label="Clicks" />
-                  <Th k="cpc" label="CPC" lowPriority />
-                  <Th k="ctr" label="CTR" lowPriority />
-                  <Th k="impressions" label="Impr" lowPriority />
-                  <Th k="rpc" label="RPC" lowPriority />
+                  <Th k="spendUsd" label="Spend" info="Total spent on Facebook ads for this campaign in the selected period." />
+                  <th style={{ textAlign: 'right' }}>
+                    <span className={styles.thInner}>
+                      Budget
+                      <InfoTip>The campaign&apos;s configured daily budget on Facebook.</InfoTip>
+                    </span>
+                  </th>
+                  <Th
+                    k="revenueUsd"
+                    label="Revenue"
+                    info="AdSense for Search (AFS) earnings from the article pages, attributed back to this campaign's ads."
+                  />
+                  <Th k="profitUsd" label="Profit" info="Revenue minus ad spend." />
+                  <Th
+                    k="roi"
+                    label="ROI"
+                    info="Net return = profit ÷ spend. Revenue can lag spend by a few hours, so a brand-new campaign often shows a steep negative ROI (down to −100%) before its earnings catch up."
+                  />
+                  <Th
+                    k="conversions"
+                    label="Conv"
+                    info="Facebook pixel conversions — the optimization event (e.g. Search) recorded for this campaign."
+                  />
+                  <Th k="cpa" label="CPA" lowPriority info="Cost per acquisition = spend ÷ conversions." />
+                  <Th k="clicks" label="Clicks" info="Link clicks on the campaign's ads." />
+                  <Th k="cpc" label="CPC" lowPriority info="Cost per click = spend ÷ clicks." />
+                  <Th k="ctr" label="CTR" lowPriority info="Click-through rate = clicks ÷ impressions." />
+                  <Th k="impressions" label="Impr" lowPriority info="Impressions — how many times the ads were shown." />
+                  <Th k="rpc" label="RPC" lowPriority info="Revenue per click = AFS revenue ÷ clicks." />
                   <th aria-label="Actions"></th>
                 </tr>
               </thead>

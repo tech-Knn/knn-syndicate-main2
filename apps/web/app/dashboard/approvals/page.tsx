@@ -420,7 +420,7 @@ export default function ApprovalsPage() {
                   </span>
                   <span>
                     <b>{money(dailyBudgetCents(c))}</b>/day ({c.budgetMode === 'CAMPAIGN' ? 'CBO' : 'ABO'}
-                    <InfoTip label="Budget optimization mode" align="end">
+                    <InfoTip>
                       {c.budgetMode === 'CAMPAIGN'
                         ? 'CBO — one daily budget for the whole campaign; Facebook splits it across ad sets.'
                         : 'ABO — a separate daily budget for each ad set.'}

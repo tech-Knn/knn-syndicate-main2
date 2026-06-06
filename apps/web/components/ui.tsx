@@ -15,11 +15,13 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { Tooltip } from './tooltip';
 import styles from './ui.module.css';
 
 export { DateRangePicker, type DateRange } from './date-range';
 export { DateTimePicker } from './date-time';
 export { SearchSelect, type SearchOption } from './search-select';
+export { Tooltip } from './tooltip';
 
 export function Spinner({ className }: { className?: string }) {
   return <span className={`${styles.spinner} ${className ?? ''}`} aria-hidden />;
@@ -113,7 +115,6 @@ export function StatTile({
   tone = 'neutral',
   spark,
   info,
-  infoAlign = 'start',
 }: {
   label: string;
   value: ReactNode;
@@ -124,17 +125,12 @@ export function StatTile({
   spark?: ReactNode;
   /** Optional plain-language definition shown via an (i) tooltip next to the label. */
   info?: ReactNode;
-  infoAlign?: 'center' | 'start' | 'end';
 }) {
   return (
     <div className={styles.stat}>
       <span className={styles.statLabel}>
         {label}
-        {info != null && (
-          <InfoTip label={`About ${label}`} align={infoAlign}>
-            {info}
-          </InfoTip>
-        )}
+        {info != null && <InfoTip>{info}</InfoTip>}
       </span>
       <span className={styles.statValue} title={valueTitle}>
         {value}
@@ -153,24 +149,13 @@ export function StatTile({
  * no positioning JS to drift or break. Use it next to a short label to define an acronym.
  * `align` controls which edge the bubble anchors to so it won't run off-screen.
  */
-export function InfoTip({
-  children,
-  label = 'More information',
-  align = 'center',
-}: {
-  children: ReactNode;
-  label?: string;
-  align?: 'center' | 'start' | 'end';
-}) {
+export function InfoTip({ children, label }: { children: ReactNode; label?: string }) {
   return (
-    <span className={styles.infoTip}>
-      <button type="button" className={styles.infoTipBtn} aria-label={label}>
+    <Tooltip content={children} srLabel={label}>
+      <span className={styles.infoTipDot} aria-hidden>
         i
-      </button>
-      <span role="tooltip" className={`${styles.infoTipBubble} ${styles[`tip-${align}`]}`}>
-        {children}
       </span>
-    </span>
+    </Tooltip>
   );
 }
 

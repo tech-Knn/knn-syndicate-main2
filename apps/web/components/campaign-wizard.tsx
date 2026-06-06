@@ -36,7 +36,7 @@ import {
 } from '@knn/shared';
 import { ApiError, auth, campaigns as campaignsApi, facebook, getStoredUser, uploads as uploadsApi } from '@/lib/api';
 import { type Campaign, type FbAccount, type FbPage, type FbPixel, type OfferDomainOption } from '@/lib/types';
-import { Banner, Button, Card, DateTimePicker, SearchSelect, Spinner } from './ui';
+import { Banner, Button, Card, DateTimePicker, InfoTip, SearchSelect, Spinner } from './ui';
 import styles from './campaign-wizard.module.css';
 
 /* ── Schedule time zones ───────────────────────────────────────────────────────────────────────
@@ -1592,6 +1592,11 @@ function ReviewStep({ form, accounts, pages, offers, issues }: { form: CampaignF
           <span className={styles.summaryKey}>Objective · budget</span>
           <span className={styles.summaryVal}>
             {form.objective.replace('OUTCOME_', '')} · {form.budgetMode === 'CAMPAIGN' ? 'CBO' : 'ABO'}
+            <InfoTip>
+              {form.budgetMode === 'CAMPAIGN'
+                ? 'CBO — one daily budget for the whole campaign; Facebook splits it across ad sets.'
+                : 'ABO — a separate daily budget for each ad set.'}
+            </InfoTip>
           </span>
         </div>
         {form.specialAdCategories.length > 0 && (

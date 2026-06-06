@@ -368,7 +368,6 @@ export default function DashboardHome() {
                   tone={roiTone(t.roi)}
                   sub={t.roi < 0 ? 'Below break-even' : `${t.conversions.toLocaleString()} conversions`}
                   info="Net return = profit ÷ ad spend. Revenue can lag spend by a few hours, so a brand-new campaign often shows a steep negative ROI before its earnings catch up."
-                  infoAlign="end"
                 />
                 {isAdmin && (
                   <StatTile
@@ -377,7 +376,6 @@ export default function DashboardHome() {
                     valueTitle={formatUsd(t.marginUsd)}
                     sub="Your cut"
                     info="KNN's configured share of each company's AFS revenue. The remainder is the company's own margin."
-                    infoAlign="end"
                   />
                 )}
               </>
