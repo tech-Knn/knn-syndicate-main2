@@ -3,6 +3,7 @@
 import { type ComponentType, type ReactNode, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { BrandMark } from '@/components/brand';
 import { CommandPalette, type Command } from '@/components/command-palette';
 import {
   IconAnalytics,
@@ -157,7 +158,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         <div className={styles.brand}>
           <Link href="/dashboard" className={styles.brandLink} aria-label="KNN Syndicate — home">
             <span className={styles.brandLogo} aria-hidden>
-              K
+              <BrandMark size={32} />
             </span>
             <span className={styles.brandText}>
               <span className={styles.brandMark}>KNN</span>

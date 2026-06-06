@@ -3,6 +3,7 @@
 import { type FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { BrandMark } from '@/components/brand';
 import { Banner, Button, Card, Spinner, TextField } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '../providers';
@@ -66,6 +67,9 @@ export default function LoginPage() {
     <main className={styles.wrap}>
       <Card className={styles.card}>
         <div className={styles.head}>
+          <span className={styles.brandBadge} aria-hidden>
+            <BrandMark size={46} />
+          </span>
           <span className="eyebrow">KNN Syndicate</span>
           <h1 className={`serif ${styles.title}`}>Welcome back</h1>
           <p className={styles.subtitle}>Sign in to the arbitrage console.</p>
