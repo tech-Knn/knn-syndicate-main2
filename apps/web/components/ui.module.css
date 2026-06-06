@@ -278,7 +278,13 @@
 .skeleton {
   display: block;
   border-radius: var(--radius-sm);
-  background: linear-gradient(90deg, var(--surface-2) 25%, var(--border) 50%, var(--surface-2) 75%);
+  /* Subtle indigo-tinted sweep instead of flat gray — on-brand loading shimmer. */
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 25%,
+    color-mix(in srgb, var(--rust) 14%, var(--surface-2)) 50%,
+    var(--surface-2) 75%
+  );
   background-size: 200% 100%;
   animation: knn-shimmer 1.4s ease-in-out infinite;
   min-height: 1rem;
@@ -366,13 +372,14 @@
 .emptyIcon {
   display: grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: var(--surface-2);
-  border: 1px solid var(--border-strong);
-  color: var(--muted);
-  font-size: 1.3rem;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: linear-gradient(140deg, rgba(var(--rust-rgb), 0.16), rgba(var(--rust-rgb), 0.04));
+  border: 1px solid rgba(var(--rust-rgb), 0.22);
+  box-shadow: 0 0 0 6px rgba(var(--rust-rgb), 0.05);
+  color: var(--rust);
+  font-size: 1.4rem;
 }
 .emptyTitle {
   font-family: var(--font-serif);
