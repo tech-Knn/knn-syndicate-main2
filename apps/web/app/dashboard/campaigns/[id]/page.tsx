@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useState } from 'react';
 import { CampaignWizard } from '@/components/campaign-wizard';
 import { ApiError, campaigns } from '@/lib/api';
 import { Banner, Button, Card, Spinner, useConfirm, useToast } from '@/components/ui';
-import { type Campaign } from '@/lib/types';
+import { type Campaign, type CampaignAdSet } from '@/lib/types';
 import { OffersEditor } from './offers-editor';
 
 /** The campaign's effective daily budget (cents) + whether it's live-editable here. CBO → the
@@ -21,7 +21,13 @@ function liveBudget(c: Campaign): { cents: number | null; editable: boolean; per
  * push it to Facebook instantly, WITHOUT releasing the AdSense channel or re-queuing for approval.
  * Quick ±/scale buttons make trimming a loser / scaling a winner a one-click move.
  */
-function LiveBudget({ campaign, onSaved }: { campaign: Campaign; onSaved: (cents: number) => void }) {
+function LiveBudget({
+  campaign,
+  onSaved,
+}: {
+  campaign: Campaign;
+  onSaved: (next: { adSetId?: string; cents: number }) => void;
+}) {
   const toast = useToast();
   const { cents, editable, perAdSet } = liveBudget(campaign);
   const [draft, setDraft] = useState<string>(cents != null ? (cents / 100).toFixed(2) : '');
@@ -40,7 +46,7 @@ function LiveBudget({ campaign, onSaved }: { campaign: Campaign; onSaved: (cents
     setBusy(true);
     try {
       const res = await campaigns.setBudget(campaign.id, rounded);
-      onSaved(res.dailyBudgetCents);
+      onSaved({ cents: res.dailyBudgetCents });
       toast.success(`Daily budget set to $${(res.dailyBudgetCents / 100).toFixed(2)} — live on Facebook.`);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not update the budget.');
@@ -50,10 +56,48 @@ function LiveBudget({ campaign, onSaved }: { campaign: Campaign; onSaved: (cents
   };
 
   if (perAdSet) {
+    const sets = campaign.adSets ?? [];
+    const total = sets.reduce((sum, s) => sum + (s.dailyBudgetCents ?? 0), 0);
+    const rowsEditable = campaign.status === 'ACTIVE' || campaign.status === 'PAUSED';
     return (
-      <Card style={{ padding: '0.9rem 1.1rem' }}>
-        <strong style={{ color: 'var(--cream)' }}>Daily budget</strong>{' '}
-        <span style={{ color: 'var(--muted)' }}>— this campaign uses per-ad-set budgets across multiple ad sets; edit each ad set individually (coming soon).</span>
+      <Card style={{ padding: '0.9rem 1.1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)' }}>DAILY BUDGET · PER AD SET</span>
+          <span style={{ fontSize: '0.72rem', color: 'var(--muted-2)' }}>
+            Each ad set carries its own budget (ABO). Saving pushes to Facebook instantly — no channel release, no
+            re-review.
+          </span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          {sets.map((set, i) => (
+            <AdSetBudgetRow
+              key={set.id}
+              campaignId={campaign.id}
+              adSet={set}
+              index={i}
+              editable={rowsEditable}
+              onSaved={(c) => onSaved({ adSetId: set.id, cents: c })}
+            />
+          ))}
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+            gap: '0.75rem',
+            borderTop: '1px solid var(--border)',
+            paddingTop: '0.6rem',
+          }}
+        >
+          <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Total daily budget</span>
+          <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--cream)', fontVariantNumeric: 'tabular-nums' }}>
+            ${(total / 100).toFixed(2)}{' '}
+            <span style={{ fontSize: '0.78rem', fontWeight: 400, color: 'var(--muted-2)' }}>
+              / day across {sets.length} ad sets
+            </span>
+          </span>
+        </div>
       </Card>
     );
   }
@@ -89,6 +133,89 @@ function LiveBudget({ campaign, onSaved }: { campaign: Campaign; onSaved: (cents
         <Button variant="ghost" onClick={() => bump(1.5)} disabled={!editable || busy} title="Scale 50%">+50%</Button>
       </div>
     </Card>
+  );
+}
+
+/** One ad set's live daily-budget editor (multi-ad-set ABO) — saves via the per-ad-set endpoint,
+ *  which pushes to Facebook instantly without releasing the channel or re-queuing for approval. */
+function AdSetBudgetRow({
+  campaignId,
+  adSet,
+  index,
+  editable,
+  onSaved,
+}: {
+  campaignId: string;
+  adSet: CampaignAdSet;
+  index: number;
+  editable: boolean;
+  onSaved: (cents: number) => void;
+}) {
+  const toast = useToast();
+  const cents = adSet.dailyBudgetCents;
+  const label = adSet.name || `Ad set ${index + 1}`;
+  const [draft, setDraft] = useState<string>(cents != null ? (cents / 100).toFixed(2) : '');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setDraft(cents != null ? (cents / 100).toFixed(2) : '');
+  }, [cents]);
+
+  const commit = async (nextCents: number): Promise<void> => {
+    const rounded = Math.round(nextCents);
+    if (!Number.isFinite(rounded) || rounded < 200) {
+      toast.error('Minimum daily budget is $2.00 (Facebook minimum).');
+      return;
+    }
+    if (rounded === cents) return; // no-op — don't spend an FB write
+    setBusy(true);
+    try {
+      const res = await campaigns.setAdSetBudget(campaignId, adSet.id, rounded);
+      onSaved(res.dailyBudgetCents);
+      toast.success(`${label}: daily budget set to $${(res.dailyBudgetCents / 100).toFixed(2)} — live on Facebook.`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not update the budget.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const bump = (factor: number): void => void commit(Math.max(200, (cents ?? 0) * factor));
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+      <span style={{ flex: '1 1 140px', minWidth: 0, color: 'var(--cream)', fontWeight: 500, fontSize: '0.9rem' }}>
+        {label}
+      </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        <span style={{ color: 'var(--muted)' }}>$</span>
+        <input
+          type="number"
+          min={2}
+          step="0.01"
+          value={draft}
+          disabled={!editable || busy}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && void commit(Math.round(Number(draft) * 100))}
+          aria-label={`Daily budget for ${label} in dollars`}
+          style={{ width: '6rem', background: 'var(--bg)', border: '1px solid var(--border-interactive)', borderRadius: 'var(--radius-sm)', color: 'var(--cream)', padding: '0.45rem 0.55rem', fontSize: '0.9rem' }}
+        />
+        <Button onClick={() => void commit(Math.round(Number(draft) * 100))} loading={busy} disabled={!editable}>
+          Save
+        </Button>
+      </div>
+      <div style={{ display: 'flex', gap: '0.35rem' }} aria-label={`Quick budget scaling for ${label}`}>
+        <Button variant="ghost" onClick={() => bump(0.8)} disabled={!editable || busy} title="Cut 20%">
+          −20%
+        </Button>
+        <Button variant="ghost" onClick={() => bump(1.2)} disabled={!editable || busy} title="Scale 20%">
+          +20%
+        </Button>
+        <Button variant="ghost" onClick={() => bump(1.5)} disabled={!editable || busy} title="Scale 50%">
+          +50%
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -258,14 +385,19 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
       {LIVE_TOGGLEABLE.has(c.status) && (
         <LiveBudget
           campaign={c}
-          onSaved={(cents) =>
-            setCampaign((prev) =>
-              !prev || prev === 'error'
-                ? prev
-                : prev.budgetMode === 'CAMPAIGN'
-                  ? { ...prev, dailyBudgetCents: cents }
-                  : { ...prev, adSets: prev.adSets.map((s, i) => (i === 0 ? { ...s, dailyBudgetCents: cents } : s)) },
-            )
+          onSaved={(next) =>
+            setCampaign((prev) => {
+              if (!prev || prev === 'error') return prev;
+              if (next.adSetId) {
+                return {
+                  ...prev,
+                  adSets: prev.adSets.map((s) => (s.id === next.adSetId ? { ...s, dailyBudgetCents: next.cents } : s)),
+                };
+              }
+              return prev.budgetMode === 'CAMPAIGN'
+                ? { ...prev, dailyBudgetCents: next.cents }
+                : { ...prev, adSets: prev.adSets.map((s, i) => (i === 0 ? { ...s, dailyBudgetCents: next.cents } : s)) };
+            })
           }
         />
       )}

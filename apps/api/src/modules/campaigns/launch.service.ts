@@ -403,7 +403,7 @@ export async function updateCampaignBudget(
           409,
           launched.length === 0
             ? 'This campaign has no launched ad set to budget.'
-            : 'This campaign uses per-ad-set budgets across multiple ad sets — edit each ad set’s budget individually (coming soon).',
+            : 'This campaign uses per-ad-set budgets across multiple ad sets — edit each ad set’s budget individually (open the campaign to edit them).',
         );
       }
       target = { kind: 'adset', fbId: launched[0]!.fbAdSetId!, adSetId: launched[0]!.id };

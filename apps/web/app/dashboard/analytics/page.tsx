@@ -45,6 +45,7 @@ function BudgetCell({
   save,
   onSaved,
   onError,
+  emptyLabel = '—',
 }: {
   cents: number | null;
   editable: boolean;
@@ -52,6 +53,8 @@ function BudgetCell({
   save: (cents: number) => Promise<{ dailyBudgetCents: number }>;
   onSaved?: (cents: number) => void;
   onError: (msg: string) => void;
+  /** Shown when there's no single editable budget (e.g. multi-ad-set ABO → "Per ad set"). */
+  emptyLabel?: string;
 }) {
   const [current, setCurrent] = useState(centsProp);
   const [editing, setEditing] = useState(false);
@@ -59,8 +62,8 @@ function BudgetCell({
   const [busy, setBusy] = useState(false);
   useEffect(() => setCurrent(centsProp), [centsProp]);
 
-  const display = current != null ? formatUsd(current / 100) : '—';
-  if (!editable) return <span>{display}</span>;
+  const display = current != null ? formatUsd(current / 100) : emptyLabel;
+  if (!editable) return <span className={current == null && emptyLabel !== '—' ? admin.subtle : undefined}>{display}</span>;
 
   const start = (): void => {
     setDraft(((current ?? 0) / 100).toFixed(2));
@@ -713,6 +716,7 @@ export default function AnalyticsPage() {
                           <BudgetCell
                             cents={r.dailyBudgetCents}
                             editable={(r.status === 'ACTIVE' || r.status === 'PAUSED') && (r.budgetMode === 'CAMPAIGN' || r.adSetCount === 1)}
+                            emptyLabel={r.budgetMode === 'AD_SET' && r.adSetCount > 1 ? 'Per ad set' : undefined}
                             label={r.name}
                             save={(c) => campaignApi.setBudget(r.id, c)}
                             onSaved={(c) => setRows((prev) => (prev ? prev.map((x) => (x.id === r.id ? { ...x, dailyBudgetCents: c } : x)) : prev))}
