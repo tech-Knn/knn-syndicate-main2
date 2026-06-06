@@ -19,7 +19,8 @@ import {
   IconTeam,
 } from '@/components/icons';
 import { ThemeToggle, useTheme } from '@/components/theme';
-import { Spinner } from '@/components/ui';
+import { Spinner, useToast } from '@/components/ui';
+import { facebook, stats } from '@/lib/api';
 import { type Role } from '@/lib/types';
 import { useAuth } from '../providers';
 import styles from './dashboard.module.css';
@@ -78,6 +79,7 @@ function initialsOf(name: string, email: string): string {
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const { user, state, logout } = useAuth();
   const { toggle: toggleTheme } = useTheme();
+  const toast = useToast();
   const router = useRouter();
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -88,12 +90,21 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     if (state === 'anon') router.replace('/login');
   }, [state, router]);
 
-  // ⌘K / Ctrl-K toggles the command palette anywhere in the dashboard.
+  // ⌘K / Ctrl-K toggles the command palette anywhere; "/" opens it (unless you're typing).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setCmdOpen((o) => !o);
+        return;
+      }
+      if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const t = e.target as HTMLElement | null;
+        const typing = t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA' || t?.isContentEditable;
+        if (!typing) {
+          e.preventDefault();
+          setCmdOpen(true);
+        }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -135,10 +146,33 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     }
   };
 
+  const runReconcile = async () => {
+    try {
+      await stats.adminReconcile();
+      toast.success('Facebook status sync queued — campaign statuses will refresh shortly.');
+    } catch {
+      toast.error('Couldn’t queue the status sync. Try again.');
+    }
+  };
+  const runSyncAccounts = async () => {
+    try {
+      const r = await facebook.adminSyncAll();
+      toast.success(`Synced ${r.synced}/${r.connections} Facebook connection${r.connections === 1 ? '' : 's'}.`);
+    } catch {
+      toast.error('Couldn’t sync Facebook accounts. Try again.');
+    }
+  };
+
   const commands: Command[] = [
     ...items.map((it) => ({ id: `nav-${it.href}`, label: it.label, hint: 'Page', href: it.href, Icon: it.Icon, keywords: 'go to navigate open' })),
     ...(user.role !== 'SUPER_ADMIN'
       ? [{ id: 'new-campaign', label: 'New campaign', hint: 'Action', href: '/dashboard/campaigns/new', Icon: IconCampaigns, keywords: 'create launch build' }]
+      : []),
+    ...(user.role === 'SUPER_ADMIN'
+      ? [
+          { id: 'sync-fb-status', label: 'Sync Facebook statuses now', hint: 'Action', action: () => void runReconcile(), Icon: IconFacebook, keywords: 'reconcile refresh delivery status facebook meta' },
+          { id: 'sync-fb-accounts', label: 'Sync Facebook accounts now', hint: 'Action', action: () => void runSyncAccounts(), Icon: IconFacebook, keywords: 'refresh accounts pages pixels facebook meta inventory' },
+        ]
       : []),
     { id: 'toggle-theme', label: 'Toggle light / dark theme', hint: 'Action', action: toggleTheme, keywords: 'dark light mode appearance color' },
     { id: 'sign-out', label: 'Sign out', hint: 'Action', action: () => void onSignOut(), Icon: IconSignOut, keywords: 'logout log out exit' },

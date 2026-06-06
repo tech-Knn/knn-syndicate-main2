@@ -172,6 +172,13 @@ const cpc = (r: CampaignPerf): number => (r.clicks ? r.spendUsd / r.clicks : 0);
 const cpa = (r: CampaignPerf): number => (r.conversions ? r.spendUsd / r.conversions : 0);
 const rpc = (r: CampaignPerf): number => (r.clicks ? r.revenueUsd / r.clicks : 0);
 
+/** A subtle in-cell data bar scaled to the largest value in view — per-campaign
+ *  distribution at a glance, no extra columns. Returns null for empty/zero values. */
+function dataBar(value: number, max: number, cls: string): React.ReactNode {
+  if (value <= 0 || max <= 0) return null;
+  return <span className={cls} style={{ width: `${Math.max(4, Math.round((value / max) * 100))}%` }} aria-hidden />;
+}
+
 type SortKey =
   | 'name' | 'status' | 'buyerName' | 'companyName'
   | 'spendUsd' | 'revenueUsd' | 'profitUsd' | 'roi' | 'conversions' | 'cpa' | 'clicks' | 'cpc' | 'ctr' | 'impressions' | 'rpc';
@@ -345,6 +352,15 @@ export default function AnalyticsPage() {
       rpc: t.clicks ? t.revenue / t.clicks : 0,
     };
   }, [filtered]);
+
+  // Column maxima for the in-cell data bars (scaled to the current filtered view).
+  const maxes = useMemo(
+    () => ({
+      spend: Math.max(0, ...filtered.map((r) => r.spendUsd)),
+      revenue: Math.max(0, ...filtered.map((r) => r.revenueUsd)),
+    }),
+    [filtered],
+  );
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
@@ -689,7 +705,10 @@ export default function AnalyticsPage() {
                         </td>
                         {isAdmin && <td className={admin.subtle}>{r.buyerName}</td>}
                         {isSuper && <td className={admin.subtle}>{r.companyName}</td>}
-                        <td className={admin.num}>{num(r.spendUsd)}</td>
+                        <td className={`${admin.num} ${styles.barTd}`}>
+                          {dataBar(r.spendUsd, maxes.spend, styles.barSpend)}
+                          {num(r.spendUsd)}
+                        </td>
                         <td className={admin.num}>
                           <BudgetCell
                             cents={r.dailyBudgetCents}
@@ -700,7 +719,10 @@ export default function AnalyticsPage() {
                             onError={setError}
                           />
                         </td>
-                        <td className={admin.num}>{num(r.revenueUsd)}</td>
+                        <td className={`${admin.num} ${styles.barTd}`}>
+                          {dataBar(r.revenueUsd, maxes.revenue, styles.barRevenue)}
+                          {num(r.revenueUsd)}
+                        </td>
                         <td className={`${admin.num} ${r.profitUsd > 0 ? styles.pos : r.profitUsd < 0 ? styles.neg : ''}`}>{num(r.profitUsd)}</td>
                         <td className={`${admin.num} ${r.roi > 0 ? styles.pos : r.roi < 0 ? styles.neg : ''}`}>{formatRoi(r.roi)}</td>
                         <td className={admin.num}>{fmtCount(r.conversions)}</td>

@@ -74,6 +74,27 @@
   padding: 0 !important;
   white-space: nowrap;
 }
+/* In-cell data bars: a thin track under the right-aligned number, scaled to the
+   column max in the current view. Spend = indigo, revenue = green. */
+.barTd {
+  position: relative;
+}
+.barSpend,
+.barRevenue {
+  position: absolute;
+  right: 0.6rem;
+  bottom: 5px;
+  height: 3px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+.barSpend {
+  background: rgba(var(--rust-rgb), 0.42);
+}
+.barRevenue {
+  background: rgba(var(--green-rgb), 0.55);
+}
+
 /* Filter-reactive aggregate KPIs above the table. */
 .summaryStrip {
   display: grid;
