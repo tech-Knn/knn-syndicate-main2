@@ -9,7 +9,7 @@
   background: var(--overlay);
   -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
-  animation: knn-fade 0.12s ease;
+  animation: knn-fade 0.18s var(--ease-out);
 }
 .palette {
   width: 100%;
@@ -19,7 +19,7 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
-  animation: knn-rise 0.14s ease;
+  animation: knn-scale-in 0.22s var(--ease-out);
 }
 .searchRow {
   display: flex;

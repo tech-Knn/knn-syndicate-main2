@@ -337,7 +337,7 @@ export default function DashboardHome() {
           )}
 
           {/* KPI tiles — dimmed while a brand-new account has no real data yet */}
-          <div className={`${styles.kpis} ${isNewBuyer ? styles.deEmphasized : ''}`}>
+          <div className={`${styles.kpis} stagger ${isNewBuyer ? styles.deEmphasized : ''}`}>
             {t ? (
               <>
                 <StatTile

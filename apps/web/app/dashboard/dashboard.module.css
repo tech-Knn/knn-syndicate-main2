@@ -78,19 +78,24 @@
   font-weight: 500;
   transition:
     background 0.14s ease,
-    color 0.14s ease;
+    color 0.14s ease,
+    transform 0.14s var(--ease-out);
 }
 .navLink svg {
   color: var(--muted-2);
   flex-shrink: 0;
-  transition: color 0.14s ease;
+  transition:
+    color 0.14s ease,
+    transform 0.14s var(--ease-out);
 }
 .navLink:hover {
   background: var(--surface-2);
   color: var(--cream);
+  transform: translateX(2px);
 }
 .navLink:hover svg {
   color: var(--cream);
+  transform: scale(1.08);
 }
 .navActive,
 .navActive:hover {
@@ -334,10 +339,14 @@
   max-width: var(--shell-max);
   margin: 0 auto;
   padding: var(--space-6) var(--space-6) var(--space-8);
-  animation: knn-rise 0.3s ease both;
 }
 .main:focus {
   outline: none;
+}
+/* Per-route entrance: keyed by pathname in the layout, so it replays on every
+   navigation (not just first load, which is all the old .main animation did). */
+.routeView {
+  animation: knn-rise 0.32s var(--ease-out) both;
 }
 
 .center {

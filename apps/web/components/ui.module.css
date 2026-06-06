@@ -22,7 +22,7 @@
     opacity 0.15s ease;
 }
 .btn:active {
-  transform: translateY(1px);
+  transform: translateY(1px) scale(0.99);
 }
 .btn:disabled {
   opacity: var(--disabled-opacity);
@@ -525,7 +525,7 @@
   padding: var(--space-4);
   background: var(--overlay);
   backdrop-filter: blur(3px);
-  animation: knn-fade 0.12s ease;
+  animation: knn-fade 0.18s var(--ease-out);
 }
 .modal {
   width: 100%;
@@ -536,7 +536,7 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: var(--elevation-3);
-  animation: knn-rise 0.16s ease;
+  animation: knn-scale-in 0.24s var(--ease-out);
 }
 .modal-sm {
   max-width: 420px;
@@ -621,7 +621,7 @@
   box-shadow: var(--elevation-3);
   font-size: var(--text-md);
   color: var(--cream);
-  animation: knn-rise 0.18s ease;
+  animation: knn-slide-in 0.28s var(--ease-out);
 }
 .toastDot {
   width: 0.6rem;

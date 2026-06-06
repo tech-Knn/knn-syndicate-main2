@@ -224,7 +224,10 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         </header>
 
         <main id="main-content" tabIndex={-1} className={styles.main}>
-          {children}
+          {/* Keyed by route so the view re-mounts and replays its entrance on every navigation. */}
+          <div key={pathname} className={styles.routeView}>
+            {children}
+          </div>
         </main>
       </div>
 
