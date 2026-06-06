@@ -74,6 +74,14 @@
   padding: 0 !important;
   white-space: nowrap;
 }
+/* Filter-reactive aggregate KPIs above the table. */
+.summaryStrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
 /* Wraps the sort button + its (i) tooltip so they stay adjacent in the header cell. */
 .thInner {
   display: inline-flex;

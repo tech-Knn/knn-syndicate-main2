@@ -24,6 +24,7 @@ import {
   SearchSelect,
   Segmented,
   Skeleton,
+  StatTile,
 } from '@/components/ui';
 import { FbStatusBadge } from '@/components/fb-status-badge';
 import { campaigns as campaignApi, facebook, stats } from '@/lib/api';
@@ -221,6 +222,21 @@ export default function AnalyticsPage() {
   // Compact view (default) shows the core money columns; "All columns" reveals the secondary
   // metrics (CPA/CPC/CTR/Impr/RPC), which are marked .lowPriority. CSV export stays full either way.
   const [showAllCols, setShowAllCols] = useState(false);
+  // Persist the column-density choice so it survives reloads.
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('knn.analytics.allCols') === '1') setShowAllCols(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem('knn.analytics.allCols', showAllCols ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, [showAllCols]);
 
   const load = useCallback(async (r: DateRange, silent = false) => {
     if (!silent) setRows(null);
@@ -574,6 +590,33 @@ export default function AnalyticsPage() {
         />
       ) : (
         <>
+          {/* At-a-glance aggregate for the current filter — no need to scroll to the footer. */}
+          <div className={styles.summaryStrip}>
+            <StatTile
+              label="Spend"
+              value={num(totals.spend)}
+              info="Total spent on Facebook ads across the campaigns shown."
+            />
+            <StatTile
+              label="Revenue"
+              value={num(totals.revenue)}
+              info="AdSense for Search (AFS) earnings attributed to the campaigns shown."
+            />
+            <StatTile
+              label="Profit"
+              value={num(totals.profit)}
+              tone={totals.profit > 0 ? 'pos' : totals.profit < 0 ? 'neg' : 'neutral'}
+              sub={totals.profit >= 0 ? 'In the green' : 'In the red'}
+              info="Revenue minus ad spend across the campaigns shown."
+            />
+            <StatTile
+              label="ROI"
+              value={formatRoi(totals.roi)}
+              tone={totals.roi > 0 ? 'pos' : totals.roi < 0 ? 'neg' : 'neutral'}
+              sub={`${fmtCount(totals.conv)} conversions`}
+              info="Net return = profit ÷ spend across the campaigns shown. Revenue can lag spend by a few hours, so brand-new campaigns look worse than they are."
+            />
+          </div>
           <div className={`${admin.tableWrap} ${styles.tableScroll} ${showAllCols ? '' : styles.compactCols}`}>
             <table className={admin.table}>
               <thead>
