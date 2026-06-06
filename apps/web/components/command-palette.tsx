@@ -1,6 +1,6 @@
 'use client';
 
-import { type ComponentType, useEffect, useMemo, useRef, useState } from 'react';
+import { type ComponentType, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { IconSearch } from './icons';
 import styles from './command-palette.module.css';
@@ -36,6 +36,9 @@ export function CommandPalette({
   const [idx, setIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const baseId = useId();
+  const listboxId = `${baseId}-listbox`;
+  const optionId = (cmdId: string) => `${baseId}-opt-${cmdId}`;
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -101,33 +104,39 @@ export function CommandPalette({
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={onKeyDown}
             aria-label="Search pages and actions"
+            role="combobox"
+            aria-expanded={filtered.length > 0}
+            aria-controls={listboxId}
+            aria-activedescendant={filtered[idx] ? optionId(filtered[idx].id) : undefined}
+            aria-autocomplete="list"
             autoComplete="off"
             spellCheck={false}
           />
           <kbd className={styles.kbd}>Esc</kbd>
         </div>
-        <ul ref={listRef} className={styles.list}>
+        <ul ref={listRef} id={listboxId} role="listbox" aria-label="Pages and actions" className={styles.list}>
           {filtered.length === 0 ? (
             <li className={styles.empty}>No matches for “{q}”</li>
           ) : (
             filtered.map((c, i) => (
-              <li key={c.id}>
-                <button
-                  type="button"
-                  className={`${styles.item} ${i === idx ? styles.itemActive : ''}`}
-                  onMouseMove={() => setIdx(i)}
-                  onClick={() => run(c)}
-                >
-                  {c.Icon ? (
-                    <span className={styles.itemIcon} aria-hidden>
-                      <c.Icon size={16} />
-                    </span>
-                  ) : (
-                    <span className={styles.itemIcon} aria-hidden />
-                  )}
-                  <span className={styles.itemLabel}>{c.label}</span>
-                  {c.hint && <span className={styles.itemHint}>{c.hint}</span>}
-                </button>
+              <li
+                key={c.id}
+                id={optionId(c.id)}
+                role="option"
+                aria-selected={i === idx}
+                className={`${styles.item} ${i === idx ? styles.itemActive : ''}`}
+                onMouseMove={() => setIdx(i)}
+                onClick={() => run(c)}
+              >
+                {c.Icon ? (
+                  <span className={styles.itemIcon} aria-hidden>
+                    <c.Icon size={16} />
+                  </span>
+                ) : (
+                  <span className={styles.itemIcon} aria-hidden />
+                )}
+                <span className={styles.itemLabel}>{c.label}</span>
+                {c.hint && <span className={styles.itemHint}>{c.hint}</span>}
               </li>
             ))
           )}

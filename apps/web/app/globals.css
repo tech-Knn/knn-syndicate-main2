@@ -28,8 +28,8 @@
   --cream: #1a1f36; /* PRIMARY TEXT / ink (navy-slate) */
   --muted: #515a6e; /* secondary text — AA on white */
   --muted-2: #6a7283; /* tertiary text — AA on white */
-  --green: #1a8f5a;
-  --green-rgb: 26, 143, 90;
+  --green: #158450; /* darkened to clear AA (4.5:1) for small text on white */
+  --green-rgb: 21, 132, 80;
   --amber: #b45309;
   --amber-rgb: 180, 83, 9;
   --red: #d6303e;
@@ -117,7 +117,7 @@
   --gold-rgb: 167, 139, 250;
   --cream: #e7e9ef;
   --muted: #98a0ad;
-  --muted-2: #6d7682;
+  --muted-2: #7c8493; /* lightened to clear AA (4.5:1) for small text on dark surfaces */
   --green: #3ddc97;
   --green-rgb: 61, 220, 151;
   --amber: #f0a64a;
