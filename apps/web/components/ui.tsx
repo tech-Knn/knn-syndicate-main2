@@ -112,6 +112,8 @@ export function StatTile({
   sub,
   tone = 'neutral',
   spark,
+  info,
+  infoAlign = 'start',
 }: {
   label: string;
   value: ReactNode;
@@ -120,10 +122,20 @@ export function StatTile({
   sub?: ReactNode;
   tone?: 'pos' | 'neg' | 'neutral';
   spark?: ReactNode;
+  /** Optional plain-language definition shown via an (i) tooltip next to the label. */
+  info?: ReactNode;
+  infoAlign?: 'center' | 'start' | 'end';
 }) {
   return (
     <div className={styles.stat}>
-      <span className={styles.statLabel}>{label}</span>
+      <span className={styles.statLabel}>
+        {label}
+        {info != null && (
+          <InfoTip label={`About ${label}`} align={infoAlign}>
+            {info}
+          </InfoTip>
+        )}
+      </span>
       <span className={styles.statValue} title={valueTitle}>
         {value}
       </span>
@@ -132,6 +144,33 @@ export function StatTile({
         {spark && <span className={styles.statSpark}>{spark}</span>}
       </div>
     </div>
+  );
+}
+
+/**
+ * Inline jargon-definition tooltip. The trigger is a real focusable button (keyboard- and
+ * screen-reader-reachable) and the bubble reveals on hover AND focus-within via pure CSS —
+ * no positioning JS to drift or break. Use it next to a short label to define an acronym.
+ * `align` controls which edge the bubble anchors to so it won't run off-screen.
+ */
+export function InfoTip({
+  children,
+  label = 'More information',
+  align = 'center',
+}: {
+  children: ReactNode;
+  label?: string;
+  align?: 'center' | 'start' | 'end';
+}) {
+  return (
+    <span className={styles.infoTip}>
+      <button type="button" className={styles.infoTipBtn} aria-label={label}>
+        i
+      </button>
+      <span role="tooltip" className={`${styles.infoTipBubble} ${styles[`tip-${align}`]}`}>
+        {children}
+      </span>
+    </span>
   );
 }
 

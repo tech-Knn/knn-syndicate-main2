@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Badge, Banner, Button, Card, EmptyState, Skeleton, useConfirm, useToast } from '@/components/ui';
+import { Badge, Banner, Button, Card, EmptyState, InfoTip, Skeleton, useConfirm, useToast } from '@/components/ui';
 import { admin as adminApi, campaigns as campaignsApi } from '@/lib/api';
 import { type AdminOrg, type Campaign } from '@/lib/types';
 import { useAuth } from '../../providers';
@@ -419,7 +419,13 @@ export default function ApprovalsPage() {
                     {countAds(c) === 1 ? '' : 's'}
                   </span>
                   <span>
-                    <b>{money(dailyBudgetCents(c))}</b>/day ({c.budgetMode === 'CAMPAIGN' ? 'CBO' : 'ABO'})
+                    <b>{money(dailyBudgetCents(c))}</b>/day ({c.budgetMode === 'CAMPAIGN' ? 'CBO' : 'ABO'}
+                    <InfoTip label="Budget optimization mode" align="end">
+                      {c.budgetMode === 'CAMPAIGN'
+                        ? 'CBO — one daily budget for the whole campaign; Facebook splits it across ad sets.'
+                        : 'ABO — a separate daily budget for each ad set.'}
+                    </InfoTip>
+                    )
                   </span>
                   {c.racValue && (
                     <span>

@@ -344,6 +344,7 @@ export default function DashboardHome() {
                   label="Revenue"
                   value={formatUsdCompact(t.revenueUsd)}
                   valueTitle={formatUsd(t.revenueUsd)}
+                  info="Earnings from the AdSense for Search (AFS) unit on your article pages, attributed back to each ad in real time."
                   spark={<Sparkline values={series.map((p) => p.revenueUsd)} tone="gold" />}
                 />
                 <StatTile
@@ -366,6 +367,8 @@ export default function DashboardHome() {
                   valueTitle={`${formatRoi(t.roi)} net return (profit ÷ spend)`}
                   tone={roiTone(t.roi)}
                   sub={t.roi < 0 ? 'Below break-even' : `${t.conversions.toLocaleString()} conversions`}
+                  info="Net return = profit ÷ ad spend. Revenue can lag spend by a few hours, so a brand-new campaign often shows a steep negative ROI before its earnings catch up."
+                  infoAlign="end"
                 />
                 {isAdmin && (
                   <StatTile
@@ -373,6 +376,8 @@ export default function DashboardHome() {
                     value={formatUsdCompact(t.marginUsd)}
                     valueTitle={formatUsd(t.marginUsd)}
                     sub="Your cut"
+                    info="KNN's configured share of each company's AFS revenue. The remainder is the company's own margin."
+                    infoAlign="end"
                   />
                 )}
               </>

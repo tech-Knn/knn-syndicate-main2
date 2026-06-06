@@ -949,6 +949,11 @@ function OfferStep({
               Campaign (CBO)
             </button>
           </div>
+          <span className={styles.hint}>
+            {form.budgetMode === 'CAMPAIGN'
+              ? 'CBO (Campaign Budget Optimization): one daily budget for the whole campaign — Facebook spreads it across ad sets automatically.'
+              : 'ABO (Ad-set Budget Optimization): a separate daily budget you set for each ad set.'}
+          </span>
         </div>
         {form.budgetMode === 'CAMPAIGN' && (
           <div className={styles.field}>
