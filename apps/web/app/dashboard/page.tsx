@@ -204,6 +204,7 @@ export default function DashboardHome() {
   // A brand-new buyer with zero campaigns: this is the #1 conversion moment, so
   // we lead with an activation CTA and de-emphasize the (all-zero) KPIs + chart.
   const isNewBuyer = !error && !loading && campaigns !== null && campaigns.length === 0;
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
   // Hard failure (not a transient background refresh): show explicit error
   // placeholders + Retry rather than a forever-shimmering skeleton.
   const isError = !!error && (summary === null || campaigns === null);
@@ -257,19 +258,59 @@ export default function DashboardHome() {
         </Card>
       ) : (
         <>
-          {isNewBuyer && (
-            <Card className={styles.stateCard}>
-              <EmptyState
-                title="Launch your first campaign"
-                description="Pick your keywords, attach an article, and go live. As soon as traffic flows you’ll see real-time spend, revenue, and ROI right here."
-                action={
-                  <Link href="/dashboard/campaigns/new" className={styles.ctaLink}>
-                    <Button>New campaign</Button>
-                  </Link>
-                }
-              />
-            </Card>
-          )}
+          {isNewBuyer &&
+            (isSuperAdmin ? (
+              <Card className={styles.stateCard}>
+                <EmptyState
+                  title="No campaigns yet"
+                  description="Once media buyers connect Facebook and launch campaigns, platform-wide spend, revenue, and ROI will roll up here."
+                />
+              </Card>
+            ) : (
+              <Card className={styles.onboardCard}>
+                <div className={styles.onboardHead}>
+                  <span className={styles.cardTitle}>Get started in 3 steps</span>
+                  <p className={styles.onboardSub}>
+                    You’re a few minutes from your first live campaign — and real-time ROI.
+                  </p>
+                </div>
+                <ol className={styles.steps}>
+                  <li className={styles.step}>
+                    <span className={styles.stepNum}>1</span>
+                    <div className={styles.stepBody}>
+                      <span className={styles.stepTitle}>Connect Facebook</span>
+                      <span className={styles.stepText}>
+                        Link your ad account so we can launch ads and track spend.
+                      </span>
+                    </div>
+                    <Link href="/dashboard/facebook" className={styles.ctaLink}>
+                      <Button variant="secondary">Connect</Button>
+                    </Link>
+                  </li>
+                  <li className={styles.step}>
+                    <span className={styles.stepNum}>2</span>
+                    <div className={styles.stepBody}>
+                      <span className={styles.stepTitle}>Launch a campaign</span>
+                      <span className={styles.stepText}>
+                        Pick keywords, attach an article, and go live in minutes.
+                      </span>
+                    </div>
+                    <Link href="/dashboard/campaigns/new" className={styles.ctaLink}>
+                      <Button>New campaign</Button>
+                    </Link>
+                  </li>
+                  <li className={styles.step}>
+                    <span className={styles.stepNum}>3</span>
+                    <div className={styles.stepBody}>
+                      <span className={styles.stepTitle}>Watch your ROI</span>
+                      <span className={styles.stepText}>
+                        Spend, revenue, and profit per ad appear right here in real time.
+                      </span>
+                    </div>
+                  </li>
+                </ol>
+              </Card>
+            ))}
 
           {!isNewBuyer && attention.length > 0 && (
             <Card className={styles.attentionCard}>

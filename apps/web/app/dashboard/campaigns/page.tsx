@@ -16,6 +16,7 @@ import {
 } from '@/components/ui';
 import { campaigns as campaignsApi } from '@/lib/api';
 import { type Campaign, type CampaignStatus } from '@/lib/types';
+import { useAuth } from '../../providers';
 import styles from './campaigns.module.css';
 
 type Tone = 'neutral' | 'brand' | 'success' | 'warning' | 'danger';
@@ -41,9 +42,12 @@ function countAds(c: Campaign): number {
 
 export default function CampaignsPage() {
   const router = useRouter();
+  const { user } = useAuth();
   const toast = useToast();
   const confirm = useConfirm();
   const prompt = usePrompt();
+  // Platform admins oversee campaigns but don't create them — buyers do. Hide create CTAs.
+  const canCreate = user?.role !== 'SUPER_ADMIN';
   const [list, setList] = useState<Campaign[] | 'error' | null>(null);
   const [presets, setPresets] = useState<{ id: string; name: string }[]>([]);
 
@@ -162,10 +166,14 @@ export default function CampaignsPage() {
       <div className={styles.header}>
         <div>
           <h1 className={`serif ${styles.title}`}>Campaigns</h1>
-          <p className={styles.subtitle}>Build an offer, attach creatives, and submit for approval.</p>
+          <p className={styles.subtitle}>
+            {canCreate
+              ? 'Build an offer, attach creatives, and submit for approval.'
+              : 'Monitor every campaign across all companies.'}
+          </p>
         </div>
         <div className={styles.headerActions}>
-          {presets.length > 0 && (
+          {canCreate && presets.length > 0 && (
             <select
               aria-label="Start a new campaign from a saved preset"
               className={styles.presetSelect}
@@ -186,7 +194,9 @@ export default function CampaignsPage() {
               ))}
             </select>
           )}
-          <Button onClick={() => router.push('/dashboard/campaigns/new')}>New campaign</Button>
+          {canCreate && (
+            <Button onClick={() => router.push('/dashboard/campaigns/new')}>New campaign</Button>
+          )}
         </div>
       </div>
 
@@ -209,10 +219,18 @@ export default function CampaignsPage() {
       ) : list.length === 0 ? (
         <Card>
           <EmptyState
-            icon={<span aria-hidden>🚀</span>}
-            title="Launch your first campaign"
-            description="Pick keywords, attach ad creatives, choose a destination website, and submit it for approval. Revenue is attributed back to every ad automatically."
-            action={<Button onClick={() => router.push('/dashboard/campaigns/new')}>New campaign</Button>}
+            icon={<span aria-hidden>{canCreate ? '🚀' : '🗂️'}</span>}
+            title={canCreate ? 'Launch your first campaign' : 'No campaigns yet'}
+            description={
+              canCreate
+                ? 'Pick keywords, attach ad creatives, choose a destination website, and submit it for approval. Revenue is attributed back to every ad automatically.'
+                : 'Media buyers create and launch campaigns inside their companies. They’ll appear here as soon as they do.'
+            }
+            action={
+              canCreate ? (
+                <Button onClick={() => router.push('/dashboard/campaigns/new')}>New campaign</Button>
+              ) : undefined
+            }
           />
         </Card>
       ) : (

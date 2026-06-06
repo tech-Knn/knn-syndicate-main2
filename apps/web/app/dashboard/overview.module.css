@@ -54,6 +54,79 @@
   text-decoration: none;
 }
 
+/* First-run guide (new buyer, zero campaigns) — a 3-step activation path. */
+.onboardCard {
+  padding: var(--space-5) var(--space-5) var(--space-4);
+}
+.onboardHead {
+  margin-bottom: var(--space-4);
+}
+.onboardSub {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  counter-reset: step;
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.stepNum {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--rust);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+.stepBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.stepTitle {
+  font-weight: var(--weight-semibold);
+  color: var(--cream);
+  font-size: 0.95rem;
+}
+.stepText {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.step .ctaLink {
+  flex-shrink: 0;
+}
+
+@media (max-width: 560px) {
+  .step {
+    flex-wrap: wrap;
+  }
+  /* Push the CTA onto its own line, aligned under the text (past the number badge). */
+  .step .ctaLink {
+    margin-left: calc(28px + var(--space-3));
+  }
+}
+
 /* KPI grid */
 .kpis {
   display: grid;
