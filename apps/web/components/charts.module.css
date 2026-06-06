@@ -40,11 +40,28 @@
 /* Empty / zero state for the revenue chart. */
 .empty {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 160px;
+  gap: var(--space-2);
+  min-height: 220px;
+  text-align: center;
   color: var(--muted);
+}
+.emptyIcon {
+  font-size: 1.6rem;
+  color: var(--muted-2);
+  line-height: 1;
+}
+.emptyTitle {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--cream);
+}
+.emptyHint {
   font-size: var(--text-sm);
+  color: var(--muted-2);
+  max-width: 36ch;
 }
 
 /* Y-axis $ tick labels (HTML overlay; SVG text would be squashed by preserveAspectRatio="none"). */
@@ -107,11 +124,11 @@
   display: inline-block;
 }
 .swatchRev {
-  border-top-color: var(--gold);
+  border-top-color: var(--rust);
 }
 .swatchSpend {
   border-top-style: dashed;
-  border-top-color: var(--rust);
+  border-top-color: var(--muted-2);
 }
 
 .tip {
@@ -157,10 +174,10 @@
   display: inline-block;
 }
 .dotRev {
-  background: var(--gold);
+  background: var(--rust);
 }
 .dotSpend {
-  background: var(--rust);
+  background: var(--muted-2);
 }
 
 .pos {

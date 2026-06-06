@@ -1,13 +1,23 @@
 'use client';
 
-import { type MouseEvent, useId, useRef, useState } from 'react';
+import { type CSSProperties, type MouseEvent, useId, useRef, useState } from 'react';
 import { type DailyPoint, formatUsd } from '@knn/shared';
 import styles from './charts.module.css';
 
-// Brand palette (mirrors globals.css tokens; SVG presentation attrs don't resolve var()).
-const REVENUE = '#c89b3c'; // gold
-const SPEND = '#d9512c'; // rust
-const GRID = 'rgba(255,255,255,0.06)';
+/*
+ * Paint is theme-aware: SVG presentation ATTRIBUTES can't resolve var(), but the CSS `stroke` /
+ * `fill` / `stop-color` PROPERTIES (set via the `style` prop) can — so colours follow the token
+ * layer in both light + dark. Revenue is the hero (brand indigo, filled area); spend is the
+ * neutral dashed comparison line (also colour-blind-safe via the solid/dashed distinction).
+ */
+const REVENUE = 'var(--rust)'; // brand accent (indigo)
+const SPEND = 'var(--muted-2)'; // neutral comparison
+const stroke = (color: string, width: number, dash?: string): CSSProperties => ({
+  stroke: color,
+  strokeWidth: width,
+  fill: 'none',
+  ...(dash ? { strokeDasharray: dash } : {}),
+});
 
 const W = 1000;
 const PAD_LEFT = 52; // reserve room for Y-axis $ labels
@@ -46,8 +56,12 @@ export function RevenueChart({ series, height = 260 }: { series: DailyPoint[]; h
 
   if (n === 0) {
     return (
-      <div className={styles.empty} role="img" aria-label="No revenue in this range.">
-        No revenue in this range
+      <div className={styles.empty} role="img" aria-label="No revenue in this range yet.">
+        <span className={styles.emptyIcon} aria-hidden>
+          ◔
+        </span>
+        <span className={styles.emptyTitle}>No data in this range</span>
+        <span className={styles.emptyHint}>Revenue and spend will appear here once campaigns run.</span>
       </div>
     );
   }
@@ -102,31 +116,33 @@ export function RevenueChart({ series, height = 260 }: { series: DailyPoint[]; h
       <svg viewBox={`0 0 ${W} ${height}`} preserveAspectRatio="none" className={styles.svg} aria-hidden>
         <defs>
           <linearGradient id={`rev-${gid}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={REVENUE} stopOpacity="0.32" />
-            <stop offset="100%" stopColor={REVENUE} stopOpacity="0" />
-          </linearGradient>
-          <linearGradient id={`spend-${gid}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={SPEND} stopOpacity="0.22" />
-            <stop offset="100%" stopColor={SPEND} stopOpacity="0" />
+            <stop offset="0%" style={{ stopColor: REVENUE, stopOpacity: 0.2 }} />
+            <stop offset="100%" style={{ stopColor: REVENUE, stopOpacity: 0 }} />
           </linearGradient>
         </defs>
-        {/* gridlines */}
-        {[0.25, 0.5, 0.75].map((g) => (
-          <line key={g} x1={PAD_LEFT} x2={W} y1={padTop + g * innerH} y2={padTop + g * innerH} stroke={GRID} strokeWidth="1" />
+        {/* gridlines (theme-aware border colour) */}
+        {[0, 0.25, 0.5, 0.75, 1].map((g) => (
+          <line
+            key={g}
+            x1={PAD_LEFT}
+            x2={W}
+            y1={padTop + g * innerH}
+            y2={padTop + g * innerH}
+            style={{ stroke: 'var(--border)', strokeWidth: 1 }}
+          />
         ))}
-        <path d={spend.area} fill={`url(#spend-${gid})`} />
         <path d={rev.area} fill={`url(#rev-${gid})`} />
-        {/* Spend is dashed + revenue solid so the two are distinguishable without color (colorblind-safe). */}
-        <path d={spend.line} fill="none" stroke={SPEND} strokeWidth="2" strokeDasharray="6 4" vectorEffect="non-scaling-stroke" />
-        <path d={rev.line} fill="none" stroke={REVENUE} strokeWidth="2.25" vectorEffect="non-scaling-stroke" />
-        {/* Distinct end-point markers: filled dot (revenue) vs hollow ring (spend). */}
-        <circle cx={rev.x(lastIdx)} cy={rev.y(latest.revenueUsd)} r="3.5" fill={REVENUE} />
-        <circle cx={spend.x(lastIdx)} cy={spend.y(latest.spendUsd)} r="3.5" fill="none" stroke={SPEND} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+        {/* Spend dashed + revenue solid → distinguishable without colour (colour-blind safe). */}
+        <path d={spend.line} style={stroke(SPEND, 2, '5 4')} vectorEffect="non-scaling-stroke" />
+        <path d={rev.line} style={stroke(REVENUE, 2.25)} vectorEffect="non-scaling-stroke" />
+        {/* End-point markers: filled dot (revenue) vs hollow ring (spend). */}
+        <circle cx={rev.x(lastIdx)} cy={rev.y(latest.revenueUsd)} r="3.5" style={{ fill: REVENUE }} />
+        <circle cx={spend.x(lastIdx)} cy={spend.y(latest.spendUsd)} r="3.5" style={stroke(SPEND, 2)} vectorEffect="non-scaling-stroke" />
         {hover != null && hp && (
           <g>
-            <line x1={rev.x(hover)} x2={rev.x(hover)} y1={padTop} y2={height - padBottom} stroke="rgba(255,255,255,0.18)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-            <circle cx={rev.x(hover)} cy={rev.y(hp.revenueUsd)} r="3.5" fill={REVENUE} />
-            <circle cx={spend.x(hover)} cy={spend.y(hp.spendUsd)} r="3.5" fill="none" stroke={SPEND} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+            <line x1={rev.x(hover)} x2={rev.x(hover)} y1={padTop} y2={height - padBottom} style={{ stroke: 'var(--border-strong)', strokeWidth: 1 }} vectorEffect="non-scaling-stroke" />
+            <circle cx={rev.x(hover)} cy={rev.y(hp.revenueUsd)} r="3.5" style={{ fill: REVENUE }} />
+            <circle cx={spend.x(hover)} cy={spend.y(hp.spendUsd)} r="3.5" style={stroke(SPEND, 2)} vectorEffect="non-scaling-stroke" />
           </g>
         )}
       </svg>
@@ -154,7 +170,7 @@ export function RevenueChart({ series, height = 260 }: { series: DailyPoint[]; h
         })}
       </div>
 
-      {/* Legend: solid swatch (revenue) vs dashed swatch (spend) — reinforces the non-color cue. */}
+      {/* Legend: solid swatch (revenue) vs dashed swatch (spend) — reinforces the non-colour cue. */}
       <div className={styles.legend} aria-hidden>
         <span className={styles.legItem}>
           <span className={`${styles.swatch} ${styles.swatchRev}`} /> Revenue
@@ -220,7 +236,7 @@ export function Sparkline({
   height?: number;
   label?: string;
 }) {
-  const color = tone === 'rust' ? SPEND : tone === 'green' ? '#3fb27f' : REVENUE;
+  const color = tone === 'rust' ? SPEND : tone === 'green' ? 'var(--green)' : REVENUE;
   const w = 120;
   const n = values.length;
   if (n === 0) return <svg viewBox={`0 0 ${w} ${height}`} className={styles.spark} aria-hidden />;
@@ -243,9 +259,9 @@ export function Sparkline({
     <span className={styles.sparkWrap} role="img" aria-label={ariaLabel}>
       <svg viewBox={`0 0 ${w} ${height}`} preserveAspectRatio="none" className={styles.spark} aria-hidden>
         {/* Zero baseline — visible only when the series actually crosses below zero. */}
-        {lo < 0 && <line x1="0" x2={w} y1={zeroY} y2={zeroY} stroke={GRID} strokeWidth="1" vectorEffect="non-scaling-stroke" />}
-        <path d={line} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" />
-        <circle cx={x(lastIdx)} cy={y(last)} r="2.25" fill={color} />
+        {lo < 0 && <line x1="0" x2={w} y1={zeroY} y2={zeroY} style={{ stroke: 'var(--border)', strokeWidth: 1 }} vectorEffect="non-scaling-stroke" />}
+        <path d={line} style={stroke(color, 2)} vectorEffect="non-scaling-stroke" />
+        <circle cx={x(lastIdx)} cy={y(last)} r="2.25" style={{ fill: color }} />
       </svg>
     </span>
   );
