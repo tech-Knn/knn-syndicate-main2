@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { env } from '@knn/config';
+import { FbApiError } from '@knn/fb';
 import { ROLES } from '@knn/shared';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate, requireRole } from '../../middleware/authenticate.js';
@@ -69,7 +70,18 @@ export async function facebookRoutes(app: FastifyInstance): Promise<void> {
       return reply.redirect(`${dest}?fb_connected=1`);
     } catch (err) {
       req.log.error({ err }, 'facebook oauth callback failed');
-      return reply.redirect(`${dest}?fb_error=connect_failed`);
+      // Surface Facebook's own (non-sensitive) reason so a config issue is actionable instead of
+      // an opaque "connect_failed". Only FbApiError messages (FB's public OAuth diagnostics, e.g.
+      // "redirect_uri isn't allowed", "Error validating client secret") are forwarded — never a
+      // token/secret, and never an internal error's message.
+      const qs = new URLSearchParams({ fb_error: 'connect_failed' });
+      if (err instanceof FbApiError) {
+        const reason = err.userMessage || err.message;
+        if (reason) qs.set('fb_detail', reason.slice(0, 300));
+        if (err.code != null) qs.set('fb_code', String(err.code));
+        if (err.subcode != null) qs.set('fb_subcode', String(err.subcode));
+      }
+      return reply.redirect(`${dest}?${qs.toString()}`);
     }
   });
 

@@ -706,7 +706,16 @@ export default function FacebookPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('fb_connected')) setBanner({ tone: 'success', text: 'Facebook profile connected. Its accounts are syncing.' });
-    else if (params.get('fb_error')) setBanner({ tone: 'error', text: `Connection failed (${params.get('fb_error')}). Try again.` });
+    else if (params.get('fb_error')) {
+      const detail = params.get('fb_detail');
+      const code = params.get('fb_code');
+      setBanner({
+        tone: 'error',
+        text: detail
+          ? `Connection failed — Facebook says: “${detail}”${code ? ` (code ${code})` : ''}.`
+          : `Connection failed (${params.get('fb_error')}). Try again.`,
+      });
+    }
     if (params.has('fb_connected') || params.has('fb_error')) window.history.replaceState({}, '', window.location.pathname);
     void load();
     void loadAll();
