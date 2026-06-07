@@ -55,13 +55,13 @@ export function fbAppCreds(kind: FbAppKind = 'DATA'): FbAppCreds {
     return {
       appId: env.FB_VERIFY_APP_ID,
       appSecret: env.FB_VERIFY_APP_SECRET,
-      // Classic manual/scope OAuth flow (configId '') — the same flow DATA uses and that connects
-      // reliably. The Facebook Login-for-Business `config_id` flow returned FB code 100 "Error
-      // validating verification code" on the token exchange even with a valid app secret AND a
-      // registered, validator-passing, byte-identical redirect URI. VERIFY is an Advanced-Access app,
-      // so the scope-consent flow grants the ad permissions to any user. FB_VERIFY_CONFIG_ID is
-      // intentionally ignored here until the LfB exchange is sorted; re-enable by restoring it.
-      configId: '',
+      // VERIFY is an "App type: Business" app, which Facebook FORCES through Login for Business —
+      // the dialog renders at /dialog/oauth/business/ even when we request the plain scope flow.
+      // That flow REQUIRES a Login Configuration (config_id); without one, FB runs a business login
+      // with no configuration and the issued code can't be exchanged (code 100 / subcode 36008).
+      // So VERIFY must send its config_id. (The earlier config_id failure was the app's empty
+      // App Domains, since fixed — so config_id + App Domains is the combination that should work.)
+      configId: env.FB_VERIFY_CONFIG_ID,
     };
   }
   return { appId: env.FB_APP_ID, appSecret: env.FB_APP_SECRET, configId: env.FB_LOGIN_CONFIG_ID };
