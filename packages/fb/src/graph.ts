@@ -60,8 +60,8 @@ export interface GraphRequest {
   appKind?: FbAppKind;
 }
 
-function graphBase(): string {
-  return `https://graph.facebook.com/${env.FB_API_VERSION}`;
+function graphBase(apiVersion?: string): string {
+  return `https://graph.facebook.com/${apiVersion ?? env.FB_API_VERSION}`;
 }
 
 /** Derive a backoff hint from Facebook's rate-limit headers, if present. (Minimal header
@@ -88,7 +88,11 @@ function parseRetryAfterMs(headers: { get(name: string): string | null }): numbe
 }
 
 async function doRequest<T>(req: GraphRequest): Promise<T> {
-  const url = new URL(graphBase() + req.path);
+  // Resolve the issuing app once: its Graph version (so a Business app's OAuth mints+redeems at the
+  // same version) AND its secret (so appsecret_proof is signed with the right app's secret).
+  const creds = fbAppCreds(req.appKind);
+  const base = graphBase(creds.apiVersion);
+  const url = new URL(base + req.path);
   const method = req.method ?? 'GET';
   const headers: Record<string, string> = {};
   const params: Record<string, string> = { ...(req.params ?? {}) };
@@ -97,7 +101,7 @@ async function doRequest<T>(req: GraphRequest): Promise<T> {
     // Prove the call comes from our app's server (reduces token-replay security flags).
     // The proof MUST be signed with the secret of the app that issued this token — so a
     // LAUNCH-app token is proofed with the launch app's secret, not the DATA app's.
-    const appSecret = fbAppCreds(req.appKind).appSecret;
+    const appSecret = creds.appSecret;
     if (appSecret) params.appsecret_proof = computeAppSecretProof(req.accessToken, appSecret);
   }
 
@@ -123,7 +127,7 @@ async function doRequest<T>(req: GraphRequest): Promise<T> {
     }
     // For a multipart upload (advideos) the file is in the form, not params — note it explicitly.
     if (req.form) redacted.source = '<multipart video upload>';
-    console.log(`[fb-call] POST ${graphBase()}${req.path} :: ${JSON.stringify(redacted)}`);
+    console.log(`[fb-call] POST ${base}${req.path} :: ${JSON.stringify(redacted)}`);
   }
 
   // Route FB calls through the egress proxy when configured (undici dispatcher); else

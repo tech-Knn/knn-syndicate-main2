@@ -122,6 +122,12 @@ const EnvSchema = z.object({
   FB_VERIFY_APP_ID: optionalString,
   FB_VERIFY_APP_SECRET: optionalString,
   FB_VERIFY_CONFIG_ID: optionalString,
+  // The VERIFY app is "App type: Business", which Facebook forces through Login for Business — and
+  // that dialog runs at a newer Graph version (v25.0) than our pinned default. We must mint AND
+  // redeem the code at the SAME version, so the VERIFY OAuth flow (dialog + token exchange) uses
+  // this version end-to-end. DATA/LAUNCH stay on FB_API_VERSION. Defaults to what Facebook's
+  // business-login dialog currently uses; override if Meta moves it again.
+  FB_VERIFY_API_VERSION: z.string().default('v25.0'),
 
   // Google / AdSense
   GOOGLE_CLIENT_ID: optionalString,

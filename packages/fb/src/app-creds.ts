@@ -25,6 +25,8 @@ export interface FbAppCreds {
   appSecret: string;
   /** Facebook Login for Business configuration id (may be '' → classic scope flow). */
   configId: string;
+  /** Graph API version for THIS app's OAuth dialog + token exchange (entry == exit). */
+  apiVersion: string;
 }
 
 /** True when a distinct LAUNCH app is configured (separate id + secret from the DATA app). */
@@ -49,6 +51,7 @@ export function fbAppCreds(kind: FbAppKind = 'DATA'): FbAppCreds {
       appId: env.FB_LAUNCH_APP_ID,
       appSecret: env.FB_LAUNCH_APP_SECRET,
       configId: env.FB_LAUNCH_CONFIG_ID || env.FB_LOGIN_CONFIG_ID,
+      apiVersion: env.FB_API_VERSION,
     };
   }
   if (kind === 'VERIFY' && hasVerifyApp()) {
@@ -62,7 +65,14 @@ export function fbAppCreds(kind: FbAppKind = 'DATA'): FbAppCreds {
       // So VERIFY must send its config_id. (The earlier config_id failure was the app's empty
       // App Domains, since fixed — so config_id + App Domains is the combination that should work.)
       configId: env.FB_VERIFY_CONFIG_ID,
+      // Business-app login runs at a newer Graph version; mint AND redeem the code at the same one.
+      apiVersion: env.FB_VERIFY_API_VERSION,
     };
   }
-  return { appId: env.FB_APP_ID, appSecret: env.FB_APP_SECRET, configId: env.FB_LOGIN_CONFIG_ID };
+  return {
+    appId: env.FB_APP_ID,
+    appSecret: env.FB_APP_SECRET,
+    configId: env.FB_LOGIN_CONFIG_ID,
+    apiVersion: env.FB_API_VERSION,
+  };
 }

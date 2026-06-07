@@ -35,8 +35,13 @@ export function isFbConfigured(): boolean {
  * - Classic Facebook Login (no `configId`): request permissions via `scope`.
  */
 /** Pure URL builder (no env) — kept separate so the scope-vs-config branch is unit-testable. */
-export function buildAuthUrlWith(state: string, appId: string, configId: string): string {
-  const url = new URL(`https://www.facebook.com/${env.FB_API_VERSION}/dialog/oauth`);
+export function buildAuthUrlWith(
+  state: string,
+  appId: string,
+  configId: string,
+  apiVersion: string = env.FB_API_VERSION,
+): string {
+  const url = new URL(`https://www.facebook.com/${apiVersion}/dialog/oauth`);
   url.searchParams.set('client_id', appId);
   // The redirect URI is shared by both apps — add this same callback to each app in Meta.
   url.searchParams.set('redirect_uri', env.FB_OAUTH_REDIRECT_URI);
@@ -52,8 +57,8 @@ export function buildAuthUrlWith(state: string, appId: string, configId: string)
 }
 
 export function buildAuthUrl(state: string, appKind: FbAppKind = 'DATA'): string {
-  const { appId, configId } = fbAppCreds(appKind);
-  return buildAuthUrlWith(state, appId, configId);
+  const { appId, configId, apiVersion } = fbAppCreds(appKind);
+  return buildAuthUrlWith(state, appId, configId, apiVersion);
 }
 
 export async function exchangeCodeForToken(
@@ -69,6 +74,8 @@ export async function exchangeCodeForToken(
       redirect_uri: env.FB_OAUTH_REDIRECT_URI,
       code,
     },
+    // Redeem the code at the SAME Graph version the dialog minted it with (per-app).
+    appKind,
   });
   return { accessToken: r.access_token, expiresInSec: r.expires_in ?? 0 };
 }
@@ -107,6 +114,7 @@ export async function exchangeForLongLivedToken(
       client_secret: appSecret,
       fb_exchange_token: shortToken,
     },
+    appKind,
   });
   return { accessToken: r.access_token, expiresInSec: r.expires_in ?? 60 * 24 * 3_600 };
 }
