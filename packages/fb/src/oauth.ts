@@ -1,5 +1,6 @@
 import { env } from '@knn/config';
 import { type FbAppKind, fbAppCreds } from './app-creds.js';
+import { FbApiError } from './errors.js';
 import { graphRequest } from './graph.js';
 
 /** Permissions requested at connect time (spec §5.2.1). */
@@ -70,6 +71,26 @@ export async function exchangeCodeForToken(
     },
   });
   return { accessToken: r.access_token, expiresInSec: r.expires_in ?? 0 };
+}
+
+/**
+ * Validate an app's id+secret directly with Facebook by fetching (and discarding) an APP access
+ * token via `client_credentials`. Returns ok/error only — NEVER the token. Used by the super-admin
+ * "FB app config check" to catch a wrong/rotated app secret (the classic cause of a misleading
+ * code-100 "verification code" error on the user OAuth exchange).
+ */
+export async function verifyAppCredentials(appKind: FbAppKind = 'DATA'): Promise<{ ok: boolean; error?: string }> {
+  const { appId, appSecret } = fbAppCreds(appKind);
+  try {
+    await graphRequest<TokenResponse>({
+      path: '/oauth/access_token',
+      params: { client_id: appId, client_secret: appSecret, grant_type: 'client_credentials' },
+    });
+    return { ok: true };
+  } catch (err) {
+    const msg = err instanceof FbApiError ? err.message : err instanceof Error ? err.message : 'unknown error';
+    return { ok: false, error: (msg || 'invalid').slice(0, 200) };
+  }
 }
 
 /** Trade a short-lived token for a long-lived one (~60 days). DATA app only in practice. */

@@ -10,6 +10,7 @@ import {
   encryptToken,
   exchangeCodeForToken,
   exchangeForLongLivedToken,
+  fbAppCreds,
   fetchAdAccounts,
   fetchBusinessPixels,
   fetchPages,
@@ -19,6 +20,7 @@ import {
   hasLaunchApp,
   hasVerifyApp,
   isFbConfigured,
+  verifyAppCredentials,
 } from '@knn/fb';
 import { ROLES } from '@knn/shared';
 import { AppError } from '../../lib/errors.js';
@@ -77,6 +79,38 @@ export async function getAuthUrl(auth: AuthContext, appKind: FbAppKind = 'DATA')
   }
   const state = await signFbState({ userId: auth.userId, orgId: auth.orgId, appKind });
   return { url: buildAuthUrl(state, appKind) };
+}
+
+interface FbAppCheck {
+  appKind: FbAppKind;
+  appId: string;
+  configured: boolean;
+  secretValid: boolean;
+  error?: string;
+}
+
+/**
+ * Super-admin FB app config health check. For each configured app (DATA / LAUNCH / VERIFY), validate
+ * its id+secret against Facebook (client_credentials) WITHOUT exposing the secret or any token —
+ * returns only { appKind, appId, configured, secretValid, error? }. Pinpoints a wrong/rotated app
+ * secret, which is the usual cause of a misleading code-100 "verification code" error on the user
+ * OAuth exchange even when the redirect URI is correctly registered.
+ */
+export async function checkFbAppConfig(): Promise<{ apps: FbAppCheck[] }> {
+  const kinds: FbAppKind[] = ['DATA', 'LAUNCH', 'VERIFY'];
+  const apps: FbAppCheck[] = [];
+  for (const appKind of kinds) {
+    const configured =
+      appKind === 'DATA' ? isFbConfigured() : appKind === 'LAUNCH' ? hasLaunchApp() : hasVerifyApp();
+    if (!configured) {
+      apps.push({ appKind, appId: '', configured: false, secretValid: false });
+      continue;
+    }
+    const { appId } = fbAppCreds(appKind);
+    const res = await verifyAppCredentials(appKind);
+    apps.push({ appKind, appId, configured: true, secretValid: res.ok, ...(res.error ? { error: res.error } : {}) });
+  }
+  return { apps };
 }
 
 /**

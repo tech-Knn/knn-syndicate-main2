@@ -5,6 +5,7 @@ import { ROLES } from '@knn/shared';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate, requireRole } from '../../middleware/authenticate.js';
 import {
+  checkFbAppConfig,
   checkLaunchAccess,
   disconnect,
   getAuthUrl,
@@ -39,6 +40,17 @@ export async function facebookRoutes(app: FastifyInstance): Promise<void> {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     try {
       return reply.send(await syncAllConnections());
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // SUPER_ADMIN: validate each configured FB app's id+secret against Facebook (no secret/token in
+  // the response). Pinpoints a wrong/rotated app secret behind a code-100 connect failure.
+  app.get('/admin/app-check', { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await checkFbAppConfig());
     } catch (err) {
       return handleRouteError(err, reply);
     }
