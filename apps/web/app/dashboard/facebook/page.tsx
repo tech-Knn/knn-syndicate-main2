@@ -709,10 +709,12 @@ export default function FacebookPage() {
     else if (params.get('fb_error')) {
       const detail = params.get('fb_detail');
       const code = params.get('fb_code');
+      const sub = params.get('fb_subcode');
+      const codes = code ? ` (code ${code}${sub ? ` / subcode ${sub}` : ''})` : '';
       setBanner({
         tone: 'error',
         text: detail
-          ? `Connection failed — Facebook says: “${detail}”${code ? ` (code ${code})` : ''}.`
+          ? `Connection failed — Facebook says: “${detail}”${codes}.`
           : `Connection failed (${params.get('fb_error')}). Try again.`,
       });
     }
