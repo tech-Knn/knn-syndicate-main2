@@ -52,3 +52,6 @@ test-results/
 # Misc
 tmp/
 *.pid
+
+# Local export artifacts (generated source bundles — not source, never commit)
+*.zip
