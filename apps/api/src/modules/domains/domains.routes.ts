@@ -63,7 +63,7 @@ export async function publicEdgeRoutes(app: FastifyInstance): Promise<void> {
 export async function domainRoutes(app: FastifyInstance): Promise<void> {
   app.get('/', { preHandler: superOnly }, async (req, reply) => {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
-    return reply.send({ domains: await listDomains(), dns: dnsGuidance() });
+    return reply.send({ domains: await listDomains(), dns: await dnsGuidance() });
   });
 
   app.post<{ Body: CreateDomainInput }>('/', { preHandler: superOnly }, async (req, reply) => {

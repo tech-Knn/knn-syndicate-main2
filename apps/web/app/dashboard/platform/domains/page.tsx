@@ -20,7 +20,7 @@ export default function DomainsPage() {
   const router = useRouter();
   const confirm = useConfirm();
   const [rows, setRows] = useState<DomainRow[] | null>(null);
-  const [dns, setDns] = useState<{ cnameTarget: string } | null>(null);
+  const [dns, setDns] = useState<{ cnameTarget: string; aTarget: string | null } | null>(null);
   const [accounts, setAccounts] = useState<AfsAccountRow[]>([]);
   const [companies, setCompanies] = useState<OrgRow[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -139,7 +139,13 @@ export default function DomainsPage() {
           <span className={styles.sectionTitle}>Add a domain</span>
           {dns && (
             <span className={styles.subtle}>
-              DNS: point a CNAME to <strong className="mono">{dns.cnameTarget}</strong> (then Verify)
+              DNS (keep it <strong>DNS-only</strong>, un-proxied):{' '}
+              {dns.aTarget && (
+                <>
+                  A record → <strong className="mono">{dns.aTarget}</strong>, or{' '}
+                </>
+              )}
+              CNAME → <strong className="mono">{dns.cnameTarget}</strong>. Then Verify.
             </span>
           )}
         </div>

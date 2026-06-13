@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { promises as dnsp } from 'node:dns';
 import { env } from '@knn/config';
 import { withSystem } from '@knn/db';
 import { discoverChannelsInRanges, listCustomChannels, parseChannelRanges, refreshGoogleToken } from '@knn/adsense';
@@ -90,16 +91,45 @@ export async function resolveSiteConfig(rawHost: string): Promise<SiteConfig | n
   return { host, pubId: domain.afsAccount.afsPubId, styleId: domain.styleId, adsafe: domain.adsafe };
 }
 
-/** DNS guidance shown to the admin: point the host at our article ingress. */
-export function dnsGuidance(): { cnameTarget: string } {
-  // The article app's host is the canonical ingress; point new domains there.
-  let host = env.ARTICLE_DOMAIN;
+/** Bare host of the article ingress (ARTICLE_DOMAIN), e.g. `articles.staging.rsoc.app`. */
+function articleIngressHost(): string {
   try {
-    host = new URL(env.ARTICLE_DOMAIN).host;
+    return new URL(env.ARTICLE_DOMAIN).host;
   } catch {
-    /* ARTICLE_DOMAIN may already be a bare host */
+    return env.ARTICLE_DOMAIN; // ARTICLE_DOMAIN may already be a bare host
   }
-  return { cnameTarget: host };
+}
+
+// Cache the resolved ingress IP — the domains list is the only caller and the box IP
+// changes only on an infra move, so a short TTL keeps it fresh without a lookup per call.
+let ingressIpCache: { ip: string | null; at: number } | null = null;
+const INGRESS_IP_TTL_MS = 10 * 60_000;
+
+async function resolveIngressIp(host: string, now = Date.now()): Promise<string | null> {
+  if (ingressIpCache && now - ingressIpCache.at < INGRESS_IP_TTL_MS) return ingressIpCache.ip;
+  let ip: string | null = null;
+  try {
+    const ips = await dnsp.resolve4(host); // the box IP the article host points at
+    ip = ips[0] ?? null;
+  } catch {
+    ip = null; // resolution failed → only the CNAME guidance is shown
+  }
+  ingressIpCache = { ip, at: now };
+  return ip;
+}
+
+/**
+ * DNS guidance shown to the admin for pointing a NEW article domain at our ingress.
+ * Two equivalent ways — BOTH must be **DNS-only / un-proxied** so the box's Let's Encrypt
+ * (Caddy on-demand TLS) can mint a cert on the first HTTPS hit:
+ *   - an **A record** → our ingress IP (simplest; what existing domains use), or
+ *   - a **CNAME** → the article host (survives an ingress IP change).
+ * `verifyDomain` only checks the host serves the article app, so either is accepted.
+ * `aTarget` is null when the ingress host can't be resolved (then only the CNAME is shown).
+ */
+export async function dnsGuidance(): Promise<{ cnameTarget: string; aTarget: string | null }> {
+  const host = articleIngressHost();
+  return { cnameTarget: host, aTarget: await resolveIngressIp(host) };
 }
 
 async function withCounts(

@@ -632,7 +632,7 @@ export const adsense = {
 };
 
 export const domains = {
-  list: async (): Promise<{ domains: DomainRow[]; dns: { cnameTarget: string } }> =>
+  list: async (): Promise<{ domains: DomainRow[]; dns: { cnameTarget: string; aTarget: string | null } }> =>
     parse(await authedFetch('/api/domains')),
   create: async (input: { host: string; afsAccountId: string; channelRanges?: string; styleId?: string; adsafe?: string }): Promise<DomainRow> =>
     (await parse<{ domain: DomainRow }>(await authedFetch('/api/domains', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(input) }))).domain,
