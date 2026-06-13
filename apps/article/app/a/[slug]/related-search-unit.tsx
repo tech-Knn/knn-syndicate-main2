@@ -110,7 +110,12 @@ export function RelatedSearchUnit({
       className={filled ? styles.afs : styles.afsPending}
       {...(filled ? { 'aria-label': 'Related searches' } : {})}
     >
-      <div id="relatedsearches1" />
+      {/* Externally-managed by Google CSA: ads.js injects the related-search <iframe> into this
+          container, so React must treat its contents as opaque — `dangerouslySetInnerHTML={{__html:''}}`
+          (suppressHydrationWarning alone covers only attrs/text, not child nodes). Without this the
+          server-empty vs client-injected div mismatches on hydration (#418) and React can wipe the
+          unit when `filled` toggles a re-render. Mirrors /search's #afscontainer1. */}
+      <div id="relatedsearches1" suppressHydrationWarning dangerouslySetInnerHTML={{ __html: '' }} />
     </aside>
   );
 }
