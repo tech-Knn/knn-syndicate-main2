@@ -10,11 +10,14 @@ buyers see real-time ROI. Multi-tenant (companies), ~50–200 buyers, ~1500–20
 
 ## Architecture (key decisions — see DECISIONS.md for the why)
 
-- **Monorepo**: pnpm workspaces + Turborepo. Apps: `api` (Fastify), `redirect` (Hono),
-  `article` (Next 15 SSR), `web` (Next 15 dashboard/admin), `worker` (BullMQ). Packages:
-  `db` (Prisma), `shared`, `config`, `queue` (+ `fb`, `adsense` added in their phases).
-- **Framework split (D3)**: Fastify for the main API; Hono for the latency-critical (<50ms)
-  public redirect engine. Both Node-only (Facebook/Google SDKs aren't edge-compatible).
+- **Monorepo**: pnpm workspaces + Turborepo. Apps: `api` (Fastify), `redirect` (Hono on a
+  **Cloudflare Worker**, `go.*`), `article` (Next 15 SSR), `white` (Cloudflare Worker — the safe
+  decoy site), `web` (Next 15 dashboard/admin), `worker` (BullMQ). Packages: `db` (Prisma),
+  `shared`, `config`, `queue`, `fb`, `adsense`, `ai`.
+- **Framework split (D3)**: Fastify for the main API (Node — the Facebook/Google SDK paths aren't
+  edge-compatible). The latency-critical (<50ms) public redirect (`go.*`) and the white decoy run as
+  **Cloudflare Workers** (Hono) at the edge, reading per-ad config from Workers KV; deployed via
+  `wrangler`, separate from the origin Docker stack (api/article/web/worker).
 - **Multi-tenant by company (D1/D2)**: roles `SUPER_ADMIN` (KNN platform), `COMPANY_ADMIN`
   (one org), `MEDIA_BUYER` (one org). Isolation via **Postgres RLS + a service-layer tenant
   guard**; every business row carries `org_id`.
@@ -39,7 +42,7 @@ buyers see real-time ROI. Multi-tenant (companies), ~50–200 buyers, ~1500–20
 ## Layout
 
 ```
-apps/{api,redirect,article,web,worker}   packages/{db,shared,config,queue}
+apps/{api,redirect,article,white,web,worker}   packages/{db,shared,config,queue,fb,adsense,ai}
 infra/docker-compose.yml                  docs/{DECISIONS,CURRENT_STATE,OPEN_QUESTIONS}.md
 ```
 

@@ -213,7 +213,7 @@ docs/
 ## The data model
 
 Single source of truth: [`packages/db/prisma/schema.prisma`](./packages/db/prisma/schema.prisma)
-(~40 models, 35 migrations). The major entities:
+(33 models, 35 migrations). The major entities:
 
 - **Tenancy & identity:** `Organization`, `User` (roles `SUPER_ADMIN` / `COMPANY_ADMIN` /
   `MEDIA_BUYER`), `RefreshToken`, `AuditLog`, `PlatformSetting`.
@@ -269,6 +269,7 @@ Grouped reference (see `.env.example` for inline docs and `config/src/index.ts` 
 | **FX** | `FX_API_URL`, `FX_API_KEY` |
 | **Cloudflare KV** (edge redirect config) | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `CF_KV_NAMESPACE_ID` |
 | **Internal trigger** (worker → API auto-launch) | `INTERNAL_API_TOKEN`, `INTERNAL_API_URL` |
+| **Ops alerting** | `NOTIFY_WEBHOOK_URL` (Slack-compatible incoming webhook for platform alerts — CONNECTION_BROKEN, launch failures, etc.; unset → log to console only) |
 | **Misc** | `UPLOAD_DIR`, `BUSINESS_TIMEZONE` (`Asia/Kolkata`) |
 
 > Generate strong secrets with `openssl rand -hex 32`. The integrations are **self-dormant**: unset
