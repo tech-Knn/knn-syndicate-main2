@@ -28,7 +28,8 @@
     "db:deploy": "pnpm --filter @knn/db migrate:deploy",
     "db:bootstrap": "pnpm --filter @knn/db bootstrap",
     "db:studio": "pnpm --filter @knn/db studio",
-    "db:seed": "pnpm --filter @knn/db seed"
+    "db:seed": "pnpm --filter @knn/db seed",
+    "db:reset-admin": "pnpm --filter @knn/db reset:superadmin"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
