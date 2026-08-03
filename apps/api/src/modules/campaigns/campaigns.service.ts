@@ -29,6 +29,61 @@ export const campaignInclude = {
   adSets: { orderBy: { createdAt: 'asc' }, include: { ads: { orderBy: { createdAt: 'asc' } } } },
 } satisfies Prisma.CampaignInclude;
 
+/**
+ * Resolved labels for a campaign's selected FB assets. Ad account / page live on
+ * `fb_ad_accounts` / `fb_pages` with NO Prisma relation from `campaigns` (see schema comment
+ * at Campaign.adAccountId — deliberately no FK so disconnect-churn can't cascade). So the read
+ * paths (`getCampaign` / `listCampaigns`) enrich by id lookup in the same scoped tx: the
+ * approval / review UI needs the human-readable NAMES a buyer selected, not just the ids.
+ */
+export interface CampaignAssetLabels {
+  adAccount: { id: string; fbAccountId: string; name: string } | null;
+  page: { id: string; fbPageId: string; name: string } | null;
+}
+
+type AccountLabel = NonNullable<CampaignAssetLabels['adAccount']>;
+type PageLabel = NonNullable<CampaignAssetLabels['page']>;
+
+async function resolveAssetLabels(
+  tx: TxClient,
+  campaigns: { adAccountId: string | null; pageId: string | null }[],
+): Promise<{ accounts: Map<string, AccountLabel>; pages: Map<string, PageLabel> }> {
+  const accountIds = Array.from(new Set(campaigns.map((c) => c.adAccountId).filter((v): v is string => Boolean(v))));
+  const pageIds = Array.from(new Set(campaigns.map((c) => c.pageId).filter((v): v is string => Boolean(v))));
+  const [accounts, pages] = await Promise.all([
+    accountIds.length > 0
+      ? tx.fbAdAccount.findMany({
+          where: { id: { in: accountIds } },
+          select: { id: true, fbAccountId: true, name: true },
+        })
+      : Promise.resolve<AccountLabel[]>([]),
+    pageIds.length > 0
+      ? tx.fbPage.findMany({
+          where: { id: { in: pageIds } },
+          select: { id: true, fbPageId: true, name: true },
+        })
+      : Promise.resolve<PageLabel[]>([]),
+  ]);
+  return {
+    accounts: new Map(accounts.map((a) => [a.id, a])),
+    pages: new Map(pages.map((p) => [p.id, p])),
+  };
+}
+
+/** Attach `adAccount` / `page` label objects to each campaign by looking up the fb_* rows. */
+export async function withAssetLabels<T extends { adAccountId: string | null; pageId: string | null }>(
+  tx: TxClient,
+  campaigns: T[],
+): Promise<(T & CampaignAssetLabels)[]> {
+  if (campaigns.length === 0) return [];
+  const { accounts, pages } = await resolveAssetLabels(tx, campaigns);
+  return campaigns.map((c) => ({
+    ...c,
+    adAccount: c.adAccountId ? accounts.get(c.adAccountId) ?? null : null,
+    page: c.pageId ? pages.get(c.pageId) ?? null : null,
+  }));
+}
+
 /** The FB asset ids the acting user is allowed to reference (their own connection's). */
 async function ownedAssetIds(
   tx: TxClient,
@@ -144,7 +199,8 @@ function campaignScalars(_orgId: string, input: CampaignDraft) {
   };
 }
 
-export type CampaignWithChildren = Prisma.CampaignGetPayload<{ include: typeof campaignInclude }>;
+export type CampaignWithChildren = Prisma.CampaignGetPayload<{ include: typeof campaignInclude }> &
+  Partial<CampaignAssetLabels>;
 
 export async function createCampaign(
   auth: AuthContext,
@@ -165,14 +221,15 @@ export async function createCampaign(
 }
 
 export async function listCampaigns(auth: AuthContext): Promise<CampaignWithChildren[]> {
-  return runScoped(auth, (tx) =>
-    tx.campaign.findMany({
+  return runScoped(auth, async (tx) => {
+    const rows = await tx.campaign.findMany({
       // Buyers see their own; org/platform admins see everything in scope.
       where: auth.role === ROLES.MEDIA_BUYER ? { buyerId: auth.userId } : undefined,
       orderBy: { updatedAt: 'desc' },
       include: campaignInclude,
-    }),
-  );
+    });
+    return withAssetLabels(tx, rows);
+  });
 }
 
 async function loadOwnedCampaign(
@@ -189,7 +246,11 @@ async function loadOwnedCampaign(
 }
 
 export async function getCampaign(auth: AuthContext, id: string): Promise<CampaignWithChildren> {
-  return runScoped(auth, (tx) => loadOwnedCampaign(tx, auth, id));
+  return runScoped(auth, async (tx) => {
+    const campaign = await loadOwnedCampaign(tx, auth, id);
+    const [enriched] = await withAssetLabels(tx, [campaign]);
+    return enriched ?? campaign;
+  });
 }
 
 /** Load a source campaign (owner-scoped) → its draft + offer inputs, for clone/bulk-clone. */

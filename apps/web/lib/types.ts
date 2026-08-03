@@ -164,6 +164,11 @@ export interface Campaign {
   fallbackUrl: string | null;
   adAccountId: string | null;
   pageId: string | null;
+  /** Resolved label for the selected ad account — server-side lookup so admins can view
+   * a buyer's selection even when the admin has no FB connection of their own. */
+  adAccount?: { id: string; fbAccountId: string; name: string } | null;
+  /** Resolved label for the selected page (see `adAccount` above). */
+  page?: { id: string; fbPageId: string; name: string } | null;
   articleId: string | null;
   channelId: string | null;
   fbCampaignId: string | null;

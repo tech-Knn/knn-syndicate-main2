@@ -665,7 +665,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
 
       <Card className={styles.card}>
         {readOnly ? (
-          <ReviewStep form={form} accounts={accounts} pages={pages} offers={offers} issues={[]} />
+          <ReviewStep form={form} accounts={accounts} pages={pages} offers={offers} issues={[]} campaign={campaign} />
         ) : assetsLoading ? (
           <div className={styles.center}>
             <Spinner />
@@ -686,7 +686,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
         ) : step === 1 ? (
           <AdSetsStep form={form} pixels={pixels} patchAdSet={patchAdSet} patchAd={patchAd} setForm={setForm} uploadingKey={uploadingKey} uploadCreative={uploadCreative} isCloaker={isCloaker} adAccountTz={accounts.find((a) => a.id === form.adAccountId)?.timezone ?? ''} />
         ) : (
-          <ReviewStep form={form} accounts={accounts} pages={pages} offers={offers} issues={[...serverIssues, ...issues]} />
+          <ReviewStep form={form} accounts={accounts} pages={pages} offers={offers} issues={[...serverIssues, ...issues]} campaign={campaign} />
         )}
       </Card>
 
@@ -1540,17 +1540,23 @@ function AdSetsStep({
   );
 }
 
-function ReviewStep({ form, accounts, pages, offers, issues }: { form: CampaignForm; accounts: FbAccount[]; pages: FbPage[]; offers: OfferDraft[]; issues: string[] }) {
-  const account = accounts.find((a) => a.id === form.adAccountId);
-  const page = pages.find((p) => p.id === form.pageId);
+function ReviewStep({ form, accounts, pages, offers, issues, campaign }: { form: CampaignForm; accounts: FbAccount[]; pages: FbPage[]; offers: OfferDraft[]; issues: string[]; campaign?: Campaign }) {
+  // For a saved campaign, prefer the server-resolved labels (`campaign.adAccount` / `.page`) —
+  // an admin reviewing another user's campaign won't have that user's FB assets in their own
+  // `accounts` / `pages` lists, so the local lookup returns undefined and the row renders "—"
+  // with a spurious "not selected" warning. The server sends the resolved name for both roles.
+  const accountName = campaign?.adAccount?.name ?? accounts.find((a) => a.id === form.adAccountId)?.name;
+  const pageName = campaign?.page?.name ?? pages.find((p) => p.id === form.pageId)?.name;
+  const accountSelected = Boolean(form.adAccountId) && (Boolean(campaign?.adAccount) || accounts.some((a) => a.id === form.adAccountId));
+  const pageSelected = Boolean(form.pageId) && (Boolean(campaign?.page) || pages.some((p) => p.id === form.pageId));
   const totalAds = form.adSets.reduce((n, s) => n + s.ads.length, 0);
   const budget = form.budgetMode === 'CAMPAIGN' ? centsOrUndef(form.dailyBudget) ?? 0 : form.adSets.reduce((n, s) => n + (centsOrUndef(s.dailyBudget) ?? 0), 0);
 
   // Pre-launch readiness — the things Facebook checks at launch, surfaced up front.
   const checks: { label: string; ok: boolean }[] = [
     { label: `Daily budget ≥ $2.00 (have ${MONEY(budget)})`, ok: budget >= 200 },
-    { label: 'Facebook ad account selected', ok: Boolean(account) },
-    { label: 'Facebook page selected', ok: Boolean(page) },
+    { label: 'Facebook ad account selected', ok: accountSelected },
+    { label: 'Facebook page selected', ok: pageSelected },
     { label: 'At least one destination website', ok: offers.some((o) => o.kind === 'PAID' && o.domainId) },
     { label: `Performance goals valid for the ${form.objective.replace('OUTCOME_', '').toLowerCase()} objective`, ok: form.adSets.every((s) => isValidPerformanceGoal(form.objective, s.optimizationGoal)) },
     { label: 'Pixel assigned where the goal needs conversions', ok: form.adSets.every((s) => !goalRequiresPixel(s.optimizationGoal) || Boolean(s.pixelId)) },
@@ -1608,7 +1614,7 @@ function ReviewStep({ form, accounts, pages, offers, issues }: { form: CampaignF
         <div className={styles.summaryRow}>
           <span className={styles.summaryKey}>Ad account / Page</span>
           <span className={styles.summaryVal}>
-            {account?.name ?? '—'} · {page?.name ?? '—'}
+            {accountName ?? '—'} · {pageName ?? '—'}
           </span>
         </div>
         <div className={styles.summaryRow}>

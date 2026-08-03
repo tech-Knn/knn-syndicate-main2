@@ -6,7 +6,7 @@ import { AppError } from '../../lib/errors.js';
 import { notify } from '../../lib/notify.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
-import { type CampaignWithChildren, campaignInclude } from './campaigns.service.js';
+import { type CampaignWithChildren, campaignInclude, withAssetLabels } from './campaigns.service.js';
 
 /**
  * Load a campaign for admin review. RLS scopes a COMPANY_ADMIN to their own org
@@ -21,13 +21,14 @@ async function loadForReview(tx: TxClient, id: string): Promise<CampaignWithChil
 
 /** Admin view of the review queue: campaigns awaiting approval, oldest submission first. */
 export async function listPendingApprovals(auth: AuthContext): Promise<CampaignWithChildren[]> {
-  return runScoped(auth, (tx) =>
-    tx.campaign.findMany({
+  return runScoped(auth, async (tx) => {
+    const rows = await tx.campaign.findMany({
       where: { status: CAMPAIGN_STATUS.PENDING_APPROVAL },
       orderBy: { submittedAt: 'asc' },
       include: campaignInclude,
-    }),
-  );
+    });
+    return withAssetLabels(tx, rows);
+  });
 }
 
 /**
