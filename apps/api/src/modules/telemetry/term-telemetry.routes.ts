@@ -13,6 +13,14 @@ const SIGNALS = new Set<string>(['render', 'click']);
  */
 export async function termTelemetryRoutes(app: FastifyInstance): Promise<void> {
   app.post('/term', async (req, reply) => {
+    // The beacon fires from `articles.*` / `the.entertainmentheute.de` (any registered money host),
+    // which is a different origin than the API. Helmet's default `Cross-Origin-Resource-Policy:
+    // same-origin` makes Chrome BLOCK the cross-origin `navigator.sendBeacon` POST — the response
+    // never lands and the row never increments (ERR_BLOCKED_BY_RESPONSE.NotSameOrigin in DevTools).
+    // Override to `cross-origin` for THIS route only, so the beacon is deliverable from any of our
+    // article hosts. Safe: the endpoint is one-way (writes a counter, always answers 204, exposes
+    // no data), so no cross-origin read of anything sensitive is possible.
+    void reply.header('cross-origin-resource-policy', 'cross-origin');
     try {
       const q = (req.query ?? {}) as Record<string, string | undefined>;
       const event = (q.event ?? '').toLowerCase();

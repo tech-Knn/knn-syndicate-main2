@@ -25,7 +25,19 @@ export const AFS_TRACKING_PARAMS =
 
 /** Queue a CSA command and ensure ads.js is loaded to process it. */
 export function runCsa(command: 'ads' | 'relatedsearch', ...rest: unknown[]): void {
-  const w = window as unknown as { _googCsa?: GoogCsa };
+  const w = window as unknown as { _googCsa?: GoogCsa; pageOptions?: unknown; PageOptions?: unknown };
+  // Some AdSense custom-style templates (looked up by `styleId` in the request) contain
+  // publisher code that expects `window.PageOptions` / `window.pageOptions` to be defined —
+  // e.g. `PageOptions.pubId`. When it isn't, the style throws `ReferenceError: PageOptions
+  // is not defined` inside Google's ads.js, and the unit renders empty. Expose the current
+  // page-options object under both casings before firing, so a style referencing either works.
+  // Only the CSA command payload is authoritative for ad serving; these globals are read-only
+  // for the style template.
+  const pageOptions = rest[0];
+  if (pageOptions && typeof pageOptions === 'object') {
+    w.pageOptions = pageOptions;
+    w.PageOptions = pageOptions;
+  }
   if (!w._googCsa) {
     const queue: unknown[] = [];
     const stub = ((...args: unknown[]) => {

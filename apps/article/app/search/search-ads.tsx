@@ -96,6 +96,11 @@ export function SearchAds({
   const bootstrap =
     `(function(g,o){g[o]=g[o]||function(){(g[o].q=g[o].q||[]).push(arguments)};g[o].t=1*new Date})(window,'_googCsa');` +
     `var po=${safeJson(pageOptions)};po.resultsPageBaseUrl=window.location.origin+'/search';` +
+    // Some AdSense custom-style templates (looked up server-side by `styleId`) reference
+    // `window.PageOptions` / `window.pageOptions` in publisher code. Expose the current page
+    // options under both casings before firing so a style referencing either name resolves
+    // instead of throwing `ReferenceError: PageOptions is not defined` inside ads.js.
+    `window.pageOptions=po;window.PageOptions=po;` +
     // Per-term RSOC telemetry (observe-only): when Google's ad unit resolves for THIS term, beacon
     // whether it filled. The only place term-grain fill is observable (AdSense has no term dimension).
     // Inert if no telemetry URL is configured. Runs in the adLoadedCallback (after the ad request, so
