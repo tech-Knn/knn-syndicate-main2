@@ -1057,7 +1057,7 @@ function OfferStep({
               return (
                 <button
                   type="button"
-                  className={styles.addBtn}
+                  className={styles.keywordAddBtn}
                   disabled={!canCopy}
                   title={firstHeadline ? `Use "${firstHeadline}"` : 'Add an ad headline on Step 2 first'}
                   onClick={() => patch({ racValue: firstHeadline })}
