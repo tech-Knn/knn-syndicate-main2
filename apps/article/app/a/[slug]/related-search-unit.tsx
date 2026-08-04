@@ -107,6 +107,14 @@ export function RelatedSearchUnit({
       resultsPageBaseUrl,
       // On a content page the query params aren't the search query — ignore them too.
       ignoredPageParams: `${AFS_TRACKING_PARAMS},q,query`,
+      // Google's RSOC treats an OMITTED `personalizedAds` as "unspecified" and, under
+      // GDPR-style default-deny, may return zero related-search terms (silent). Set it
+      // explicitly true (equivalent to a valid CMP consent-signal) so RSOC serves — the
+      // article app itself is not a consent surface, so publishers control this upstream
+      // via their own CMP; this is the safe default for pages that already gated consent.
+      personalizedAds: true,
+      // Explicit page number — some RSOC deployments have observed empty responses when omitted.
+      adPage: 1,
     });
     // Required (since 2025-11-01) when traffic comes from a source you control (our FB ads).
     if (referrerAdCreative) pageOptions.referrerAdCreative = referrerAdCreative;
@@ -126,7 +134,10 @@ export function RelatedSearchUnit({
       container: 'relatedsearches1',
       // ~6 (not 10): matches Google's official RSOC examples and keeps the unit a supplement
       // to the article rather than the page's focus (a 10-chip block dominates the content).
+      // Send BOTH `relatedSearches` (legacy) and `number` (newer RSOC integrations) so whichever
+      // Google's ads.js reads is populated.
       relatedSearches: 6,
+      number: 6,
       adLoadedCallback: (containerName: string, adsLoaded: boolean) => {
         afsAdLoadedCallback(containerName, adsLoaded);
         // Reveal the unit's chrome only when it actually served terms.
