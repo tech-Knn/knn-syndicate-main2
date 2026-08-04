@@ -120,14 +120,28 @@ export function RelatedSearchUnit({
     if (referrerAdCreative) pageOptions.referrerAdCreative = referrerAdCreative;
     // Publisher-provided terms are only valid alongside referrerAdCreative (Google's rule).
     if (terms && referrerAdCreative) pageOptions.terms = terms;
-    // The AdSense custom channel (per-offer attribution) — tags the ad request.
-    if (channel) pageOptions.channel = channel;
-    // URL override: `?adtest=1` forces Google's TEST-AD mode for this pageview only. Test ads
-    // never count impressions/clicks and never pay, but they let a super-admin visually verify the
-    // widget wiring end-to-end without waiting on a live-serving decision. Diagnostic-only —
-    // production traffic never carries this flag; the domain's SiteConfig.adtest still applies
-    // when the URL param is absent.
-    if (new URLSearchParams(window.location.search).get('adtest') === '1') {
+
+    // Diagnostic URL overrides — help a super-admin isolate WHY Google returns zero chips.
+    // Never sent by real traffic; only set explicitly on a hand-crafted test URL.
+    const usp = new URLSearchParams(window.location.search);
+
+    // Channel selection (defaults to the token's channel).
+    //   ?nochannel=1               → drop channel entirely (test whether a bad DB channel
+    //                                 is the cause of Google returning zero ads).
+    //   ?testChannel=<value>       → override with an explicit channel string (paste in a
+    //                                 real AdSense Custom Channel ID from the dashboard).
+    // The token-decoded `channel` remains the default; overrides win when present.
+    let effectiveChannel = channel;
+    if (usp.get('nochannel') === '1') effectiveChannel = undefined;
+    const testChannel = usp.get('testChannel');
+    if (testChannel) effectiveChannel = testChannel;
+    if (effectiveChannel) pageOptions.channel = effectiveChannel;
+
+    // `?adtest=1` forces Google's TEST-AD mode for this pageview only. Test ads never count
+    // impressions/clicks and never pay, but they let a super-admin visually verify the widget
+    // wiring end-to-end without waiting on a live-serving decision. Production traffic never
+    // carries the flag; the domain's SiteConfig.adtest still applies when the URL param is absent.
+    if (usp.get('adtest') === '1') {
       pageOptions.adtest = 'on';
     }
     runCsa('relatedsearch', pageOptions, {
