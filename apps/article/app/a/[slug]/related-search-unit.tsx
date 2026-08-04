@@ -114,6 +114,14 @@ export function RelatedSearchUnit({
     if (terms && referrerAdCreative) pageOptions.terms = terms;
     // The AdSense custom channel (per-offer attribution) — tags the ad request.
     if (channel) pageOptions.channel = channel;
+    // URL override: `?adtest=1` forces Google's TEST-AD mode for this pageview only. Test ads
+    // never count impressions/clicks and never pay, but they let a super-admin visually verify the
+    // widget wiring end-to-end without waiting on a live-serving decision. Diagnostic-only —
+    // production traffic never carries this flag; the domain's SiteConfig.adtest still applies
+    // when the URL param is absent.
+    if (new URLSearchParams(window.location.search).get('adtest') === '1') {
+      pageOptions.adtest = 'on';
+    }
     runCsa('relatedsearch', pageOptions, {
       container: 'relatedsearches1',
       // ~6 (not 10): matches Google's official RSOC examples and keeps the unit a supplement
