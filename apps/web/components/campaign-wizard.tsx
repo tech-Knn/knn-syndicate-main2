@@ -33,6 +33,7 @@ import {
   countryName,
   goalRequiresPixel,
   isValidPerformanceGoal,
+  racValueIssues,
 } from '@knn/shared';
 import { ApiError, auth, campaigns as campaignsApi, facebook, getStoredUser, uploads as uploadsApi } from '@/lib/api';
 import { type Campaign, type FbAccount, type FbPage, type FbPixel, type OfferDomainOption } from '@/lib/types';
@@ -410,6 +411,7 @@ function formIssues(form: CampaignForm): string[] {
   if (!form.pageId) issues.push('Select a Facebook page.');
   if (form.keywords.length === 0) issues.push('Add at least one keyword.');
   if (!form.racValue.trim()) issues.push('Set the Referrer Ad Creative.');
+  else issues.push(...racValueIssues(form.racValue, form.name));
   if (form.budgetMode === 'CAMPAIGN' && !centsOrUndef(form.dailyBudget)) issues.push('Set the campaign daily budget.');
   if (form.adSets.length === 0) issues.push('Add at least one ad set.');
   form.adSets.forEach((s, i) => {
@@ -1047,8 +1049,25 @@ function OfferStep({
         </div>
         <div className={styles.field}>
           <label className={styles.label} htmlFor={fid('rac')}>Referrer Ad Creative<Req /></label>
-          <input id={fid('rac')} className={styles.input} value={form.racValue} onChange={(e) => patch({ racValue: e.target.value })} placeholder="e.g. Affordable Health Insurance Plans for Seniors" />
-          <span className={styles.hint}>Sent to Google AFS as the referrer ad creative (required for paid traffic). One value for the whole campaign — used by all its ads.</span>
+          <div className={styles.keywordRow}>
+            <input id={fid('rac')} className={styles.input} value={form.racValue} onChange={(e) => patch({ racValue: e.target.value })} placeholder="e.g. Affordable Health Insurance Plans for Seniors" />
+            {(() => {
+              const firstHeadline = form.adSets[0]?.ads[0]?.headline?.trim() ?? '';
+              const canCopy = firstHeadline.length > 0 && firstHeadline !== form.racValue.trim();
+              return (
+                <button
+                  type="button"
+                  className={styles.addBtn}
+                  disabled={!canCopy}
+                  title={firstHeadline ? `Use "${firstHeadline}"` : 'Add an ad headline on Step 2 first'}
+                  onClick={() => patch({ racValue: firstHeadline })}
+                >
+                  Use first ad headline
+                </button>
+              );
+            })()}
+          </div>
+          <span className={styles.hint}>Sent to Google AFS as the referrer ad creative (required for paid traffic). One value for the whole campaign — used by all its ads. <b>Should be a real search phrase</b> (like the ad headline itself), never the campaign name — Google returns zero related-search terms when it looks like a brand label.</span>
         </div>
         <div className={`${styles.field} ${styles.full}`}>
           <label className={styles.label} htmlFor={fid('query')}>Landing-page query / angle</label>

@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma, withSystem } from '@knn/db';
 import { currentBusinessDay } from '@knn/shared';
-import { getTermPerformance, recordTermSignal } from './term-telemetry.service.js';
+import { getRsocUnitPerformance, getTermPerformance, recordTermSignal } from './term-telemetry.service.js';
 
 const suffix = Date.now().toString(36);
 const day = currentBusinessDay();
@@ -63,5 +63,47 @@ describe('getTermPerformance', () => {
     expect(a.ctr).toBeCloseTo(0.5, 5); // 40/80
     expect(b.fillRate).toBeNull(); // 5 searches < floor
     expect(b.ctr).toBeNull(); // 2 fills < floor
+  });
+
+  it('excludes synthetic `unit:<host>` rows from per-term rankings', async () => {
+    const unitHost = `unit:tt-host-${suffix}.example`;
+    await withSystem((tx) =>
+      tx.termStatDaily.createMany({
+        data: [
+          { term: termA, day, searches: 100, fills: 80, clicks: 40 },
+          { term: unitHost, day, searches: 250, fills: 0, clicks: 0 }, // must NOT appear
+        ],
+      }),
+    );
+    const res = await getTermPerformance({ limit: 50 });
+    expect(res.terms.some((t) => t.term.startsWith('unit:'))).toBe(false);
+    expect(res.terms.some((t) => t.term === termA)).toBe(true);
+  });
+});
+
+describe('getRsocUnitPerformance', () => {
+  it('rolls up per-host unit fills from the `unit:<host>` namespace', async () => {
+    const hostA = `tt-host-${suffix}.example`;
+    const hostB = `tt-host-b-${suffix}.example`;
+    await withSystem((tx) =>
+      tx.termStatDaily.createMany({
+        data: [
+          { term: `unit:${hostA}`, day, searches: 40, fills: 10, clicks: 0 }, // 25% fill, above floor
+          { term: `unit:${hostB}`, day, searches: 3, fills: 0, clicks: 0 }, // below floor → null fillRate
+          { term: termA, day, searches: 999, fills: 0, clicks: 0 }, // real term, must NOT appear here
+        ],
+      }),
+    );
+    const res = await getRsocUnitPerformance({ limit: 50 });
+    const a = res.hosts.find((h) => h.host === hostA)!;
+    const b = res.hosts.find((h) => h.host === hostB)!;
+    expect(a).toBeTruthy();
+    expect(b).toBeTruthy();
+    expect(a.impressions).toBe(40);
+    expect(a.fills).toBe(10);
+    expect(a.fillRate).toBeCloseTo(0.25, 5);
+    expect(b.fillRate).toBeNull();
+    // Real terms (non-`unit:` prefix) must not leak in.
+    expect(res.hosts.some((h) => h.host === termA)).toBe(false);
   });
 });

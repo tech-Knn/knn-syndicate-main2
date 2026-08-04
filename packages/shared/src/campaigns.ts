@@ -219,6 +219,44 @@ export const campaignDraftSchema = z.object({
 export type CampaignDraftInput = z.input<typeof campaignDraftSchema>;
 export type CampaignDraft = z.infer<typeof campaignDraftSchema>;
 
+/**
+ * Quality gate for the AFS `referrerAdCreative` (stored as `racValue`).
+ *
+ * Google's post-2025-11-01 rc quality signal SILENTLY returns zero related-search terms
+ * when the value looks like a brand/campaign label instead of a real search intent (a phrase
+ * a user would type into Google). Symptom: paid clicks land on the money page, the RSOC
+ * unit fires, and CSA reports zero fills — the largest source of $0-revenue campaigns.
+ *
+ * We reject two patterns that empirically produce that outcome:
+ *  - `rc` matches the campaign name — the default a buyer copy-pastes when they don't
+ *    know what to write. Almost never a real search phrase.
+ *  - `rc` is a single word — a 1-word query rarely matches Google's high-CPC search corpus.
+ *
+ * Missing `rc` is not a "quality" issue (the required-field check reports it separately);
+ * this helper returns [] when `rac` is blank.
+ */
+export function racValueIssues(
+  rac: string | undefined | null,
+  campaignName: string,
+): string[] {
+  const value = (rac ?? '').trim();
+  if (!value) return [];
+  const issues: string[] = [];
+  const nameNorm = campaignName.trim().toLowerCase();
+  if (nameNorm && value.toLowerCase() === nameNorm) {
+    issues.push(
+      'Referrer Ad Creative should be a real search phrase (e.g. "used cars under 10000"), not the campaign name — Google returns zero related-search terms when the two match.',
+    );
+  }
+  const words = value.split(/\s+/).filter(Boolean);
+  if (words.length < 2) {
+    issues.push(
+      'Referrer Ad Creative should be at least two words — a single word rarely matches a real Google search intent.',
+    );
+  }
+  return issues;
+}
+
 /** Strict completeness gate for DRAFT → PENDING_APPROVAL. Empty list = submittable. */
 export function campaignSubmitIssues(c: CampaignDraft): string[] {
   const issues: string[] = [];
@@ -226,6 +264,7 @@ export function campaignSubmitIssues(c: CampaignDraft): string[] {
   if (!c.pageId) issues.push('Select a Facebook page.');
   if (c.keywords.length === 0) issues.push('Add at least one keyword.');
   if (!c.racValue) issues.push('Set the Referrer Ad Creative.');
+  else issues.push(...racValueIssues(c.racValue, c.name));
   if (c.budgetMode === 'CAMPAIGN' && !c.dailyBudgetCents) {
     issues.push('Set the campaign daily budget (campaign budget optimization is on).');
   }

@@ -342,7 +342,7 @@ describe('launchCampaign (Phase 8)', () => {
       });
       const camp = await tx.campaign.create({
         data: {
-          orgId, buyerId, name: `Vid ${tag} ${Math.random()}`, status: 'PROCESSING', keywords: ['x'], racValue: 'x', adAccountId, pageId, channelId: channelRef,
+          orgId, buyerId, name: `Vid ${tag} ${Math.random()}`, status: 'PROCESSING', keywords: ['x'], racValue: 'test search phrase', adAccountId, pageId, channelId: channelRef,
           adSets: { create: [{ orgId, name: 'S', dailyBudgetCents: 5000, countries: ['US'], pixelId, ads: { create: [{ orgId, name: 'VidAd', headline: 'Watch this', primaryText: 'Body', description: 'Desc', creativeType: 'VIDEO', uploadId: up.id, redirectId: `rv-${tag}-${suffix}-${Math.random().toString(36).slice(2, 8)}` }] } }] },
         },
       });
@@ -565,7 +565,7 @@ describe('launchCampaign (Phase 8)', () => {
       tx.campaign
         .create({
           data: {
-            orgId, buyerId, name: `Missing ${Math.random()}`, status: 'PROCESSING', keywords: ['x'], racValue: 'x', adAccountId, pageId, channelId: channelRef,
+            orgId, buyerId, name: `Missing ${Math.random()}`, status: 'PROCESSING', keywords: ['x'], racValue: 'test search phrase', adAccountId, pageId, channelId: channelRef,
             adSets: { create: [{ orgId, name: 'S', dailyBudgetCents: 5000, countries: ['US'], pixelId, ads: { create: [{ orgId, name: 'NoFile', headline: 'H', primaryText: 'P', uploadId: badUploadId, redirectId: `rm-${suffix}-${Math.random().toString(36).slice(2, 8)}` }] } }] },
           },
         })

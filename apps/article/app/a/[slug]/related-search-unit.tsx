@@ -11,6 +11,42 @@ import {
 } from '../../_afs/csa';
 import styles from './article.module.css';
 
+// Per-host RSOC unit-fill telemetry endpoint. Piggybacks on the same term-telemetry route
+// used by /search — the beacon reports "unit:<host>" so the platform can distinguish page-
+// level fills (chip strip present at all?) from per-term fills. Empty → inert.
+const TERM_TELEMETRY_URL =
+  process.env.NEXT_PUBLIC_TERM_TELEMETRY_URL ||
+  (process.env.NEXT_PUBLIC_EVENTS_URL
+    ? process.env.NEXT_PUBLIC_EVENTS_URL.replace(/\/api\/events\/?$/, '/api/telemetry/term')
+    : '');
+
+/**
+ * Beacon whether the RSOC unit actually filled with related-search terms. Fires once from
+ * `adLoadedCallback` (post ad-request, so it never delays the request) with a synthetic term key
+ * `unit:<host>` — the reader filters that namespace out of per-term rankings but reads it directly
+ * for the per-host unit-fill rate. Silent when telemetry is unconfigured or the host is unknown.
+ */
+function beaconUnitFill(host: string, filled: boolean): void {
+  if (!TERM_TELEMETRY_URL || !host) return;
+  try {
+    const term = `unit:${host}`;
+    const u =
+      TERM_TELEMETRY_URL +
+      (TERM_TELEMETRY_URL.indexOf('?') < 0 ? '?' : '&') +
+      'term=' +
+      encodeURIComponent(term) +
+      '&event=render&filled=' +
+      (filled ? '1' : '0');
+    if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+      navigator.sendBeacon(u);
+    } else {
+      void fetch(u, { method: 'POST', keepalive: true, mode: 'no-cors' });
+    }
+  } catch {
+    /* observe-only telemetry — never surface */
+  }
+}
+
 /**
  * RSOC "Related Search on Content" unit for the article (content) page. Renders
  * search terms related to the article; clicking one navigates to our /search
@@ -87,6 +123,10 @@ export function RelatedSearchUnit({
         afsAdLoadedCallback(containerName, adsLoaded);
         // Reveal the unit's chrome only when it actually served terms.
         if (adsLoaded) setFilled(true);
+        // Per-host RSOC unit-fill telemetry (observe-only). Fires once per page-view once CSA
+        // resolves the request — the ONLY place we can distinguish "widget fired but Google
+        // returned zero terms" from "widget never fired". Diagnostic for $0-revenue campaigns.
+        beaconUnitFill(window.location.host, adsLoaded);
       },
     });
   }, [live, referrerAdCreative, terms, txid, channel, token, site]);

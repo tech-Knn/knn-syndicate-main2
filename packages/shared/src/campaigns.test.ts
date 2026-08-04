@@ -10,6 +10,7 @@ import {
   goalRequiresPixel,
   isValidPerformanceGoal,
   performanceGoalsFor,
+  racValueIssues,
 } from './campaigns.js';
 
 const A = '11111111-1111-1111-1111-111111111111';
@@ -113,7 +114,7 @@ describe('campaignSubmitIssues', () => {
     const draft = campaignDraftSchema.parse({
       name: 'x',
       keywords: ['a'],
-      racValue: 'health',
+      racValue: 'health insurance',
       adAccountId: A,
       pageId: B,
       adSets: [{ name: 's', dailyBudgetCents: 500, ads: [{ name: 'a', headline: 'h', primaryText: 'p' }] }],
@@ -129,7 +130,7 @@ describe('campaignSubmitIssues', () => {
       name: 'x',
       budgetMode: 'CAMPAIGN',
       keywords: ['a'],
-      racValue: 'health',
+      racValue: 'health insurance',
       adAccountId: A,
       pageId: B,
       adSets: [
@@ -143,7 +144,7 @@ describe('campaignSubmitIssues', () => {
     const draft = campaignDraftSchema.parse({
       name: 'x',
       keywords: ['a'],
-      racValue: 'health',
+      racValue: 'health insurance',
       adAccountId: A,
       pageId: B,
       // AWARENESS can't optimize for OFFSITE_CONVERSIONS.
@@ -165,7 +166,7 @@ describe('campaignSubmitIssues', () => {
     const draft = campaignDraftSchema.parse({
       name: 'x',
       keywords: ['a'],
-      racValue: 'health',
+      racValue: 'health insurance',
       adAccountId: A,
       pageId: B,
       objective: 'OUTCOME_TRAFFIC',
@@ -186,7 +187,7 @@ describe('campaignSubmitIssues', () => {
     const draft = campaignDraftSchema.parse({
       name: 'x',
       keywords: ['a'],
-      racValue: 'health',
+      racValue: 'health insurance',
       adAccountId: A,
       pageId: B,
       adSets: [
@@ -220,5 +221,71 @@ describe('campaignSubmitIssues', () => {
       ],
     });
     expect(campaignSubmitIssues(draft)).toEqual([]);
+  });
+
+  it('flags racValue that matches the campaign name (Google returns zero terms)', () => {
+    const draft = campaignDraftSchema.parse({
+      name: 'Second Hand Car - Test',
+      keywords: ['a'],
+      racValue: 'Second Hand Car - Test',
+      adAccountId: A,
+      pageId: B,
+      objective: 'OUTCOME_TRAFFIC',
+      adSets: [
+        {
+          name: 's',
+          dailyBudgetCents: 5000,
+          countries: ['US'],
+          optimizationGoal: 'LINK_CLICKS',
+          ads: [{ name: 'a', headline: 'h', primaryText: 'p', uploadId: C }],
+        },
+      ],
+    });
+    expect(campaignSubmitIssues(draft).some((i) => i.includes('not the campaign name'))).toBe(true);
+  });
+
+  it('flags a single-word racValue', () => {
+    const draft = campaignDraftSchema.parse({
+      name: 'x',
+      keywords: ['a'],
+      racValue: 'insurance',
+      adAccountId: A,
+      pageId: B,
+      objective: 'OUTCOME_TRAFFIC',
+      adSets: [
+        {
+          name: 's',
+          dailyBudgetCents: 5000,
+          countries: ['US'],
+          optimizationGoal: 'LINK_CLICKS',
+          ads: [{ name: 'a', headline: 'h', primaryText: 'p', uploadId: C }],
+        },
+      ],
+    });
+    expect(campaignSubmitIssues(draft).some((i) => i.includes('at least two words'))).toBe(true);
+  });
+});
+
+describe('racValueIssues', () => {
+  it('returns [] when blank (missing is a separate required-field issue)', () => {
+    expect(racValueIssues('', 'anything')).toEqual([]);
+    expect(racValueIssues(null, 'anything')).toEqual([]);
+    expect(racValueIssues(undefined, 'anything')).toEqual([]);
+    expect(racValueIssues('   ', 'anything')).toEqual([]);
+  });
+
+  it('accepts a real multi-word search phrase', () => {
+    expect(racValueIssues('used cars under 10000', 'My Campaign')).toEqual([]);
+    expect(racValueIssues('affordable health insurance plans', 'Insurance Q1')).toEqual([]);
+  });
+
+  it('flags a value that matches the campaign name (case-insensitive)', () => {
+    const issues = racValueIssues('Second Hand Car', 'second hand car');
+    expect(issues.some((i) => i.includes('not the campaign name'))).toBe(true);
+  });
+
+  it('flags a single-word value', () => {
+    const issues = racValueIssues('insurance', 'Insurance Q1');
+    expect(issues.some((i) => i.includes('at least two words'))).toBe(true);
   });
 });

@@ -14,9 +14,16 @@ import {
  * Aggregated per term per IST business day in `term_stat_daily` (platform-wide, no org scope —
  * terms recur across articles). This is the only place term-grain performance is observable: the
  * AdSense v2 report has no per-query dimension. Super-admin reads it via `getTermPerformance`.
+ *
+ * Also carries synthetic per-host unit-fill signals under the `unit:<host>` namespace, beaconed
+ * by the article-page RSOC widget's `adLoadedCallback`. These share storage with real terms but
+ * are filtered out of `getTermPerformance` so they never clutter per-term rankings; a dedicated
+ * `getRsocUnitPerformance` reader exposes them for the "did the widget fill?" diagnostic.
  */
 
 export type TermSignal = 'render' | 'click';
+/** Namespace prefix for per-host unit-fill signals; not a real search term. */
+const UNIT_TERM_PREFIX = 'unit:';
 
 /** Max stored term length (a related-search query is short; cap to bound the public beacon). */
 const MAX_TERM_LEN = 120;
@@ -79,7 +86,9 @@ export async function getTermPerformance(opts: { from?: string; to?: string; lim
   const rows = await withSystem((tx) =>
     tx.termStatDaily.groupBy({
       by: ['term'],
-      where: { day: { gte: from, lte: to } },
+      // Exclude synthetic per-host unit-fill signals (`unit:<host>`) — they share storage
+      // with real terms but must never appear in the per-term rankings.
+      where: { day: { gte: from, lte: to }, NOT: { term: { startsWith: UNIT_TERM_PREFIX } } },
       _sum: { searches: true, fills: true, clicks: true },
       orderBy: { _sum: { searches: 'desc' } },
       take: limit,
@@ -101,4 +110,51 @@ export async function getTermPerformance(opts: { from?: string; to?: string; lim
   });
 
   return { range: { from, to }, terms };
+}
+
+/** Per-host RSOC unit-fill performance: one row per host summing render impressions + fills. */
+export interface RsocUnitPerf {
+  host: string;
+  impressions: number;
+  fills: number;
+  /** fills / impressions, or null below the display floor. */
+  fillRate: number | null;
+}
+
+/**
+ * Per-host RSOC unit-fill rollup — reads the `unit:<host>` synthetic terms written by the article-
+ * page RSOC widget's `adLoadedCallback`. Answers "did Google actually return chips on this host?"
+ * A near-zero fillRate on a host with real impressions points at a domain-approval gap or an
+ * `rc`-quality gate; a 0/0 host has no article-page traffic. Ranked by impressions.
+ */
+export async function getRsocUnitPerformance(opts: { from?: string; to?: string; limit?: number } = {}): Promise<{
+  range: { from: string; to: string };
+  hosts: RsocUnitPerf[];
+}> {
+  const to = opts.to ?? currentBusinessDay();
+  const from = opts.from ?? addBusinessDays(to, -6);
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+
+  const rows = await withSystem((tx) =>
+    tx.termStatDaily.groupBy({
+      by: ['term'],
+      where: { day: { gte: from, lte: to }, term: { startsWith: UNIT_TERM_PREFIX } },
+      _sum: { searches: true, fills: true },
+      orderBy: { _sum: { searches: 'desc' } },
+      take: limit,
+    }),
+  );
+
+  const hosts: RsocUnitPerf[] = rows.map((r) => {
+    const impressions = r._sum.searches ?? 0;
+    const fills = r._sum.fills ?? 0;
+    return {
+      host: r.term.slice(UNIT_TERM_PREFIX.length),
+      impressions,
+      fills,
+      fillRate: impressions >= RSOC_TERM_DISPLAY_FLOOR ? fills / impressions : null,
+    };
+  });
+
+  return { range: { from, to }, hosts };
 }
