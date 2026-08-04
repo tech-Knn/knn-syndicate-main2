@@ -137,6 +137,16 @@ export function RelatedSearchUnit({
     if (testChannel) effectiveChannel = testChannel;
     if (effectiveChannel) pageOptions.channel = effectiveChannel;
 
+    // styleId override / removal — AdSense styles are TYPED (ads vs. relatedsearch); a style
+    // created for one command silently returns zero when used with the other. If /search
+    // ('ads' command) serves fine on the same pubId but article-page ('relatedsearch') does
+    // not, the shared styleId is the smoking gun. Diagnostic overrides:
+    //   ?nostyle=1              → drop styleId entirely; Google uses its own default RS style
+    //   ?testStyle=<id>         → override with a specific RSOC-typed styleId (paste from AdSense)
+    if (usp.get('nostyle') === '1') delete pageOptions.styleId;
+    const testStyle = usp.get('testStyle');
+    if (testStyle) pageOptions.styleId = testStyle;
+
     // `?adtest=1` forces Google's TEST-AD mode for this pageview only. Test ads never count
     // impressions/clicks and never pay, but they let a super-admin visually verify the widget
     // wiring end-to-end without waiting on a live-serving decision. Production traffic never
