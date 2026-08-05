@@ -151,27 +151,56 @@ export default async function ArticlePage({
           )}
 
           <div className={styles.body}>
-            {bodyBlocks.map((block, i) => {
-              if (block.type === 'h2') return <h2 key={i}>{block.text}</h2>;
-              if (block.type === 'h3') return <h3 key={i}>{block.text}</h3>;
-              if (block.type === 'ul')
-                return (
-                  <ul key={i}>
-                    {block.items.map((it, j) => (
-                      <li key={j}>{it}</li>
-                    ))}
-                  </ul>
-                );
-              if (block.type === 'ol')
-                return (
-                  <ol key={i}>
-                    {block.items.map((it, j) => (
-                      <li key={j}>{it}</li>
-                    ))}
-                  </ol>
-                );
-              return <p key={i}>{block.text}</p>;
-            })}
+            {(() => {
+              // The RSOC unit fires _googCsa('relatedsearch', pageOptions, rsblock1, rsblock2)
+              // ONCE from <RelatedSearchUnit /> above. rsblock1's container (#relatedsearches1)
+              // lives inside that component; rsblock2's container (#relatedsearches2) is placed
+              // HERE inside the body, immediately AFTER the second H2 heading, so the second chip
+              // strip appears mid-article rather than stacked with the first. Both containers
+              // must exist in the DOM before the useEffect fires (they do — this map runs during
+              // SSR, useEffect runs after client hydration). Externally-managed pattern
+              // (dangerouslySetInnerHTML + suppressHydrationWarning) so React never wipes
+              // ads.js's injected iframe on re-render.
+              let h2Count = 0;
+              return bodyBlocks.map((block, i) => {
+                if (block.type === 'h2') {
+                  h2Count++;
+                  const heading = <h2 key={i}>{block.text}</h2>;
+                  if (h2Count === 2 && gate.monetize) {
+                    return (
+                      <>
+                        {heading}
+                        <div
+                          key={`rs2-${i}`}
+                          id="relatedsearches2"
+                          suppressHydrationWarning
+                          dangerouslySetInnerHTML={{ __html: '' }}
+                        />
+                      </>
+                    );
+                  }
+                  return heading;
+                }
+                if (block.type === 'h3') return <h3 key={i}>{block.text}</h3>;
+                if (block.type === 'ul')
+                  return (
+                    <ul key={i}>
+                      {block.items.map((it, j) => (
+                        <li key={j}>{it}</li>
+                      ))}
+                    </ul>
+                  );
+                if (block.type === 'ol')
+                  return (
+                    <ol key={i}>
+                      {block.items.map((it, j) => (
+                        <li key={j}>{it}</li>
+                      ))}
+                    </ol>
+                  );
+                return <p key={i}>{block.text}</p>;
+              });
+            })()}
           </div>
         </article>
       </main>
