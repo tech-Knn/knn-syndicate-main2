@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import {
   AFS_TRACKING_PARAMS,
   afsAdLoadedCallback,
@@ -80,7 +80,6 @@ export function RelatedSearchUnit({
   site: SiteConfig;
 }) {
   const live = afsConfigured(site);
-  const [filled, setFilled] = useState(false);
 
   useEffect(() => {
     if (!live) return;
@@ -192,7 +191,6 @@ export function RelatedSearchUnit({
       number: 5,
       adLoadedCallback: (containerName: string, adsLoaded: boolean) => {
         afsAdLoadedCallback(containerName, adsLoaded);
-        if (adsLoaded) setFilled(true);
         // Per-host RSOC unit-fill telemetry (observe-only). Fires per block per page-view once
         // CSA resolves the request — distinguishes "widget fired but Google returned zero" from
         // "widget never fired". Diagnostic for $0-revenue campaigns.
@@ -205,7 +203,6 @@ export function RelatedSearchUnit({
       number: 5,
       adLoadedCallback: (containerName: string, adsLoaded: boolean) => {
         afsAdLoadedCallback(containerName, adsLoaded);
-        if (adsLoaded) setFilled(true);
       },
     };
     runCsa('relatedsearch', pageOptions, rsblock1, rsblock2);
