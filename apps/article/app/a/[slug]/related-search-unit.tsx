@@ -154,6 +154,20 @@ export function RelatedSearchUnit({
     if (usp.get('adtest') === '1') {
       pageOptions.adtest = 'on';
     }
+
+    // `?minimal=1` strips all optional params, leaving only what the working /afs-test-
+    // relatedsearch.html static test sends. Diagnostic: if chips render with ?minimal=1 but
+    // not without, one of the extras (terms/channel/personalizedAds/adPage/ignoredPageParams)
+    // is what's blocking Google's live-serving decision on this account.
+    if (usp.get('minimal') === '1') {
+      delete pageOptions.personalizedAds;
+      delete pageOptions.adPage;
+      delete pageOptions.terms;
+      delete pageOptions.channel;
+      delete pageOptions.ignoredPageParams;
+      delete pageOptions.ivt;
+      delete pageOptions.resultsPageQueryParam;
+    }
     // TWO related-search blocks per Google's newer RSOC integration pattern. Some publisher
     // contracts / newer RSOC deployments expect at least two rsblocks (an above-the-fold band
     // and a lower band) — sending only one has been observed to cause Google to return zero
