@@ -168,6 +168,16 @@ export function RelatedSearchUnit({
       delete pageOptions.ivt;
       delete pageOptions.resultsPageQueryParam;
     }
+
+    // `?testRc=<phrase>` overrides the referrerAdCreative for this pageview. Google's rc quality
+    // gate silently rejects brand-like/title-case values; use this to test a plain lowercase
+    // search-intent phrase (e.g. `?testRc=best+used+cars+under+10000`). Also `?plainurl=1`
+    // strips the token from resultsPageBaseUrl so it matches Google's canonical short-URL pattern.
+    const testRc = usp.get('testRc');
+    if (testRc) pageOptions.referrerAdCreative = testRc;
+    if (usp.get('plainurl') === '1') {
+      pageOptions.resultsPageBaseUrl = `${window.location.origin}/search`;
+    }
     // TWO related-search blocks per Google's newer RSOC integration pattern. Some publisher
     // contracts / newer RSOC deployments expect at least two rsblocks (an above-the-fold band
     // and a lower band) — sending only one has been observed to cause Google to return zero
