@@ -83,23 +83,15 @@ export function RelatedSearchUnit({
 
   useEffect(() => {
     if (!live) return;
-    // Carry the click id (+ ad creative + channel) onto the results page so /search can
-    // attribute conversion + AFS revenue. CSA appends the query term as `q`.
-    const rp = new URLSearchParams();
-    if (token) {
-      // Forward the signed token ONLY — it carries rc/ch/txid; /search decodes + gates on it, so the
-      // results URL leaks no plaintext AFS params either.
-      rp.set('t', token);
-    } else {
-      // Legacy / observe-without-token: forward plaintext params (today's behavior).
-      if (txid) rp.set('txid', txid);
-      if (referrerAdCreative) rp.set('rc', referrerAdCreative);
-      // Forward the channel as `cid`, NOT `ch`: Google's results unit appends its own `ch=1`
-      // click-telemetry param, so a `ch` here collides (two values → array → dropped) and the
-      // offer's AFS revenue attribution is silently lost. Every competitor uses `cid` for this.
-      if (channel) rp.set('cid', channel);
-    }
-    const resultsPageBaseUrl = `${window.location.origin}/search${rp.toString() ? `?${rp.toString()}` : ''}`;
+    // The chip strip's target URL. Google's CSA appends `?q=<term>` at click time. We used to
+    // append a signed token (`?t=<jwt>`) or plaintext rc/cid/txid here so /search could decode
+    // attribution — but live testing proved Google silently rejects requests where
+    // `resultsPageBaseUrl` carries any query params beyond what CSA appends itself (long token
+    // URLs suppressed RSOC serving on partner-pub-6567805284657549). Keep it clean.
+    // Attribution moves to aggregate/proportional (see comment near referrerAdCreative below);
+    // conversion tracking on /search relies on `txid` embedded in Google's own click params, which
+    // survive independently of this URL.
+    const resultsPageBaseUrl = `${window.location.origin}/search`;
 
     const pageOptions = basePageOptions(site, {
       relatedSearchTargeting: 'content',
