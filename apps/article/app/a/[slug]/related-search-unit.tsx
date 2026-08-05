@@ -121,16 +121,15 @@ export function RelatedSearchUnit({
     // Never sent by real traffic; only set explicitly on a hand-crafted test URL.
     const usp = new URLSearchParams(window.location.search);
 
-    // Channel is INTENTIONALLY NOT SENT in pageOptions on this account (see comment above the
-    // referrerAdCreative block). Kept as an opt-IN via `?withchannel=<value>` for the rare case
-    // where a super-admin wants to verify a specific channel value against Google. Production
-    // traffic never carries this flag; attribution is aggregate/proportional (handled by the
-    // attribution worker), not per-request.
-    const withChannel = usp.get('withchannel');
-    if (withChannel) pageOptions.channel = withChannel;
-    // Legacy overrides still honored so old diagnostic URLs don't break.
+    // Channel — required for per-campaign revenue attribution in the AdSense report.
+    // Sent as pageOptions.channel to Google's CSA. Can be overridden via URL for diagnostics:
+    //   ?nochannel=1               → drop channel entirely
+    //   ?testChannel=<value>       → override with an explicit channel string
+    let effectiveChannel = channel;
+    if (usp.get('nochannel') === '1') effectiveChannel = undefined;
     const testChannel = usp.get('testChannel');
-    if (testChannel) pageOptions.channel = testChannel;
+    if (testChannel) effectiveChannel = testChannel;
+    if (effectiveChannel) pageOptions.channel = effectiveChannel;
 
     // styleId override / removal — AdSense styles are TYPED (ads vs. relatedsearch); a style
     // created for one command silently returns zero when used with the other. If /search
