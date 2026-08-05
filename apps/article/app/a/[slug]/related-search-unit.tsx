@@ -227,14 +227,18 @@ export function RelatedSearchUnit({
   // children yet), so it needs no `aria-hidden` to stay out of the way.
   return (
     <aside
-      className={filled ? styles.afs : styles.afsPending}
-      {...(filled ? { 'aria-label': 'Related searches' } : {})}
+      className={styles.afs}
+      aria-label="Related searches"
     >
       {/* TWO externally-managed CSA containers per the newer RSOC integration pattern (rsblock1 +
           rsblock2). Each is opaque to React (`dangerouslySetInnerHTML={{__html:''}}` +
           `suppressHydrationWarning`) so React never wipes the ad-iframes ads.js injects; without
           this, the server-empty vs client-injected div mismatches on hydration (#418) and React
-          can blow away the unit when `filled` toggles a re-render. Mirrors /search's #afscontainer1. */}
+          can blow away the unit when `filled` toggles a re-render. Mirrors /search's #afscontainer1.
+          ALWAYS-VISIBLE: previously the aside stayed collapsed (afsPending) until adLoadedCallback
+          reported adsLoaded=true, but Google observed to inject chip content WITHOUT firing the
+          callback consistently — chips ended up in the DOM but hidden by our wrapper. Always
+          render with the visible class; empty spacer is a fine trade-off for guaranteed visibility. */}
       <div id="relatedsearches1" suppressHydrationWarning dangerouslySetInnerHTML={{ __html: '' }} />
       <div id="relatedsearches2" suppressHydrationWarning dangerouslySetInnerHTML={{ __html: '' }} />
     </aside>
