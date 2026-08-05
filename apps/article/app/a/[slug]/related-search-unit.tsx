@@ -115,24 +115,30 @@ export function RelatedSearchUnit({
     });
     // Required (since 2025-11-01) when traffic comes from a source you control (our FB ads).
     if (referrerAdCreative) pageOptions.referrerAdCreative = referrerAdCreative;
-    // Publisher-provided terms are only valid alongside referrerAdCreative (Google's rule).
-    if (terms && referrerAdCreative) pageOptions.terms = terms;
+    // Terms + channel are INTENTIONALLY NOT SENT in pageOptions on this account.
+    // Live testing on partner-pub-6567805284657549 (2026-08-05) proved that including
+    // either `terms` or `channel` in the pageOptions passed to _googCsa('relatedsearch', ...)
+    // causes Google's RSOC to return an empty ads array (zero chips = zero revenue). Removing
+    // both restores Google's serving. Attribution moves to aggregate/proportional: total pubId
+    // revenue from AdSense report × (campaign clicks / total pubId clicks) = per-campaign
+    // revenue. Handled in the attribution worker, not per-request. If Google restores per-
+    // channel CSA attribution on this account tier, both can come back — no schema change needed
+    // because both `terms` and `channel` are still props to the component.
 
     // Diagnostic URL overrides — help a super-admin isolate WHY Google returns zero chips.
     // Never sent by real traffic; only set explicitly on a hand-crafted test URL.
     const usp = new URLSearchParams(window.location.search);
 
-    // Channel selection (defaults to the token's channel).
-    //   ?nochannel=1               → drop channel entirely (test whether a bad DB channel
-    //                                 is the cause of Google returning zero ads).
-    //   ?testChannel=<value>       → override with an explicit channel string (paste in a
-    //                                 real AdSense Custom Channel ID from the dashboard).
-    // The token-decoded `channel` remains the default; overrides win when present.
-    let effectiveChannel = channel;
-    if (usp.get('nochannel') === '1') effectiveChannel = undefined;
+    // Channel is INTENTIONALLY NOT SENT in pageOptions on this account (see comment above the
+    // referrerAdCreative block). Kept as an opt-IN via `?withchannel=<value>` for the rare case
+    // where a super-admin wants to verify a specific channel value against Google. Production
+    // traffic never carries this flag; attribution is aggregate/proportional (handled by the
+    // attribution worker), not per-request.
+    const withChannel = usp.get('withchannel');
+    if (withChannel) pageOptions.channel = withChannel;
+    // Legacy overrides still honored so old diagnostic URLs don't break.
     const testChannel = usp.get('testChannel');
-    if (testChannel) effectiveChannel = testChannel;
-    if (effectiveChannel) pageOptions.channel = effectiveChannel;
+    if (testChannel) pageOptions.channel = testChannel;
 
     // styleId override / removal — AdSense styles are TYPED (ads vs. relatedsearch); a style
     // created for one command silently returns zero when used with the other. If /search
