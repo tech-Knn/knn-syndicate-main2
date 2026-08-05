@@ -154,24 +154,37 @@ export function RelatedSearchUnit({
     if (usp.get('adtest') === '1') {
       pageOptions.adtest = 'on';
     }
-    runCsa('relatedsearch', pageOptions, {
+    // TWO related-search blocks per Google's newer RSOC integration pattern. Some publisher
+    // contracts / newer RSOC deployments expect at least two rsblocks (an above-the-fold band
+    // and a lower band) — sending only one has been observed to cause Google to return zero
+    // terms silently. Each block can independently fill; the aside chrome reveals when EITHER
+    // fills. The `adLoadedCallback` receives the container name so per-block state is
+    // observable in telemetry.
+    const rsblock1 = {
       container: 'relatedsearches1',
-      // ~6 (not 10): matches Google's official RSOC examples and keeps the unit a supplement
-      // to the article rather than the page's focus (a 10-chip block dominates the content).
       // Send BOTH `relatedSearches` (legacy) and `number` (newer RSOC integrations) so whichever
-      // Google's ads.js reads is populated.
-      relatedSearches: 6,
-      number: 6,
+      // Google's ads.js reads is populated. 5 chips per block matches the newer RSOC pattern.
+      relatedSearches: 5,
+      number: 5,
       adLoadedCallback: (containerName: string, adsLoaded: boolean) => {
         afsAdLoadedCallback(containerName, adsLoaded);
-        // Reveal the unit's chrome only when it actually served terms.
         if (adsLoaded) setFilled(true);
-        // Per-host RSOC unit-fill telemetry (observe-only). Fires once per page-view once CSA
-        // resolves the request — the ONLY place we can distinguish "widget fired but Google
-        // returned zero terms" from "widget never fired". Diagnostic for $0-revenue campaigns.
+        // Per-host RSOC unit-fill telemetry (observe-only). Fires per block per page-view once
+        // CSA resolves the request — distinguishes "widget fired but Google returned zero" from
+        // "widget never fired". Diagnostic for $0-revenue campaigns.
         beaconUnitFill(window.location.host, adsLoaded);
       },
-    });
+    };
+    const rsblock2 = {
+      container: 'relatedsearches2',
+      relatedSearches: 5,
+      number: 5,
+      adLoadedCallback: (containerName: string, adsLoaded: boolean) => {
+        afsAdLoadedCallback(containerName, adsLoaded);
+        if (adsLoaded) setFilled(true);
+      },
+    };
+    runCsa('relatedsearch', pageOptions, rsblock1, rsblock2);
   }, [live, referrerAdCreative, terms, txid, channel, token, site]);
 
   // No AFS account for this host → don't render a unit at all (no placeholder, ever).
@@ -193,12 +206,13 @@ export function RelatedSearchUnit({
       className={filled ? styles.afs : styles.afsPending}
       {...(filled ? { 'aria-label': 'Related searches' } : {})}
     >
-      {/* Externally-managed by Google CSA: ads.js injects the related-search <iframe> into this
-          container, so React must treat its contents as opaque — `dangerouslySetInnerHTML={{__html:''}}`
-          (suppressHydrationWarning alone covers only attrs/text, not child nodes). Without this the
-          server-empty vs client-injected div mismatches on hydration (#418) and React can wipe the
-          unit when `filled` toggles a re-render. Mirrors /search's #afscontainer1. */}
+      {/* TWO externally-managed CSA containers per the newer RSOC integration pattern (rsblock1 +
+          rsblock2). Each is opaque to React (`dangerouslySetInnerHTML={{__html:''}}` +
+          `suppressHydrationWarning`) so React never wipes the ad-iframes ads.js injects; without
+          this, the server-empty vs client-injected div mismatches on hydration (#418) and React
+          can blow away the unit when `filled` toggles a re-render. Mirrors /search's #afscontainer1. */}
       <div id="relatedsearches1" suppressHydrationWarning dangerouslySetInnerHTML={{ __html: '' }} />
+      <div id="relatedsearches2" suppressHydrationWarning dangerouslySetInnerHTML={{ __html: '' }} />
     </aside>
   );
 }

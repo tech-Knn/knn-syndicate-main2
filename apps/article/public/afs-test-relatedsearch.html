@@ -16,6 +16,7 @@ h1{font-size:20px} pre{background:#f4f4f4;padding:.5rem;overflow:auto;font-size:
 <p>Canonical Google RSOC snippet with the <em>minimum</em> params. No React, no Next.js, no cloak-gate, no channel, no window.PageOptions monkey-patching. If <strong>chips render below</strong> when the ads-baseline (other test file) also renders, then our React article page has a bug. If ads-baseline renders but this doesn't, the account has RSOC blocked.</p>
 
 <div id="relatedsearches1"></div>
+<div id="relatedsearches2"></div>
 
 <h2>adLoadedCallback log:</h2>
 <div id="log">waiting for Google response...</div>
@@ -37,14 +38,18 @@ var po = {
 };
 document.getElementById('params').textContent = 'Sent to Google:\n' + JSON.stringify(po, null, 2);
 
-_googCsa('relatedsearch', po, {
-  container: 'relatedsearches1',
-  relatedSearches: 4,
-  adLoadedCallback: function(c, loaded) {
-    document.getElementById('log').textContent =
-      '[' + new Date().toISOString() + '] container=' + c + ' adsLoaded=' + loaded;
+function logCb(c, loaded) {
+  var line = '[' + new Date().toISOString() + '] container=' + c + ' adsLoaded=' + loaded;
+  document.getElementById('log').textContent += (document.getElementById('log').textContent === 'waiting for Google response...' ? '' : '\n') + line;
+  if (document.getElementById('log').textContent === 'waiting for Google response...') {
+    document.getElementById('log').textContent = line;
   }
-});
+}
+
+var rsblock1 = { container: 'relatedsearches1', relatedSearches: 5, number: 5, adLoadedCallback: logCb };
+var rsblock2 = { container: 'relatedsearches2', relatedSearches: 5, number: 5, adLoadedCallback: logCb };
+
+_googCsa('relatedsearch', po, rsblock1, rsblock2);
 
 var s = document.createElement('script');
 s.async = true;
