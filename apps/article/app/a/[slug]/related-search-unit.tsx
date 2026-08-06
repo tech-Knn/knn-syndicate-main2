@@ -121,15 +121,23 @@ export function RelatedSearchUnit({
     // Never sent by real traffic; only set explicitly on a hand-crafted test URL.
     const usp = new URLSearchParams(window.location.search);
 
-    // Channel — required for per-campaign revenue attribution in the AdSense report.
-    // Sent as pageOptions.channel to Google's CSA. Can be overridden via URL for diagnostics:
-    //   ?nochannel=1               → drop channel entirely
-    //   ?testChannel=<value>       → override with an explicit channel string
-    let effectiveChannel = channel;
-    if (usp.get('nochannel') === '1') effectiveChannel = undefined;
-    const testChannel = usp.get('testChannel');
-    if (testChannel) effectiveChannel = testChannel;
-    if (effectiveChannel) pageOptions.channel = effectiveChannel;
+    // Channel is INTENTIONALLY NOT SENT in pageOptions on this account.
+    //
+    // Live testing on partner-pub-6567805284657549 (2026-08-05/06) proved that including
+    // `channel` in pageOptions for _googCsa('relatedsearch', ...) causes Google to return an
+    // empty ads array in live-serving mode (test-ads mode still fills). Same result for both
+    // 07864 (assigned) and 00500 (override). Google's response signature = valid queryId,
+    // empty `ads[]` — the classic RAF-tier "channel not accepted" pattern.
+    //
+    // Attribution moves to campaign/domain level: total pubId revenue from the AdSense report is
+    // proportionally split by campaign clicks (attribution worker handles). Since only ONE
+    // campaign runs per domain today, this attribution is 100% exact for the current setup.
+    //
+    // Diagnostic overrides kept so we can re-test when Google's serving behavior changes:
+    //   ?withchannel=<value>       → force-send channel this pageview only
+    //   ?testChannel=<value>       → legacy override, same effect as withchannel
+    const withChannel = usp.get('withchannel') || usp.get('testChannel');
+    if (withChannel) pageOptions.channel = withChannel;
 
     // styleId override / removal — AdSense styles are TYPED (ads vs. relatedsearch); a style
     // created for one command silently returns zero when used with the other. If /search
