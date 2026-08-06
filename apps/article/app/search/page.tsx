@@ -45,16 +45,19 @@ export default async function SearchPage({
   const gate = await resolveCloakGate(sp, Date.now());
   const referrerAdCreative = gate.params.rc;
   // The offer's AFS channel (per-offer attribution). Sources, in priority order:
-  //   1. Token / URL params via cloak-gate (legacy path)
-  //   2. Same-origin cookie `_rsoc_ch` set by the article page (current path — Google's RSOC on
-  //      this account rejects ANY query params on resultsPageBaseUrl, so we can't forward channel
-  //      via URL. The cookie bridges the article → /search hop without touching the URL.)
+  //   1. Same-origin cookie `_rsoc_ch` set by the article page (AUTHORITATIVE — our value)
+  //   2. Token / URL params via cloak-gate (legacy path)
+  //
+  // Cookie MUST be first: Google's ads.js on /search often appends its own `?ch=1` telemetry
+  // param after ads render, which cloak-gate would otherwise treat as "channel=1" and clobber
+  // our real channel. The cookie set on the article page is our definitive source of truth for
+  // this session, so we honor it first and only fall back to URL params when the cookie is absent.
   const cookieJar = await cookies();
   const channelFromCookie = cookieJar.get('_rsoc_ch')?.value;
-  const channel = gate.params.ch || channelFromCookie;
-  // Conversion attribution: the click id (txid) — same fallback chain as channel.
+  const channel = channelFromCookie || gate.params.ch;
+  // Conversion attribution: the click id (txid) — same priority chain as channel.
   const clickIdFromCookie = cookieJar.get('_rsoc_txid')?.value;
-  const clickId = gate.params.txid || clickIdFromCookie;
+  const clickId = clickIdFromCookie || gate.params.txid;
   const value = str(sp.cv) || undefined;
   const currency = str(sp.ccy) || undefined;
 
