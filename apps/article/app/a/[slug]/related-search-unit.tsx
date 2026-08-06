@@ -95,12 +95,12 @@ export function RelatedSearchUnit({
     // an old campaign never leaks into a different campaign's /search page.
     const resultsPageBaseUrl = `${window.location.origin}/search`;
     if (channel) {
-      document.cookie = `_rsoc_ch=${encodeURIComponent(channel)}; path=/; max-age=1800; SameSite=Strict`;
+      document.cookie = `_rsoc_ch=${encodeURIComponent(channel)}; path=/; max-age=1800; SameSite=Lax`;
     }
     // Also stash txid so the conversion beacon can still fire on /search (previously carried
     // via the token in resultsPageBaseUrl, which we removed).
     if (txid) {
-      document.cookie = `_rsoc_txid=${encodeURIComponent(txid)}; path=/; max-age=1800; SameSite=Strict`;
+      document.cookie = `_rsoc_txid=${encodeURIComponent(txid)}; path=/; max-age=1800; SameSite=Lax`;
     }
 
     const pageOptions = basePageOptions(site, {
