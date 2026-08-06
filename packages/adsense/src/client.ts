@@ -41,7 +41,7 @@ export interface AdsenseReportResponse {
 }
 
 const DIM_DATE = 'DATE';
-const DIM_CHANNEL = 'CUSTOM_CHANNEL_ID';
+const DIM_CHANNEL = 'URL_CHANNEL_NAME';
 const MET_EARNINGS = 'ESTIMATED_EARNINGS';
 const MET_CLICKS = 'CLICKS';
 // Fill-rate metrics (RSOC observe-only). fill rate = MATCHED_AD_REQUESTS / AD_REQUESTS
