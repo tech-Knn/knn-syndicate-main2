@@ -405,7 +405,7 @@ export interface AdsenseRevenuePreview {
   totalRevenueMinor: number;
   totalClicks: number;
   /** Channels (in the top-N) that earned anything in the window. */
-  channelsWithRevenue: number;
+  domainsWithRevenue: number;
   /** How many of the reported channels map to our pool — the live CUSTOM_CHANNEL_ID ↔ `ch` check (OQ#4). */
   matchedInPool: number;
   rows: AdsenseRevenuePreviewRow[];
@@ -462,7 +462,7 @@ export async function previewAccountRevenue(
     currency,
     totalRevenueMinor: out.reduce((s, r) => s + r.revenueMinor, 0),
     totalClicks: out.reduce((s, r) => s + r.afsClicks, 0),
-    channelsWithRevenue: out.filter((r) => r.revenueMinor > 0).length,
+    domainsWithRevenue: out.filter((r) => r.revenueMinor > 0).length,
     matchedInPool: out.filter((r) => r.inPool).length,
     rows: out,
   };
