@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { headers } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { resolveCloakGate } from '../_afs/cloak-gate';
 import { resolveSiteConfig, resolveSiteName } from '../_afs/site-config';
 import { ConversionTracker } from '../funnel-beacons';
@@ -44,11 +44,17 @@ export default async function SearchPage({
   // if valid, else the plaintext `rc`/`cid`/`txid` params. Cloaking is upstream at the go.* Worker.
   const gate = await resolveCloakGate(sp, Date.now());
   const referrerAdCreative = gate.params.rc;
-  // The offer's AFS channel (per-offer attribution) — from the token, or `cid` in observe.
-  const channel = gate.params.ch;
-  // Conversion attribution: the click id (txid) comes from the token / plaintext; optional
-  // value (cv) / currency (ccy) are non-secret conversion hints, read directly.
-  const clickId = gate.params.txid;
+  // The offer's AFS channel (per-offer attribution). Sources, in priority order:
+  //   1. Token / URL params via cloak-gate (legacy path)
+  //   2. Same-origin cookie `_rsoc_ch` set by the article page (current path — Google's RSOC on
+  //      this account rejects ANY query params on resultsPageBaseUrl, so we can't forward channel
+  //      via URL. The cookie bridges the article → /search hop without touching the URL.)
+  const cookieJar = await cookies();
+  const channelFromCookie = cookieJar.get('_rsoc_ch')?.value;
+  const channel = gate.params.ch || channelFromCookie;
+  // Conversion attribution: the click id (txid) — same fallback chain as channel.
+  const clickIdFromCookie = cookieJar.get('_rsoc_txid')?.value;
+  const clickId = gate.params.txid || clickIdFromCookie;
   const value = str(sp.cv) || undefined;
   const currency = str(sp.ccy) || undefined;
 

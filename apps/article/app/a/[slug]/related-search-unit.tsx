@@ -83,24 +83,25 @@ export function RelatedSearchUnit({
 
   useEffect(() => {
     if (!live) return;
-    // The chip strip's target URL. Google's CSA appends `?q=<term>` at click time.
+    // Google's CSA appends `?q=<term>` at click time to `resultsPageBaseUrl`. Live tests proved
+    // Google's RSOC on this account rejects ANY query param on resultsPageBaseUrl (long tokens
+    // AND short cid alike), so keep it clean.
     //
-    // Attribution mechanic: revenue attribution requires /search page to know the channel so
-    // its own _googCsa('ads', ...) call tags the ad request with `pageOptions.channel = 07864`.
-    // Without that, AdSense records revenue at the pubId account level with no channel tag →
-    // our attribution worker can't map back to the specific campaign → dashboard stays $0.
-    //
-    // So we append ONLY `?cid=<channel>` (short param — Google observed to reject LONG tokens
-    // in resultsPageBaseUrl but a short numeric param is tolerated in most publisher configs).
-    // /search reads `?cid=` in cloak-gate and passes it to CSA. Google appends its own `?q=`
-    // so the final /search URL is `.../search?cid=07864&q=<term>` — Google-tolerated and
-    // attribution-preserving. If chips stop rendering after this change, fall back to plain URL.
-    const rp = new URLSearchParams();
-    if (channel) rp.set('cid', channel);
-    const qs = rp.toString();
-    const resultsPageBaseUrl = qs
-      ? `${window.location.origin}/search?${qs}`
-      : `${window.location.origin}/search`;
+    // Attribution mechanic: the /search page needs the channel to send in ITS OWN CSA 'ads' call
+    // (that's where revenue is attributed). Since we can't put channel in resultsPageBaseUrl,
+    // pass it via a SAME-ORIGIN cookie — the article and /search both live on the same host,
+    // so a cookie set here is automatically visible to /search when Google navigates the user
+    // there via the chip click. Named `_rsoc_ch` with a short 30-min TTL so a stale cookie from
+    // an old campaign never leaks into a different campaign's /search page.
+    const resultsPageBaseUrl = `${window.location.origin}/search`;
+    if (channel) {
+      document.cookie = `_rsoc_ch=${encodeURIComponent(channel)}; path=/; max-age=1800; SameSite=Strict`;
+    }
+    // Also stash txid so the conversion beacon can still fire on /search (previously carried
+    // via the token in resultsPageBaseUrl, which we removed).
+    if (txid) {
+      document.cookie = `_rsoc_txid=${encodeURIComponent(txid)}; path=/; max-age=1800; SameSite=Strict`;
+    }
 
     const pageOptions = basePageOptions(site, {
       relatedSearchTargeting: 'content',
