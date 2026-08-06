@@ -405,7 +405,7 @@ export interface AdsenseRevenuePreview {
   totalRevenueMinor: number;
   totalClicks: number;
   /** Channels (in the top-N) that earned anything in the window. */
-  domainsWithRevenue: number;
+  channelsWithRevenue: number;
   /** How many of the reported channels map to our pool — the live CUSTOM_CHANNEL_ID ↔ `ch` check (OQ#4). */
   matchedInPool: number;
   rows: AdsenseRevenuePreviewRow[];
