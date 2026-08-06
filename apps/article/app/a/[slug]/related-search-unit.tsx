@@ -209,6 +209,22 @@ export function RelatedSearchUnit({
       },
     };
     runCsa('relatedsearch', pageOptions, rsblock1, rsblock2);
+
+    // Re-fire CSA when the page is restored from the browser's back-forward cache (bfcache).
+    // Without this: user clicks chip → /search → clicks Back → article restored from bfcache
+    // → useEffect doesn't re-run → old CSA iframe is stale/gone → NO CHIPS visible on return.
+    // With this: bfcache restore fires `pageshow` with persisted=true → we clear the containers
+    // and re-fire runCsa, so chips render again and the user can click another.
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return; // only for bfcache restores; initial load already fired above
+      const c1 = document.getElementById('relatedsearches1');
+      const c2 = document.getElementById('relatedsearches2');
+      if (c1) c1.innerHTML = '';
+      if (c2) c2.innerHTML = '';
+      runCsa('relatedsearch', pageOptions, rsblock1, rsblock2);
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
   }, [live, referrerAdCreative, terms, txid, channel, token, site]);
 
   // No AFS account for this host → don't render a unit at all (no placeholder, ever).
