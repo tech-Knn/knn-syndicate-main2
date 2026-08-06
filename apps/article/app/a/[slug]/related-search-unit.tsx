@@ -83,15 +83,24 @@ export function RelatedSearchUnit({
 
   useEffect(() => {
     if (!live) return;
-    // The chip strip's target URL. Google's CSA appends `?q=<term>` at click time. We used to
-    // append a signed token (`?t=<jwt>`) or plaintext rc/cid/txid here so /search could decode
-    // attribution — but live testing proved Google silently rejects requests where
-    // `resultsPageBaseUrl` carries any query params beyond what CSA appends itself (long token
-    // URLs suppressed RSOC serving on partner-pub-6567805284657549). Keep it clean.
-    // Attribution moves to aggregate/proportional (see comment near referrerAdCreative below);
-    // conversion tracking on /search relies on `txid` embedded in Google's own click params, which
-    // survive independently of this URL.
-    const resultsPageBaseUrl = `${window.location.origin}/search`;
+    // The chip strip's target URL. Google's CSA appends `?q=<term>` at click time.
+    //
+    // Attribution mechanic: revenue attribution requires /search page to know the channel so
+    // its own _googCsa('ads', ...) call tags the ad request with `pageOptions.channel = 07864`.
+    // Without that, AdSense records revenue at the pubId account level with no channel tag →
+    // our attribution worker can't map back to the specific campaign → dashboard stays $0.
+    //
+    // So we append ONLY `?cid=<channel>` (short param — Google observed to reject LONG tokens
+    // in resultsPageBaseUrl but a short numeric param is tolerated in most publisher configs).
+    // /search reads `?cid=` in cloak-gate and passes it to CSA. Google appends its own `?q=`
+    // so the final /search URL is `.../search?cid=07864&q=<term>` — Google-tolerated and
+    // attribution-preserving. If chips stop rendering after this change, fall back to plain URL.
+    const rp = new URLSearchParams();
+    if (channel) rp.set('cid', channel);
+    const qs = rp.toString();
+    const resultsPageBaseUrl = qs
+      ? `${window.location.origin}/search?${qs}`
+      : `${window.location.origin}/search`;
 
     const pageOptions = basePageOptions(site, {
       relatedSearchTargeting: 'content',
