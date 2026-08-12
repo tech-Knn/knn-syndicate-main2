@@ -136,11 +136,14 @@ export default async function ArticlePage({
             client useEffect in RelatedSearchUnit also sets this cookie (as a backup) but was
             observed racing with fast chip clicks in production, leaving /search without the
             channel → AdSense requests fired untagged → $0 attributed revenue for the campaign
-            even when the account overall earned. Cookie name/attrs mirror the client-side set. */}
+            even when the account overall earned. Uses SameSite=None; Secure so the cookie
+            survives the cross-context navigation from Google's RSOC iframe → /search — verified
+            2026-08-12 that SameSite=Lax was being dropped in Chrome (incognito confirmed) when
+            the chip click originates inside Google's cross-origin iframe. */}
         {channel && (
           <script
             dangerouslySetInnerHTML={{
-              __html: `document.cookie="_rsoc_ch=${encodeURIComponent(channel)}; path=/; max-age=1800; SameSite=Lax";${txid ? `document.cookie="_rsoc_txid=${encodeURIComponent(txid)}; path=/; max-age=1800; SameSite=Lax";` : ''}`,
+              __html: `document.cookie="_rsoc_ch=${encodeURIComponent(channel)}; path=/; max-age=1800; SameSite=None; Secure";${txid ? `document.cookie="_rsoc_txid=${encodeURIComponent(txid)}; path=/; max-age=1800; SameSite=None; Secure";` : ''}`,
             }}
           />
         )}
