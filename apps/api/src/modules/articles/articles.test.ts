@@ -58,6 +58,13 @@ beforeAll(async () => {
       data: { orgId, email: `art-other-${suffix}@a.com`, name: 'Other', passwordHash: 'x', role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE },
     });
     otherBuyerId = other.id;
+    // The article engine only calls complianceRewrite when a global compliance_prompt is set
+    // (articles.service.ts:346). Seed it so the test doesn't depend on ambient DB state.
+    await tx.platformSetting.upsert({
+      where: { key: 'compliance_prompt' },
+      create: { key: 'compliance_prompt', value: 'Test compliance rules.' },
+      update: { value: 'Test compliance rules.' },
+    });
   });
 });
 
