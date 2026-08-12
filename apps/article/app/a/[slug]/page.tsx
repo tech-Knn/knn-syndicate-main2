@@ -131,6 +131,19 @@ export default async function ArticlePage({
       <main id="main-content" className={styles.main}>
         {/* Paid visitors fire the `lander` (ViewContent) funnel event on view. */}
         <LanderBeacon clickId={txid} />
+        {/* Server-side AFS channel cookie set. Runs during HTML parse — BEFORE React hydrates
+            and BEFORE Google's RSOC iframe navigates the user to /search on chip click. The
+            client useEffect in RelatedSearchUnit also sets this cookie (as a backup) but was
+            observed racing with fast chip clicks in production, leaving /search without the
+            channel → AdSense requests fired untagged → $0 attributed revenue for the campaign
+            even when the account overall earned. Cookie name/attrs mirror the client-side set. */}
+        {channel && (
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `document.cookie="_rsoc_ch=${encodeURIComponent(channel)}; path=/; max-age=1800; SameSite=Lax";${txid ? `document.cookie="_rsoc_txid=${encodeURIComponent(txid)}; path=/; max-age=1800; SameSite=Lax";` : ''}`,
+            }}
+          />
+        )}
         <article className={styles.article}>
           <h1 className={styles.title}>{article.title}</h1>
           {lead && <p className={styles.lead}>{lead}</p>}
