@@ -140,10 +140,14 @@ export default async function ArticlePage({
             survives the cross-context navigation from Google's RSOC iframe → /search — verified
             2026-08-12 that SameSite=Lax was being dropped in Chrome (incognito confirmed) when
             the chip click originates inside Google's cross-origin iframe. */}
-        {channel && (
+        {(channel || referrerAdCreative) && (
           <script
             dangerouslySetInnerHTML={{
-              __html: `document.cookie="_rsoc_ch=${encodeURIComponent(channel)}; path=/; max-age=1800; SameSite=None; Secure";${txid ? `document.cookie="_rsoc_txid=${encodeURIComponent(txid)}; path=/; max-age=1800; SameSite=None; Secure";` : ''}`,
+              __html: [
+                channel ? `document.cookie="_rsoc_ch=${encodeURIComponent(channel)}; path=/; max-age=1800; SameSite=None; Secure";` : '',
+                txid ? `document.cookie="_rsoc_txid=${encodeURIComponent(txid)}; path=/; max-age=1800; SameSite=None; Secure";` : '',
+                referrerAdCreative ? `document.cookie="_rsoc_rc=${encodeURIComponent(referrerAdCreative)}; path=/; max-age=1800; SameSite=None; Secure";` : '',
+              ].join(''),
             }}
           />
         )}

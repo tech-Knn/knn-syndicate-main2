@@ -43,21 +43,22 @@ export default async function SearchPage({
   // ads (Google's crawler must see them to serve); the gate only chooses the param source: the token
   // if valid, else the plaintext `rc`/`cid`/`txid` params. Cloaking is upstream at the go.* Worker.
   const gate = await resolveCloakGate(sp, Date.now());
-  const referrerAdCreative = gate.params.rc;
-  // The offer's AFS channel (per-offer attribution). Sources, in priority order:
-  //   1. Same-origin cookie `_rsoc_ch` set by the article page (AUTHORITATIVE — our value)
-  //   2. Token / URL params via cloak-gate (legacy path)
+  // The offer's AFS channel (per-offer attribution) + referrerAdCreative + txid. Sources, priority order:
+  //   1. Same-origin cookie `_rsoc_*` set by the article page (AUTHORITATIVE — our value)
+  //   2. Token / URL params via cloak-gate (legacy / direct-visit fallback)
   //
-  // Cookie MUST be first: Google's ads.js on /search often appends its own `?ch=1` telemetry
-  // param after ads render, which cloak-gate would otherwise treat as "channel=1" and clobber
-  // our real channel. The cookie set on the article page is our definitive source of truth for
-  // this session, so we honor it first and only fall back to URL params when the cookie is absent.
+  // Cookie MUST be first: Google's ads.js on /search often appends its own `?ch=1` telemetry param
+  // after ads render, which cloak-gate would otherwise treat as "channel=1" and clobber our real
+  // channel. Chip click navigation from Google's iframe strips the campaign's rc/ch/txid from the URL
+  // (only `?q=<term>&rsToken=<googleToken>` is preserved), so cookies are the ONLY way to preserve
+  // the campaign's referrerAdCreative and channel/txid on the /search render.
   const cookieJar = await cookies();
   const channelFromCookie = cookieJar.get('_rsoc_ch')?.value;
   const channel = channelFromCookie || gate.params.ch;
-  // Conversion attribution: the click id (txid) — same priority chain as channel.
   const clickIdFromCookie = cookieJar.get('_rsoc_txid')?.value;
   const clickId = clickIdFromCookie || gate.params.txid;
+  const racFromCookie = cookieJar.get('_rsoc_rc')?.value;
+  const referrerAdCreative = racFromCookie || gate.params.rc;
   const value = str(sp.cv) || undefined;
   const currency = str(sp.ccy) || undefined;
 
