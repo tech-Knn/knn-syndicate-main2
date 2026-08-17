@@ -101,7 +101,12 @@ worker.get('/go/:id', async (c) => {
       const p: Record<string, string> = {};
       for (const [k, v] of u.searchParams) p[k] = v;
       const token = await signCloakToken({ p, exp: Date.now() + CLOAK_TOKEN_TTL_MS }, c.env.CLOAK_TOKEN_SECRET);
-      location = `${u.origin}${u.pathname}?t=${encodeURIComponent(token)}`;
+      // Carry the AFS channel as `cid` OUTSIDE the token. Google's related-search unit strips `t`
+      // (it's in ignoredPageParams) when building the /search URL and appends its own `ch=1`
+      // click-telemetry param — so /search reads `1` as the channel. `cid` is not in
+      // ignoredPageParams, so it survives the hop; cloak-gate already reads `cid` before `ch`.
+      const chan = u.searchParams.get('ch');
+      location = `${u.origin}${u.pathname}?t=${encodeURIComponent(token)}${chan ? `&cid=${encodeURIComponent(chan)}` : ''}`;
     } catch {
       location = decision.location;
     }
