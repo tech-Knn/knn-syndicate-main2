@@ -93,14 +93,29 @@ export function RelatedSearchUnit({
     // so a cookie set here is automatically visible to /search when Google navigates the user
     // there via the chip click. Named `_rsoc_ch` with a short 30-min TTL so a stale cookie from
     // an old campaign never leaks into a different campaign's /search page.
-    const resultsPageBaseUrl = `${window.location.origin}/search`;
+    // resultsPageBaseUrl carries channel/rc/txid in the URL FRAGMENT (#c=&r=&x=).
+    // Fragment because: (a) Google's RSOC rejects query params on this URL (verified — chips break)
+    // but does NOT reject fragment, (b) the fragment travels intact through Google's iframe
+    // navigation into /search, and (c) it's a client-side-only signal so /search reads it in
+    // browser JS (see search-ads.tsx bootstrap). This is the BULLETPROOF path — cookies can be
+    // lost across incognito new-tab / cross-context nav, but the fragment always survives.
+    // Cookies are still set below as a redundant path (SSR /search picks them up first if present).
+    const hashParts: string[] = [];
+    if (channel) hashParts.push(`c=${encodeURIComponent(channel)}`);
+    if (referrerAdCreative) hashParts.push(`r=${encodeURIComponent(referrerAdCreative)}`);
+    if (txid) hashParts.push(`x=${encodeURIComponent(txid)}`);
+    const hash = hashParts.length ? `#${hashParts.join('&')}` : '';
+    const resultsPageBaseUrl = `${window.location.origin}/search${hash}`;
     if (channel) {
-      document.cookie = `_rsoc_ch=${encodeURIComponent(channel)}; path=/; max-age=1800; SameSite=Lax`;
+      document.cookie = `_rsoc_ch=${encodeURIComponent(channel)}; path=/; max-age=1800; SameSite=None; Secure`;
     }
     // Also stash txid so the conversion beacon can still fire on /search (previously carried
     // via the token in resultsPageBaseUrl, which we removed).
     if (txid) {
-      document.cookie = `_rsoc_txid=${encodeURIComponent(txid)}; path=/; max-age=1800; SameSite=Lax`;
+      document.cookie = `_rsoc_txid=${encodeURIComponent(txid)}; path=/; max-age=1800; SameSite=None; Secure`;
+    }
+    if (referrerAdCreative) {
+      document.cookie = `_rsoc_rc=${encodeURIComponent(referrerAdCreative)}; path=/; max-age=1800; SameSite=None; Secure`;
     }
 
     const pageOptions = basePageOptions(site, {

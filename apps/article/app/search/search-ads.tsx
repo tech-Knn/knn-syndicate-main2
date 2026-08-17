@@ -96,6 +96,17 @@ export function SearchAds({
   const bootstrap =
     `(function(g,o){g[o]=g[o]||function(){(g[o].q=g[o].q||[]).push(arguments)};g[o].t=1*new Date})(window,'_googCsa');` +
     `var po=${safeJson(pageOptions)};po.resultsPageBaseUrl=window.location.origin+'/search';` +
+    // BULLETPROOF channel/rc/txid recovery from URL fragment. Article page puts
+    // resultsPageBaseUrl=/search#c=<ch>&r=<rac>&x=<txid> — the fragment survives Google's iframe
+    // chip navigation intact and is NEVER sent to server (so SSR can't see it). If cookies were
+    // lost (incognito new-tab / cross-context nav), the hash values are still here. Read them
+    // BEFORE _googCsa fires so the AFS ad request goes out with the right channel + rc. Also
+    // set cookies so downstream navigations (org search results on same /search) keep the values.
+    `try{var _h=new URLSearchParams((location.hash||'').substring(1));` +
+    `if(_h.get('c')&&!po.channel){po.channel=_h.get('c');document.cookie='_rsoc_ch='+encodeURIComponent(_h.get('c'))+'; path=/; max-age=1800; SameSite=None; Secure';}` +
+    `if(_h.get('r')&&!po.referrerAdCreative){po.referrerAdCreative=_h.get('r');document.cookie='_rsoc_rc='+encodeURIComponent(_h.get('r'))+'; path=/; max-age=1800; SameSite=None; Secure';}` +
+    `if(_h.get('x')){document.cookie='_rsoc_txid='+encodeURIComponent(_h.get('x'))+'; path=/; max-age=1800; SameSite=None; Secure';}` +
+    `}catch(e){}` +
     // Some AdSense custom-style templates (looked up server-side by `styleId`) reference
     // `window.PageOptions` / `window.pageOptions` in publisher code. Expose the current page
     // options under both casings before firing so a style referencing either name resolves
