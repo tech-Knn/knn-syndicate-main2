@@ -80,25 +80,54 @@ export async function getPublicArticleBySlug(slug: string): Promise<PublicArticl
       },
     });
     if (!article || article.status !== 'READY') return null;
-    // Pick the article's most-recently-updated campaign that has an AFS channel assigned.
-    // No status filter: even a PAUSED / APPROVED / REJECTED campaign with a real channel is
-    // strictly better than Google's default `ch=1` for the ad request — the whole point of this
-    // lookup is to make Google AFS never receive `1` for an article that has EVER had a real
-    // channel. If the article has never been attached to a channel-holding campaign, we return
-    // null and the caller falls through (no fake channel invented).
-    const campaign = await tx.campaign.findFirst({
-      where: { articleId: article.id, channelId: { not: null } },
+    // Walk EVERY campaign this article has ever backed, in newest-updated order, and resolve
+    // an AFS channel via two sources per campaign:
+    //   (a) campaign.channelId — the currently-held channel, if any
+    //   (b) most-recent ChannelAssignment for that campaign — the historical channel (paused
+    //       or completed campaigns release their channelId back to AVAILABLE but the
+    //       ChannelAssignment row survives as history)
+    // Any channel from the article's history is strictly better than Google's default `ch=1`
+    // for the ad request. Return null only if no campaign has EVER held a channel for this
+    // article (in which case there's genuinely no channel to attribute to — we don't invent
+    // one).
+    const campaigns = await tx.campaign.findMany({
+      where: { articleId: article.id },
       orderBy: { updatedAt: 'desc' },
-      select: { racValue: true, channelId: true },
+      select: { id: true, racValue: true, channelId: true },
     });
-    // No `@relation` on Campaign.channelId → resolve the AFS channel string in a
-    // second lookup by internal id.
-    const channel = campaign?.channelId
-      ? await tx.channel.findUnique({
-          where: { id: campaign.channelId },
+    let channelString: string | null = null;
+    let racValue: string | null = null;
+    for (const c of campaigns) {
+      // (a) current channel
+      if (c.channelId) {
+        const ch = await tx.channel.findUnique({
+          where: { id: c.channelId },
           select: { channelId: true },
-        })
-      : null;
+        });
+        if (ch?.channelId) {
+          channelString = ch.channelId;
+          racValue = c.racValue ?? null;
+          break;
+        }
+      }
+      // (b) most-recent historical assignment for this campaign (active first, else newest released)
+      const assignment = await tx.channelAssignment.findFirst({
+        where: { campaignId: c.id },
+        orderBy: [{ assignedAt: 'desc' }],
+        select: { channelRef: true },
+      });
+      if (assignment) {
+        const ch = await tx.channel.findUnique({
+          where: { id: assignment.channelRef },
+          select: { channelId: true },
+        });
+        if (ch?.channelId) {
+          channelString = ch.channelId;
+          racValue = c.racValue ?? null;
+          break;
+        }
+      }
+    }
     return {
       slug: article.slug,
       title: article.title,
@@ -106,8 +135,8 @@ export async function getPublicArticleBySlug(slug: string): Promise<PublicArticl
       query: article.query,
       keywords: Array.isArray(article.keywords) ? (article.keywords as string[]) : [],
       relatedSearchTerms: article.relatedSearchTerms,
-      channel: channel?.channelId ?? null,
-      referrerAdCreative: campaign?.racValue ?? null,
+      channel: channelString,
+      referrerAdCreative: racValue,
     };
   });
 }
