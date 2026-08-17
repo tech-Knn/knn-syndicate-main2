@@ -13,6 +13,49 @@ function str(value: string | string[] | undefined): string {
   return typeof value === 'string' ? value : '';
 }
 
+// Server-side base for the public article API (same env pattern used by /a/[slug]/page.tsx).
+// Articles.<domain> is a different origin than the API (app.<domain>), so this is absolute.
+const API_BASE = process.env.ARTICLE_API_BASE ?? process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3000';
+
+/** Extract the article slug from a same-origin Referer like `.../a/<slug>` (or `.../a/<slug>?…`).
+ *  Returns null on cross-origin or non-article referers. Belt-and-braces: bounded length, single-segment
+ *  slug, no path traversal — we hand this straight to the API so it must not be attacker-controlled. */
+function extractSlugFromReferer(referer: string | null, currentHost: string): string | null {
+  if (!referer) return null;
+  try {
+    const url = new URL(referer);
+    if (url.host !== currentHost) return null;
+    const match = url.pathname.match(/^\/a\/([A-Za-z0-9_-]{1,120})\/?$/);
+    return match ? (match[1] ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Bulletproof channel/RAC recovery: when cookie AND URL both miss, look up the article
+ *  the visitor came from (via Referer) and use its active campaign's channel + RAC. This
+ *  guarantees Google AFS never gets channel=1 for any of OUR campaigns, even when the
+ *  browser (incognito / ITP / cross-context nav) has stripped every other carrier. */
+async function fetchArticleAttribution(
+  slug: string,
+): Promise<{ channel: string | null; referrerAdCreative: string | null } | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/public/articles/${encodeURIComponent(slug)}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      article?: { channel?: string | null; referrerAdCreative?: string | null };
+    };
+    return {
+      channel: data.article?.channel ?? null,
+      referrerAdCreative: data.article?.referrerAdCreative ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * RSOC results page. Related-search terms on the article (content) page link here
  * with the query in the `query` param (resultsPageQueryParam). This page renders
@@ -24,7 +67,8 @@ export default async function SearchPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
-  const host = (await headers()).get('host') ?? '';
+  const hdrs = await headers();
+  const host = hdrs.get('host') ?? '';
   // Resolve config, the per-host brand, and the organic Web results together. The articles
   // fetch is the SAME cached request <WebResults> renders from (Next memoizes identical
   // fetches within a render), so it's a cache hit — not an extra DB round-trip on the hot path.
@@ -46,6 +90,10 @@ export default async function SearchPage({
   // The offer's AFS channel (per-offer attribution) + referrerAdCreative + txid. Sources, priority order:
   //   1. Same-origin cookie `_rsoc_*` set by the article page (AUTHORITATIVE — our value)
   //   2. Token / URL params via cloak-gate (legacy / direct-visit fallback)
+  //   3. Referer-based lookup: parse `/a/<slug>` from the referer, fetch the article's active
+  //      campaign channel + RAC. Guarantees Google AFS NEVER receives channel=1 for our own
+  //      campaigns even when both the cookie AND the URL token were stripped (incognito, ITP,
+  //      Google's chip iframe stripping rc/ch/txid, etc.).
   //
   // Cookie MUST be first: Google's ads.js on /search often appends its own `?ch=1` telemetry param
   // after ads render, which cloak-gate would otherwise treat as "channel=1" and clobber our real
@@ -54,11 +102,26 @@ export default async function SearchPage({
   // the campaign's referrerAdCreative and channel/txid on the /search render.
   const cookieJar = await cookies();
   const channelFromCookie = cookieJar.get('_rsoc_ch')?.value;
-  const channel = channelFromCookie || gate.params.ch;
   const clickIdFromCookie = cookieJar.get('_rsoc_txid')?.value;
-  const clickId = clickIdFromCookie || gate.params.txid;
   const racFromCookie = cookieJar.get('_rsoc_rc')?.value;
-  const referrerAdCreative = racFromCookie || gate.params.rc;
+  let channel = channelFromCookie || gate.params.ch;
+  const clickId = clickIdFromCookie || gate.params.txid;
+  let referrerAdCreative = racFromCookie || gate.params.rc;
+  // Ultimate fallback (priority 3): only fire when the primary carriers actually failed AND we have
+  // a same-origin referer pointing at one of our articles. Rare path — adds ~1 API round-trip only
+  // when everything else missed, so the hot path is unaffected.
+  if (!channel || !referrerAdCreative) {
+    const refererSlug = extractSlugFromReferer(hdrs.get('referer'), host);
+    if (refererSlug) {
+      const attribution = await fetchArticleAttribution(refererSlug);
+      if (attribution) {
+        if (!channel && attribution.channel) channel = attribution.channel;
+        if (!referrerAdCreative && attribution.referrerAdCreative) {
+          referrerAdCreative = attribution.referrerAdCreative;
+        }
+      }
+    }
+  }
   const value = str(sp.cv) || undefined;
   const currency = str(sp.ccy) || undefined;
 

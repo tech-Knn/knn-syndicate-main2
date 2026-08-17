@@ -15,6 +15,7 @@ import type { AuthContext } from '../../middleware/authenticate.js';
 
 /** Injectable AI calls (defaults = the real @knn/ai clients); tests pass mocks. */
 export interface ArticleAiDeps {
+  
   embedText: (text: string) => Promise<number[]>;
   generateArticle: (input: {
     keywords: string[];
@@ -46,6 +47,15 @@ export interface PublicArticle {
   keywords: string[];
   /** AI-generated high-CPC related-search queries — the CSA `terms` (preferred). */
   relatedSearchTerms: string[];
+  /**
+   * The AFS custom-channel string (`ch`) of the article's most-recently-launched
+   * campaign. Bulletproof fallback for `/search` when the cookie bridge AND URL
+   * token both miss (incognito, cross-context nav) — Referer-based lookup uses
+   * this so Google AFS never receives channel=1 for our own campaigns.
+   */
+  channel: string | null;
+  /** The campaign's referrerAdCreative — same-purpose fallback for the /search page. */
+  referrerAdCreative: string | null;
 }
 
 /**
@@ -59,6 +69,7 @@ export async function getPublicArticleBySlug(slug: string): Promise<PublicArticl
     const article = await tx.article.findUnique({
       where: { slug },
       select: {
+        id: true,
         slug: true,
         title: true,
         compliantContent: true,
@@ -69,6 +80,29 @@ export async function getPublicArticleBySlug(slug: string): Promise<PublicArticl
       },
     });
     if (!article || article.status !== 'READY') return null;
+    // Pick the article's active campaign (most-recently-launched with a channel assigned)
+    // to expose its channel/RAC — the /search page uses these as a Referer-based fallback
+    // when the primary cookie/URL bridge has been stripped by the browser or Google's iframe.
+    // One article CAN back multiple campaigns (article reuse via cosine similarity), so we pick
+    // the newest LIVE/ACTIVE assignment; any valid channel from THIS org's campaigns is strictly
+    // better than Google's default "1" fallback for the ad request.
+    const activeCampaign = await tx.campaign.findFirst({
+      where: {
+        articleId: article.id,
+        channelId: { not: null },
+        status: { in: ['ACTIVE', 'LAUNCHING', 'BATCHED', 'PAUSED'] },
+      },
+      orderBy: { updatedAt: 'desc' },
+      select: { racValue: true, channelId: true },
+    });
+    // No `@relation` on Campaign.channelId → resolve the AFS channel string in a
+    // second lookup by internal id.
+    const channel = activeCampaign?.channelId
+      ? await tx.channel.findUnique({
+          where: { id: activeCampaign.channelId },
+          select: { channelId: true },
+        })
+      : null;
     return {
       slug: article.slug,
       title: article.title,
@@ -76,6 +110,8 @@ export async function getPublicArticleBySlug(slug: string): Promise<PublicArticl
       query: article.query,
       keywords: Array.isArray(article.keywords) ? (article.keywords as string[]) : [],
       relatedSearchTerms: article.relatedSearchTerms,
+      channel: channel?.channelId ?? null,
+      referrerAdCreative: activeCampaign?.racValue ?? null,
     };
   });
 }
