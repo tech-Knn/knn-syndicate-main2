@@ -104,7 +104,15 @@ export default async function SearchPage({
   const channelFromCookie = cookieJar.get('_rsoc_ch')?.value;
   const clickIdFromCookie = cookieJar.get('_rsoc_txid')?.value;
   const racFromCookie = cookieJar.get('_rsoc_rc')?.value;
-  let channel = channelFromCookie || gate.params.ch;
+  // Google's ads.js sometimes appends `?ch=1` as its own telemetry — cloak-gate would surface that
+  // as `params.ch = "1"`, which is NOT one of our real AFS custom-channel ids (they're 5-digit
+  // strings like "07793"). Treat "1" (and any non-real value) as absent so the Referer fallback
+  // can substitute the article's real campaign channel. Same defensive check for RAC (a stray "1"
+  // there would be equally wrong).
+  const isValidChannel = (v: string | undefined): v is string => Boolean(v) && v !== '1';
+  const cookieChannel = isValidChannel(channelFromCookie) ? channelFromCookie : undefined;
+  const gateChannel = isValidChannel(gate.params.ch) ? gate.params.ch : undefined;
+  let channel = cookieChannel || gateChannel;
   const clickId = clickIdFromCookie || gate.params.txid;
   let referrerAdCreative = racFromCookie || gate.params.rc;
   // Ultimate fallback (priority 3): only fire when the primary carriers actually failed AND we have

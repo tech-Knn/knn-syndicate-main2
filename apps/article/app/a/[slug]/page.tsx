@@ -20,6 +20,12 @@ interface PublicArticle {
   query: string | null;
   keywords: string[];
   relatedSearchTerms: string[];
+  /** Article's active-campaign AFS channel (server-side fallback when the visitor
+   *  arrives without a signed cloak token — direct/organic/test URLs). Prevents
+   *  the RSOC unit from firing untagged and later serving the AFS default `ch=1`. */
+  channel: string | null;
+  /** Same-purpose fallback for referrerAdCreative (required for paid traffic). */
+  referrerAdCreative: string | null;
 }
 
 async function fetchArticle(slug: string): Promise<PublicArticle | null> {
@@ -97,11 +103,17 @@ export default async function ArticlePage({
   // page ALWAYS renders its unit (Google's crawler must see it to serve ads — see cloak-gate.ts), so
   // this only chooses the param source: token if valid, else the plaintext query.
   const gate = await resolveCloakGate(sp, Date.now());
-  // Required (since 2025-11-01) when traffic comes from a source you control (our FB ads).
-  const referrerAdCreative = gate.params.rc;
   const txid = gate.params.txid;
-  // The offer's AFS channel (per-offer attribution); forwarded to /search by the unit.
-  const channel = gate.params.ch;
+  // The offer's AFS channel + referrerAdCreative. Priority:
+  //   1. Cloak-gate params (signed token — the real click path via the go.* Worker)
+  //   2. Article's active-campaign channel/RAC from the API (Referer-less fallback: direct visits,
+  //      organic traffic, or manual test URLs — anything that reaches /a/<slug> without `?t=`).
+  // "1" is Google's ads.js default when no channel is set; treat it as absent so the DB fallback
+  // can substitute the article's real campaign channel (Google AFS must NEVER receive `ch=1` for
+  // our campaigns — that's untagged revenue).
+  const isValidChannel = (v: string | undefined): v is string => Boolean(v) && v !== '1';
+  const channel = isValidChannel(gate.params.ch) ? gate.params.ch : article.channel ?? undefined;
+  const referrerAdCreative = gate.params.rc || article.referrerAdCreative || undefined;
   // Publisher-provided related-search terms. Preference: explicit `terms` from the redirect →
   // the article's AI-generated high-CPC related searches → campaign keywords. The chosen source
   // is run through the RSOC term-quality filter (rank-first, drop-rarely) so even legacy articles
