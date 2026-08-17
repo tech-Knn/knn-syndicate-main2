@@ -80,26 +80,22 @@ export async function getPublicArticleBySlug(slug: string): Promise<PublicArticl
       },
     });
     if (!article || article.status !== 'READY') return null;
-    // Pick the article's active campaign (most-recently-launched with a channel assigned)
-    // to expose its channel/RAC — the /search page uses these as a Referer-based fallback
-    // when the primary cookie/URL bridge has been stripped by the browser or Google's iframe.
-    // One article CAN back multiple campaigns (article reuse via cosine similarity), so we pick
-    // the newest LIVE/ACTIVE assignment; any valid channel from THIS org's campaigns is strictly
-    // better than Google's default "1" fallback for the ad request.
-    const activeCampaign = await tx.campaign.findFirst({
-      where: {
-        articleId: article.id,
-        channelId: { not: null },
-        status: { in: ['ACTIVE', 'LAUNCHING', 'BATCHED', 'PAUSED'] },
-      },
+    // Pick the article's most-recently-updated campaign that has an AFS channel assigned.
+    // No status filter: even a PAUSED / APPROVED / REJECTED campaign with a real channel is
+    // strictly better than Google's default `ch=1` for the ad request — the whole point of this
+    // lookup is to make Google AFS never receive `1` for an article that has EVER had a real
+    // channel. If the article has never been attached to a channel-holding campaign, we return
+    // null and the caller falls through (no fake channel invented).
+    const campaign = await tx.campaign.findFirst({
+      where: { articleId: article.id, channelId: { not: null } },
       orderBy: { updatedAt: 'desc' },
       select: { racValue: true, channelId: true },
     });
     // No `@relation` on Campaign.channelId → resolve the AFS channel string in a
     // second lookup by internal id.
-    const channel = activeCampaign?.channelId
+    const channel = campaign?.channelId
       ? await tx.channel.findUnique({
-          where: { id: activeCampaign.channelId },
+          where: { id: campaign.channelId },
           select: { channelId: true },
         })
       : null;
@@ -111,7 +107,7 @@ export async function getPublicArticleBySlug(slug: string): Promise<PublicArticl
       keywords: Array.isArray(article.keywords) ? (article.keywords as string[]) : [],
       relatedSearchTerms: article.relatedSearchTerms,
       channel: channel?.channelId ?? null,
-      referrerAdCreative: activeCampaign?.racValue ?? null,
+      referrerAdCreative: campaign?.racValue ?? null,
     };
   });
 }
