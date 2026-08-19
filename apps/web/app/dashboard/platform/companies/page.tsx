@@ -1,6 +1,6 @@
 'use client';
 
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { type CompanyRollup, addBusinessDays, currentBusinessDay, formatUsd } from '@knn/shared';
 import { Badge, Banner, Button, Card, type DateRange, DateRangePicker, Skeleton, useConfirm } from '@/components/ui';
@@ -251,12 +251,27 @@ export default function CompaniesPage() {
   const [addTo, setAddTo] = useState<OrgRow | null>(null);
   const [userForm, setUserForm] = useState({ name: '', email: '', password: '', role: 'COMPANY_ADMIN' as 'COMPANY_ADMIN' | 'MEDIA_BUYER' });
   const [addingUser, setAddingUser] = useState(false);
+  // Ref to the Add-user form card so we can smooth-scroll to it on open. The form renders
+  // at the bottom of the page (below the Revenue section), and without a scroll cue the
+  // "Add user" click looked like it did nothing.
+  const addUserFormRef = useRef<HTMLDivElement | null>(null);
+  const addUserNameInputRef = useRef<HTMLInputElement | null>(null);
 
   const openAddUser = (o: OrgRow): void => {
     setAddTo(o);
     setUserForm({ name: '', email: '', password: '', role: 'COMPANY_ADMIN' });
     setNote(null);
   };
+
+  // After the form renders (addTo becomes truthy), scroll it into view and focus the name
+  // input so the flow is obvious even when the click origin is far above the form card.
+  useEffect(() => {
+    if (!addTo) return;
+    addUserFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Small delay so scroll starts before focus (avoids the browser snapping instantly).
+    const t = setTimeout(() => addUserNameInputRef.current?.focus(), 300);
+    return () => clearTimeout(t);
+  }, [addTo]);
 
   const addUser = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
@@ -637,8 +652,10 @@ export default function CompaniesPage() {
         )}
       </Card>
 
-      {/* Add a user (admin/buyer) to a company */}
+      {/* Add a user (admin/buyer) to a company. Wrapped in a div so we can attach a ref for
+          smooth-scrolling — the Card component doesn't forward refs to its underlying node. */}
       {addTo && (
+        <div ref={addUserFormRef}>
         <Card className={styles.section}>
           <div className={styles.sectionHead}>
             <span className={styles.sectionTitle}>Add a user — {addTo.name}</span>
@@ -651,7 +668,7 @@ export default function CompaniesPage() {
               <option value="COMPANY_ADMIN">Company admin</option>
               <option value="MEDIA_BUYER">Media buyer</option>
             </select>
-            <input className={styles.rangeInput} aria-label="Name" placeholder="name" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} />
+            <input ref={addUserNameInputRef} className={styles.rangeInput} aria-label="Name" placeholder="name" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} />
             <input className={styles.rangeInput} type="email" aria-label="Email" placeholder="email" value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} />
             <input
               className={styles.rangeInput}
@@ -670,6 +687,7 @@ export default function CompaniesPage() {
             Password must be at least 8 characters.
           </p>
         </Card>
+        </div>
       )}
     </div>
   );
