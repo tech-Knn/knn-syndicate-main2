@@ -29,7 +29,7 @@ export interface AssignResult {
   channelRefs?: string[];
 }
 
-/** Internal sentinel: a PAID offer's domain pool was exhausted → roll back + queue. */
+/** Internal sentinel: a PAID offer found no channel in either pool → roll back + queue. */
 class OfferPoolExhausted extends Error {}
 
 /**
@@ -106,9 +106,10 @@ export async function assignChannel(campaignId: string): Promise<AssignResult> {
 
 /**
  * Per-offer channel assignment (Phase E). A campaign's PAID offers each get a channel
- * from THEIR OWN domain's allocation, so AFS revenue attributes per offer/website. Claims
- * are atomic + concurrency-safe (`FOR UPDATE SKIP LOCKED` per domain pool) and
- * **all-or-nothing**: if any PAID offer's domain pool is exhausted, the whole txn rolls
+ * from THEIR OWN domain's allocation, falling back to the global pool (domain_id IS NULL)
+ * when that domain is exhausted, so AFS revenue attributes per offer/website. Claims
+ * **all-or-nothing**: if an offer finds no channel in either pool, the whole txn rolls
+ * back and the campaign is queued (QUEUED_NO_CHANNEL) — never partially assigned.
  * back and the campaign is queued (QUEUED_NO_CHANNEL) — never partially assigned.
  * Idempotent: offers that already hold a channel are left untouched.
  */
@@ -128,12 +129,19 @@ export async function assignOfferChannels(campaignId: string): Promise<AssignRes
       for (const offer of needing) {
         // Atomically claim one available channel FROM THIS OFFER'S DOMAIN; concurrent
         // claims skip each other's locked rows (zero double-assignment across offers).
-        const rows = await tx.$queryRawUnsafe<{ id: string }[]>(
+        let rows = await tx.$queryRawUnsafe<{ id: string }[]>(
           `SELECT id FROM channels WHERE status = 'AVAILABLE' AND domain_id = $1::uuid
            ORDER BY created_at ASC, id ASC
            FOR UPDATE SKIP LOCKED LIMIT 1`,
           offer.domainId,
         );
+        if (!rows[0]) {
+          rows = await tx.$queryRawUnsafe<{ id: string }[]>(
+            `SELECT id FROM channels WHERE status = 'AVAILABLE' AND domain_id IS NULL
+             ORDER BY created_at ASC, id ASC
+             FOR UPDATE SKIP LOCKED LIMIT 1`,
+          );
+        }
         const claimed = rows[0];
         if (!claimed) throw new OfferPoolExhausted(); // roll back every claim in this txn
         await tx.channel.update({
