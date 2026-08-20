@@ -103,18 +103,22 @@ export default async function ArticlePage({
   // page ALWAYS renders its unit (Google's crawler must see it to serve ads — see cloak-gate.ts), so
   // this only chooses the param source: token if valid, else the plaintext query.
   const gate = await resolveCloakGate(sp, Date.now());
-  // Required (since 2025-11-01) when traffic comes from a source you control (our FB ads).
+  // `rc` (referrerAdCreative) stays TOKEN-ONLY on purpose. It literally means "referrer ad
+  // creative" — sending it on organic/Googlebot visits looks like paid-traffic misrepresentation
+  // and (empirically 2026-08-17→08-20) caused Google to degrade RSOC serving on affected articles.
+  // Real paid clicks always carry a token, so paid traffic keeps its rc; organic doesn't.
   const referrerAdCreative = gate.params.rc;
   const txid = gate.params.txid;
-  // The offer's AFS channel (per-offer attribution); forwarded to /search by the unit.
-  // IMPORTANT: DO NOT fall back to article.channel/referrerAdCreative from the DB on tokenless
-  // visits. Doing so tagged Google's crawler visits with a rc/channel that made the RSOC unit
-  // look like paid traffic from an organic visit, which caused Google to degrade RSOC serving on
-  // affected articles (chips stopped rendering on articles that were previously earning). The
-  // article page only tags visits that arrived with a valid signed token (real paid clicks via
-  // the go.* Worker). The /search page keeps its own Referer-based DB fallback because it isn't
-  // exposed to Google's crawler the same way (indexed=false in metadata).
-  const channel = gate.params.ch;
+  // The offer's AFS channel. Priority:
+  //   1. Signed cloak-gate token (real FB paid click) — authoritative
+  //   2. Article's active-campaign channel from the API (fallback for direct/organic visits so
+  //      the /search chip click still tags the AFS ad request with a real channel).
+  // "1" is Google's own default when no channel is set; treat it as absent so the DB fallback
+  // can substitute a real channel instead of clobbering our attribution with Google's fallback.
+  // Channel-in-pageOptions was verified accepted by this pubId on 2026-08-12 (`?withchannel=07793`
+  // returned 5 chips), unlike rc — so restoring channel-only fallback is safe.
+  const isValidChannel = (v: string | undefined): v is string => Boolean(v) && v !== '1';
+  const channel = isValidChannel(gate.params.ch) ? gate.params.ch : article.channel ?? undefined;
   // Publisher-provided related-search terms. Preference: explicit `terms` from the redirect →
   // the article's AI-generated high-CPC related searches → campaign keywords. The chosen source
   // is run through the RSOC term-quality filter (rank-first, drop-rarely) so even legacy articles
