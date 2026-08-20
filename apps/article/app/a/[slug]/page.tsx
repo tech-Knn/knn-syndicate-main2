@@ -103,17 +103,18 @@ export default async function ArticlePage({
   // page ALWAYS renders its unit (Google's crawler must see it to serve ads — see cloak-gate.ts), so
   // this only chooses the param source: token if valid, else the plaintext query.
   const gate = await resolveCloakGate(sp, Date.now());
+  // Required (since 2025-11-01) when traffic comes from a source you control (our FB ads).
+  const referrerAdCreative = gate.params.rc;
   const txid = gate.params.txid;
-  // The offer's AFS channel + referrerAdCreative. Priority:
-  //   1. Cloak-gate params (signed token — the real click path via the go.* Worker)
-  //   2. Article's active-campaign channel/RAC from the API (Referer-less fallback: direct visits,
-  //      organic traffic, or manual test URLs — anything that reaches /a/<slug> without `?t=`).
-  // "1" is Google's ads.js default when no channel is set; treat it as absent so the DB fallback
-  // can substitute the article's real campaign channel (Google AFS must NEVER receive `ch=1` for
-  // our campaigns — that's untagged revenue).
-  const isValidChannel = (v: string | undefined): v is string => Boolean(v) && v !== '1';
-  const channel = isValidChannel(gate.params.ch) ? gate.params.ch : article.channel ?? undefined;
-  const referrerAdCreative = gate.params.rc || article.referrerAdCreative || undefined;
+  // The offer's AFS channel (per-offer attribution); forwarded to /search by the unit.
+  // IMPORTANT: DO NOT fall back to article.channel/referrerAdCreative from the DB on tokenless
+  // visits. Doing so tagged Google's crawler visits with a rc/channel that made the RSOC unit
+  // look like paid traffic from an organic visit, which caused Google to degrade RSOC serving on
+  // affected articles (chips stopped rendering on articles that were previously earning). The
+  // article page only tags visits that arrived with a valid signed token (real paid clicks via
+  // the go.* Worker). The /search page keeps its own Referer-based DB fallback because it isn't
+  // exposed to Google's crawler the same way (indexed=false in metadata).
+  const channel = gate.params.ch;
   // Publisher-provided related-search terms. Preference: explicit `terms` from the redirect →
   // the article's AI-generated high-CPC related searches → campaign keywords. The chosen source
   // is run through the RSOC term-quality filter (rank-first, drop-rarely) so even legacy articles
