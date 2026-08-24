@@ -1,12 +1,33 @@
 import { FbConnectionStatus, withSystem } from '@knn/db';
 import {
   type CapiEvent,
+  FbApiError,
   FbConnectionBrokenError,
   FbRateLimitError,
   decryptToken,
   sendConversionEvent,
 } from '@knn/fb';
 import { buildFbc } from '@knn/shared';
+
+/**
+ * Serialize an error into a compact debuggable string for `conversion_events.fb_response`.
+ * Includes FB `code`/`subcode`/`fbtrace_id` when the error is a classified `FbApiError`, so
+ * operators can grep pending rows for permission failures (200/10) vs bad user data (2804),
+ * etc. Non-FB errors fall back to `.message`. Truncated to keep the column small.
+ */
+function formatFbError(err: unknown): string {
+  if (err instanceof FbApiError) {
+    const parts = [
+      err.code != null ? `code=${err.code}` : null,
+      err.subcode != null ? `subcode=${err.subcode}` : null,
+      err.httpStatus != null ? `http=${err.httpStatus}` : null,
+      err.fbtraceId ? `fbtrace=${err.fbtraceId}` : null,
+      `msg=${err.message}`,
+    ].filter(Boolean);
+    return parts.join(' ').slice(0, 500);
+  }
+  return (err instanceof Error ? err.message : String(err)).slice(0, 500);
+}
 
 /**
  * CAPI dispatch (conversion tracking). Processes one `CAPI_DISPATCH` job: take a
@@ -79,20 +100,31 @@ export async function dispatchConversion(
 
   try {
     const result = await deps.send({ pixelId: ev.pixelFbId, accessToken: decryptToken(conn.accessTokenEnc), event });
+    const fbResponse = [
+      `events_received=${result.events_received ?? 0}`,
+      result.fbtrace_id ? `fbtrace=${result.fbtrace_id}` : null,
+      result.messages && (result.messages as unknown[]).length ? `messages=${JSON.stringify(result.messages).slice(0, 300)}` : null,
+    ]
+      .filter(Boolean)
+      .join(' ');
     await withSystem((tx) =>
       tx.conversionEvent.update({
         where: { id: ev.id },
-        data: { status: 'sent', sentAt: new Date(), attempts: { increment: 1 }, fbResponse: `events_received=${result.events_received ?? 0}` },
+        data: { status: 'sent', sentAt: new Date(), attempts: { increment: 1 }, fbResponse },
       }),
     );
     return { status: 'sent' };
   } catch (err) {
     if (err instanceof FbConnectionBrokenError) {
-      await markFailed(ev.id, 'connection broken (190)');
+      await markFailed(ev.id, `connection broken: ${formatFbError(err)}`);
       return { status: 'failed' };
     }
-    // Rate-limit / transient → bump attempts and rethrow so BullMQ retries.
-    await withSystem((tx) => tx.conversionEvent.update({ where: { id: ev.id }, data: { attempts: { increment: 1 } } }));
+    // Rate-limit / transient → stamp the FB error so pending rows are debuggable, bump
+    // attempts, then rethrow so BullMQ retries with backoff. On the next attempt this
+    // fb_response is overwritten (that's what we want — always shows the LATEST failure).
+    await withSystem((tx) =>
+      tx.conversionEvent.update({ where: { id: ev.id }, data: { attempts: { increment: 1 }, fbResponse: formatFbError(err) } }),
+    );
     if (err instanceof FbRateLimitError) throw err;
     throw err;
   }
