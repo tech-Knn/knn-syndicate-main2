@@ -100,6 +100,23 @@ export class FbAccountRestrictedError extends FbApiError {
   }
 }
 
+/**
+ * "Object doesn't exist or you lack permission" (code 100, subcode 33). Distinct from a
+ * dead token (190): the token authenticates fine but is not authorized for the specific
+ * pixel / ad account / page. Causes: pixel-level Manage access revoked in Business
+ * Manager, pixel moved to another BM, ad account disabled, or the buyer removed the app
+ * from their Facebook. Terminal — retrying with the same token cannot fix a permission
+ * grant; callers should mark the event failed and STOP hitting FB. Retrying inflates the
+ * app-wide error rate which trips Meta's automated quality gates (Marketing API Access
+ * Tier rejection, "Feature Unavailable" on OAuth, tester-add blocked).
+ */
+export class FbPermissionDeniedError extends FbApiError {
+  constructor(message: string, opts: FbErrorOpts = {}) {
+    super(message, opts);
+    this.name = 'FbPermissionDeniedError';
+  }
+}
+
 const tokenSubcodes = FB_TOKEN_ERROR_SUBCODES as readonly number[];
 const rateCodes = FB_RATE_LIMIT_ERROR_CODES as readonly number[];
 const restrictedCodes = FB_ACCOUNT_RESTRICTED_ERROR_CODES as readonly number[];
@@ -143,6 +160,13 @@ export function classifyFbError(
     (subcode !== undefined && restrictedSubcodes.includes(subcode))
   ) {
     return new FbAccountRestrictedError(message, opts);
+  }
+  // Object-permission denial (code 100 subcode 33: "Object doesn't exist / no permission").
+  // Token is fine but not authorized for this specific pixel/account/page. Terminal — retries
+  // cannot restore a permission grant, and each retry inflates the app-wide error rate that
+  // Meta uses to auto-restrict the app (blocks OAuth, Marketing API Access Tier, tester adds).
+  if (code === 100 && subcode === 33) {
+    return new FbPermissionDeniedError(message, opts);
   }
   if (code !== undefined && rateCodes.includes(code)) {
     return new FbRateLimitError(message, { ...opts, retryAfterMs });

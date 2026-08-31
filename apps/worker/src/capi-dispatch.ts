@@ -3,6 +3,7 @@ import {
   type CapiEvent,
   FbApiError,
   FbConnectionBrokenError,
+  FbPermissionDeniedError,
   FbRateLimitError,
   decryptToken,
   sendConversionEvent,
@@ -117,6 +118,15 @@ export async function dispatchConversion(
   } catch (err) {
     if (err instanceof FbConnectionBrokenError) {
       await markFailed(ev.id, `connection broken: ${formatFbError(err)}`);
+      return { status: 'failed' };
+    }
+    // Object-permission denial (code 100 subcode 33) is terminal — the token is fine but
+    // is not authorized for this pixel/account. Retrying cannot restore a permission grant,
+    // and each retry counts as another failed Marketing API call against the app-wide
+    // error-rate quota (Meta trips the app into "Feature Unavailable" and rejects Marketing
+    // API Access Tier once the rate exceeds ~15%). Fail fast, don't retry.
+    if (err instanceof FbPermissionDeniedError) {
+      await markFailed(ev.id, `permission denied: ${formatFbError(err)}`);
       return { status: 'failed' };
     }
     // Rate-limit / transient → stamp the FB error so pending rows are debuggable, bump

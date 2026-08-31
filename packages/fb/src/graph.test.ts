@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FbAccountRestrictedError, FbConnectionBrokenError, FbRateLimitError, classifyFbError } from './errors.js';
+import { FbAccountRestrictedError, FbConnectionBrokenError, FbPermissionDeniedError, FbRateLimitError, classifyFbError } from './errors.js';
 import { computeAppSecretProof, graphRequest } from './graph.js';
 import { getMe } from './oauth.js';
 import { fetchAdAccounts } from './sync.js';
@@ -62,6 +62,19 @@ describe('graph client', () => {
     expect(classifyFbError({ code: 190, error_subcode: 459, message: 'checkpoint' }, 400)).toBeInstanceOf(
       FbConnectionBrokenError,
     );
+  });
+
+  it('classifies "object does not exist or missing permission" (100/33) as terminal permission-denied', () => {
+    // Live signature from CAPI POST /{pixel}/events when the token can't write to the pixel:
+    // pixel revoked from BM, ad account disabled, or app removed by the user. Retrying can't
+    // fix this — the classifier must return a terminal error so the worker stops hammering FB.
+    const err = classifyFbError(
+      { code: 100, error_subcode: 33, message: "Unsupported post request. Object with ID '123' does not exist" },
+      400,
+    );
+    expect(err).toBeInstanceOf(FbPermissionDeniedError);
+    expect(err.code).toBe(100);
+    expect(err.subcode).toBe(33);
   });
 
   it('extracts the checkpoint URL from error_data when present', () => {
