@@ -507,15 +507,15 @@ export async function listAccountPages(auth: AuthContext, adAccountId: string) {
         update: { name: p.name },
       });
     }
-    // Decide what the buyer can actually use, matching Ads Manager (verified live against FB — every other
-    // signal, incl. user_tasks + BM membership + BM owned/client_pages, was identical between an account
-    // that can use all pages and one that can use none; `promote_pages` was the ONLY differentiator):
-    //   • promote_pages EMPTY      → the account authorises NO page for this user (e.g. quiroxa-35) → none.
-    //   • promote_pages NON-EMPTY  → the account lets this user advertise; Facebook's own picker then
-    //     offers ALL the user's pages (Adgenix shows ~35), even though `promote_pages` lists only the few
-    //     already promoted (it UNDER-reports). So use it as a yes/no gate and return the full page pool.
-    // FB validates the final page at ad creation, so an unusable pick is rejected there with a clear error.
-    if (pages.length === 0) return [];
+    // Return every Page the buyer owns via this connection. Historical note: this used to
+    // gate on `promote_pages` (empty → return none) after live testing showed that endpoint
+    // was the only reliable "can this account advertise?" signal. Meta has since expanded
+    // Ads Manager's Page picker to surface "Personal" Pages the user owns even when
+    // `/promote_pages` is empty — verified 2026-09-01 by launching from Ads Manager against
+    // an account whose promote_pages was `[]` yet the personal Page was selectable + the ad
+    // published successfully. Mirroring current Ads Manager UX: return the full pool and let
+    // FB validate at ad-creation time, which surfaces a clear error for an unusable pick
+    // instead of silently blocking the entire dropdown.
     return tx.fbPage.findMany({
       where: { connectionId },
       orderBy: { name: 'asc' },

@@ -192,10 +192,13 @@ describe('facebook integration', () => {
     expect(pages.some((p) => p.fbPageId === 'page_1')).toBe(true);
   });
 
-  it('returns NO pages when promote_pages is empty (restricted account — matches Ads Manager, no leak)', async () => {
-    // Verified live against FB: an empty promote_pages means the account has no page this user can run
-    // ads with (e.g. quiroxa-35 → 0). We must NOT fall back to the connection's whole page pool, which
-    // previously leaked 30+ unusable managed pages onto restricted accounts.
+  it('still returns the full page pool when promote_pages is empty (matches current Ads Manager)', async () => {
+    // Meta expanded Ads Manager's Page picker to surface "Personal" Pages even when
+    // `/promote_pages` returns empty — verified 2026-09-01 by launching from Ads Manager
+    // on an account whose promote_pages was `[]` yet the personal Page was selectable and
+    // the ad published successfully. The old gate (empty → no pages) was correct in May
+    // 2026 but Meta's behavior evolved; mirror current Ads Manager UX and let FB validate
+    // at ad-creation time. `pg_promote` still upserts from the /promote_pages read below.
     const emptyPromote = vi.fn(async (input: unknown) => {
       const url = String(input);
       const json = (b: unknown): Response => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -208,7 +211,8 @@ describe('facebook integration', () => {
     const accountId = accounts.json<{ accounts: { id: string }[] }>().accounts[0]?.id ?? '';
     const res = await app.inject({ method: 'GET', url: `/api/facebook/accounts/${accountId}/pages`, headers: h(token) });
     expect(res.statusCode).toBe(200);
-    expect(res.json<{ pages: { fbPageId: string }[] }>().pages).toHaveLength(0); // no leak of managed pages
+    // The connection's synced managed page (`page_1`) is now returned even when promote_pages is empty.
+    expect(res.json<{ pages: { fbPageId: string }[] }>().pages.some((p) => p.fbPageId === 'page_1')).toBe(true);
     vi.unstubAllGlobals();
   });
 
