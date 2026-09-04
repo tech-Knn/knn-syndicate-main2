@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { FbConnectionStatus, withSystem } from '@knn/db';
 import {
   type CapiEvent,
@@ -9,6 +10,12 @@ import {
   sendConversionEvent,
 } from '@knn/fb';
 import { buildFbc } from '@knn/shared';
+
+/** SHA-256 hex — required format for CAPI `external_id` (Facebook silently discards
+ *  unhashed values). */
+function sha256Hex(v: string): string {
+  return createHash('sha256').update(v).digest('hex');
+}
 
 /**
  * Serialize an error into a compact debuggable string for `conversion_events.fb_response`.
@@ -85,6 +92,13 @@ export async function dispatchConversion(
     return { status: 'failed' };
   }
 
+  // `fbc` MUST carry the FB-ad-click time (when Facebook issued the fbclid), NOT the
+  // conversion time — Facebook rejects the attribution otherwise. Prefer the click time
+  // captured at the edge (stored on the row at ingest); fall back to `eventTime` only for
+  // legacy rows written before the fix (they'd already be miscounted; the fallback keeps
+  // them from becoming worse).
+  const fbcTimeMs = ev.clickTimeMs != null ? Number(ev.clickTimeMs) : ev.eventTime.getTime();
+  const fbc = buildFbc(ev.fbclid, fbcTimeMs);
   const event: CapiEvent = {
     event_name: ev.eventName,
     event_time: Math.floor(ev.eventTime.getTime() / 1000),
@@ -92,7 +106,11 @@ export async function dispatchConversion(
     action_source: 'website',
     ...(ev.eventSourceUrl ? { event_source_url: ev.eventSourceUrl } : {}),
     user_data: {
-      ...(buildFbc(ev.fbclid, ev.eventTime.getTime()) ? { fbc: buildFbc(ev.fbclid, ev.eventTime.getTime()) } : {}),
+      ...(fbc ? { fbc } : {}),
+      ...(ev.fbp ? { fbp: ev.fbp } : {}),
+      // Stable per-visitor id (the click id), SHA-256 hashed as CAPI requires. Cheap EMQ
+      // lift for pure-S2S anonymous traffic where we can't send email/phone.
+      external_id: sha256Hex(ev.clickId),
       ...(ev.clientIp ? { client_ip_address: ev.clientIp } : {}),
       ...(ev.clientUa ? { client_user_agent: ev.clientUa } : {}),
     },

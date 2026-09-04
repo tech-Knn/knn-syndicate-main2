@@ -1,9 +1,11 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prisma, withSystem } from '@knn/db';
 import { type CapiResult, type SendConversionParams, FbConnectionBrokenError, encryptToken } from '@knn/fb';
 import { ROLES, USER_STATUS } from '@knn/shared';
 import { type CapiDispatchDeps, dispatchConversion } from './capi-dispatch.js';
+
+const sha256Hex = (v: string): string => createHash('sha256').update(v).digest('hex');
 
 const suffix = Date.now().toString(36);
 let orgId = '';
@@ -76,18 +78,41 @@ describe('dispatchConversion', () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     const arg = send.mock.calls[0]![0];
+    const clickId = (await withSystem((tx) => tx.conversionEvent.findUnique({ where: { id }, select: { clickId: true } })))!.clickId;
     expect(arg.pixelId).toBe('PX_777');
     expect(arg.accessToken).toBe('tok-xyz'); // decrypted from the stored connection
     expect(arg.event.event_name).toBe('Search');
-    expect(arg.event.event_id).toBe((await withSystem((tx) => tx.conversionEvent.findUnique({ where: { id }, select: { clickId: true } })))!.clickId);
+    expect(arg.event.event_id).toBe(clickId);
     expect(arg.event.event_time).toBe(Math.floor(1779950000000 / 1000));
+    // Legacy path: no `clickTimeMs` on the row → fbc falls back to `eventTime` (keeps
+    // any pending pre-migration rows dispatchable).
     expect(arg.event.user_data.fbc).toBe('fb.1.1779950000000.FBCL_1');
+    expect(arg.event.user_data.external_id).toBe(sha256Hex(clickId));
     expect(arg.event.user_data.client_ip_address).toBe('9.9.9.9');
     expect(arg.event.custom_data).toEqual({ value: 0.05, currency: 'USD' });
 
     const ev = await withSystem((tx) => tx.conversionEvent.findUnique({ where: { id } }));
     expect(ev).toMatchObject({ status: 'sent', attempts: 1 });
     expect(ev!.sentAt).toBeTruthy();
+  });
+
+  it('uses clickTimeMs (not eventTime) for fbc — the FB-attribution fix', async () => {
+    // Facebook requires `fbc = fb.1.<CLICK_TIME_MS>.<fbclid>` where CLICK_TIME_MS is when
+    // Facebook issued the fbclid (= /go redirect time). The dispatcher previously used
+    // eventTime (= conversion time, minutes later) and Facebook dropped the attribution.
+    const clickMs = 1779_949_000_000; // 1_000_000 ms BEFORE the row's eventTime
+    const id = await makeEvent({ clickTimeMs: BigInt(clickMs), fbp: `fb.1.${clickMs}.1234567890` });
+    const send = vi.fn(async (_p: SendConversionParams): Promise<CapiResult> => ({ events_received: 1 }));
+
+    await dispatchConversion({ conversionEventId: id }, { send });
+    const arg = send.mock.calls[0]![0];
+
+    // fbc uses the CLICK time, not the event time.
+    expect(arg.event.user_data.fbc).toBe(`fb.1.${clickMs}.FBCL_1`);
+    // fbp passes through verbatim from the ingest-time record.
+    expect(arg.event.user_data.fbp).toBe(`fb.1.${clickMs}.1234567890`);
+    // event_time is still the conversion time (unchanged — CAPI accepts either).
+    expect(arg.event.event_time).toBe(Math.floor(1779950000000 / 1000));
   });
 
   it('marks failed (no retry) when the buyer connection is broken', async () => {

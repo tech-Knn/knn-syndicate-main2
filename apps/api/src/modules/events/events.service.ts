@@ -103,6 +103,12 @@ export async function recordConversion(
         clientUa: input.clientUa ?? null,
         eventSourceUrl: input.url ?? null,
         eventTime: new Date(),
+        // The original FB-ad-click time (from the edge KV `click:{txid}` record) — feeds
+        // `fbc`'s middle field. Old KV records lack `ts` on the record, but every current
+        // record has it (worker.ts always writes it), so this is effectively always set.
+        clickTimeMs: click.ts ? BigInt(click.ts) : null,
+        // Server-minted `_fbp` from the edge (nullable — legacy KV records may omit it).
+        fbp: click.fbp ?? null,
         status,
       },
       select: { id: true },

@@ -68,8 +68,13 @@ export interface ClickRecord {
   fbclid?: string;
   /** The offer the click was routed to (Phase E) — the per-offer attribution key. */
   offerId?: string;
-  /** Click timestamp (unix ms) — used for the `fbc` identifier. */
+  /** Click timestamp (unix ms) — the FB-ad-click time, used as `fbc`'s middle field. */
   ts: number;
+  /** Synthesized `_fbp` browser id (`fb.1.<clickTimeMs>.<10digits>`), minted at the edge
+   *  because pure-S2S has no in-browser pixel. Reused across every funnel event for this
+   *  click so Facebook sees a stable browser id per visitor. Absent on legacy records
+   *  written before this field was added — CAPI dispatch handles the missing case. */
+  fbp?: string;
 }
 
 /** Read a click record by txid from KV. Returns null when the key is absent (404). */

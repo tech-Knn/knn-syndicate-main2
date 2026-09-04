@@ -14,6 +14,10 @@ export interface CapiUserData {
   /** fb.1.<unix_ms>.<fbclid> — the click identifier for attribution. */
   fbc?: string;
   fbp?: string;
+  /** SHA-256 hex of a stable per-user id (we use the click id). Required by Facebook to
+   *  be hashed even though the raw value isn't PII — sending it unhashed is a spec
+   *  violation and Facebook silently discards the field. */
+  external_id?: string;
   client_ip_address?: string;
   client_user_agent?: string;
 }

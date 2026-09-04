@@ -889,8 +889,20 @@ model ConversionEvent {
   clientIp       String?   @map("client_ip")
   clientUa       String?   @map("client_ua")
   eventSourceUrl String?   @map("event_source_url")
-  /// When the conversion happened (used as CAPI event_time + fbc timestamp basis).
+  /// When the conversion happened (used as CAPI `event_time`).
   eventTime      DateTime  @map("event_time")
+  /// The ORIGINAL FB-ad-click time (unix ms) resolved from the KV `click:{txid}` record
+  /// at ingest — feeds the middle field of the `fbc` identifier (Facebook requires the
+  /// creation time of the fbclid, NOT the conversion time; getting this wrong drops the
+  /// attribution match). Nullable so legacy rows (written before the fix) still work via
+  /// the dispatcher's fallback to `eventTime`.
+  clickTimeMs    BigInt?   @map("click_time_ms")
+  /// Server-minted `_fbp` browser id passed through from the KV click record. Reused
+  /// across every funnel event for the click so Facebook sees a stable browser id
+  /// (nontrivial EMQ lift for pure-S2S traffic with no email/phone). Nullable — legacy
+  /// rows without a server-minted fbp simply omit the field in the CAPI event.
+  fbp            String?
+
   /// pending → sent (CAPI 200) | failed (exhausted retries).
   status         String    @default("pending")
   attempts       Int       @default(0)

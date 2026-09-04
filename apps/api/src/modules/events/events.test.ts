@@ -71,9 +71,10 @@ describe('recordConversion', () => {
   it('resolves the click → ad → pixel, records pending, and enqueues CAPI dispatch', async () => {
     const redirectId = await seedAd(true);
     const enqueue = vi.fn(async () => {});
+    const fbp = 'fb.1.1779950000000.9876543210';
     const res = await recordConversion(
       { clickId: 'tx-1', valueMinor: 5, currency: 'USD', clientIp: '1.2.3.4', clientUa: 'UA', url: 'https://articles.x/search' },
-      deps({ redirectId, fbclid: 'FBCL1', ts: 1779950000000 }, enqueue),
+      deps({ redirectId, fbclid: 'FBCL1', ts: 1779950000000, fbp }, enqueue),
     );
     expect(res).toEqual({ recorded: true, deduped: false, dispatched: true });
 
@@ -86,7 +87,10 @@ describe('recordConversion', () => {
       currency: 'USD',
       clientIp: '1.2.3.4',
       status: 'pending',
+      fbp,
     });
+    // clickTimeMs is stored as BigInt (Postgres bigint) — the CLICK time from KV, feeds fbc.
+    expect(ev!.clickTimeMs).toBe(BigInt(1779950000000));
     expect(enqueue).toHaveBeenCalledTimes(1);
     expect(enqueue).toHaveBeenCalledWith(ev!.id);
   });

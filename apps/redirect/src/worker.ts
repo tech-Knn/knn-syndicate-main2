@@ -75,16 +75,28 @@ worker.get('/go/:id', async (c) => {
     c.executionCtx.waitUntil(fetch(t, { method: 'POST' }).then(() => undefined).catch(() => undefined));
   }
 
-  // On a funnel-bound (paid + active) click, log txid → {redirectId, fbclid} to KV so
-  // the later conversion beacon can resolve the ad's pixel + the buyer's token and the
-  // fbclid for attribution. Fire-and-forget (waitUntil) — never blocks the 302.
+  // On a funnel-bound (paid + active) click, log txid → {redirectId, fbclid, ts, fbp} to
+  // KV so the later conversion beacon can resolve the ad's pixel + the buyer's token, the
+  // fbclid for attribution, the CLICK timestamp (feeds `fbc`'s middle field — must be the
+  // FB-ad-click time, not the conversion time, or Facebook rejects the match), and a
+  // synthesized `fbp` browser id (pure-S2S: no in-browser Meta pixel to set `_fbp`, so we
+  // mint one here and reuse it across every funnel event for this click — Facebook accepts
+  // the value regardless of whether it came from a cookie or the server, only the format
+  // and stability-per-visitor matter for EMQ). Fire-and-forget (waitUntil) — never blocks
+  // the 302.
   if (decision.paid && config.active) {
+    const clickTimeMs = Date.now();
+    // `fb.<subdomainIndex>.<creationTime>.<random>` — subdomainIndex=1 like real _fbp cookies
+    // on a 2-part apex; `random` is a 10-digit integer.
+    const rand10 = Math.floor(1_000_000_000 + Math.random() * 9_000_000_000).toString();
+    const fbp = `fb.1.${clickTimeMs}.${rand10}`;
     // Include the chosen offer (Phase E) so revenue/conversions attribute per-offer.
     const record = JSON.stringify({
       redirectId: c.req.param('id'),
       fbclid: query.fbclid,
       offerId: decision.offerId,
-      ts: Date.now(),
+      ts: clickTimeMs,
+      fbp,
     });
     c.executionCtx.waitUntil(c.env.REDIRECTS.put(`click:${decision.txid}`, record, { expirationTtl: 604_800 }));
   }
