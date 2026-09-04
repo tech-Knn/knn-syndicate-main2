@@ -2,13 +2,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { FbConnectionStatus, prisma, withSystem } from '@knn/db';
 import { encryptToken } from '@knn/fb';
 import { ROLES, USER_STATUS } from '@knn/shared';
-import { resolveCampaignReadAuth } from './fb-read-auth.js';
+import { markConnectionBroken, resolveCampaignReadAuth } from './fb-read-auth.js';
 
 const suffix = Date.now().toString(36);
 let orgId = '';
 let userId = '';
 
-async function mkConn(appKind: string, status: FbConnectionStatus): Promise<string> {
+async function mkConn(appKind: string, status: FbConnectionStatus, expiresAt = new Date(Date.now() + 60 * 86_400_000)): Promise<string> {
   const c = await withSystem((tx) =>
     tx.fbConnection.create({
       data: {
@@ -17,7 +17,7 @@ async function mkConn(appKind: string, status: FbConnectionStatus): Promise<stri
         fbUserId: `fb-${appKind}-${Math.random().toString(36).slice(2)}`,
         appKind,
         accessTokenEnc: encryptToken(`tok-${appKind}`),
-        tokenExpiresAt: new Date(Date.now() + 60 * 86_400_000),
+        tokenExpiresAt: expiresAt,
         status,
       },
     }),
@@ -97,5 +97,30 @@ describe('resolveCampaignReadAuth', () => {
 
   it('returns null with neither a stable id nor a pinned row', async () => {
     expect(await resolveCampaignReadAuth({ fbAccountId: null, adAccountId: null })).toBeNull();
+  });
+  it('skips an ACTIVE connection whose token has already expired (would be a guaranteed 190)', async () => {
+    const expired = await mkConn('DATA', FbConnectionStatus.ACTIVE, new Date(Date.now() - 60_000));
+    await mkAcct(expired, 'act_400');
+    expect(await resolveCampaignReadAuth({ fbAccountId: 'act_400', adAccountId: null })).toBeNull();
+  });
+  it('returns connectionId so callers can degrade the connection on a 190', async () => {
+    const conn = await mkConn('DATA', FbConnectionStatus.ACTIVE);
+    await mkAcct(conn, 'act_500');
+    const auth = await resolveCampaignReadAuth({ fbAccountId: 'act_500', adAccountId: null });
+    expect(auth?.connectionId).toBe(conn);
+  });
+});
+describe('markConnectionBroken', () => {
+  it('flips ACTIVE → CONNECTION_BROKEN with lastError, and is idempotent (does not overwrite a later message)', async () => {
+    const conn = await mkConn('DATA', FbConnectionStatus.ACTIVE);
+    await markConnectionBroken(conn, 'reconcile: token dead (190)');
+    let row = await withSystem((tx) => tx.fbConnection.findUnique({ where: { id: conn }, select: { status: true, lastError: true } }));
+    expect(row?.status).toBe(FbConnectionStatus.CONNECTION_BROKEN);
+    expect(row?.lastError).toBe('reconcile: token dead (190)');
+    await markConnectionBroken(conn, 'attribution: something else');
+    row = await withSystem((tx) => tx.fbConnection.findUnique({ where: { id: conn }, select: { status: true, lastError: true } }));
+    expect(row?.lastError).toBe('reconcile: token dead (190)');
+    await mkAcct(conn, 'act_600');
+    expect(await resolveCampaignReadAuth({ fbAccountId: 'act_600', adAccountId: null })).toBeNull();
   });
 });

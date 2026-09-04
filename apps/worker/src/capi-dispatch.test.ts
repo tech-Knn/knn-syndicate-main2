@@ -133,6 +133,24 @@ describe('dispatchConversion', () => {
     const res = await dispatchConversion({ conversionEventId: id }, { send: send as unknown as CapiDispatchDeps['send'] });
     expect(res.status).toBe('failed');
     expect((await withSystem((tx) => tx.conversionEvent.findUnique({ where: { id } })))!.status).toBe('failed');
+    // The connection itself must flip so the NEXT event does not burn another 190 against the quota.
+    const conn = await withSystem((tx) => tx.fbConnection.findFirst({ where: { userId: buyerId }, select: { status: true, lastError: true } }));
+    expect(conn!.status).toBe('CONNECTION_BROKEN');
+    expect(conn!.lastError).toContain('CAPI:');
+    expect(conn!.lastError).toContain('token dead');
+  });
+  it('marks failed (no retry, no FB call) when the buyer token has expired but status is still ACTIVE', async () => {
+    await withSystem((tx) => tx.fbConnection.updateMany({ where: { userId: buyerId }, data: { tokenExpiresAt: new Date(Date.now() - 60_000) } }));
+    try {
+      const id = await makeEvent();
+      const send = vi.fn();
+      const res = await dispatchConversion({ conversionEventId: id }, { send: send as unknown as CapiDispatchDeps['send'] });
+      expect(res.status).toBe('failed');
+      expect(send).not.toHaveBeenCalled();
+      expect((await withSystem((tx) => tx.conversionEvent.findUnique({ where: { id } })))!.status).toBe('failed');
+    } finally {
+      await withSystem((tx) => tx.fbConnection.updateMany({ where: { userId: buyerId }, data: { tokenExpiresAt: new Date(Date.now() + 60 * 86_400_000) } }));
+    }
   });
 
   it('rethrows a transient error so BullMQ retries (status stays pending)', async () => {
