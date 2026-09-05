@@ -1,8 +1,8 @@
 import { withSystem } from '@knn/db';
-import { type CampaignDeliveryDTO, fetchCampaignDelivery } from '@knn/fb';
+import { type CampaignDeliveryDTO, fetchCampaignDelivery, FbConnectionBrokenError } from '@knn/fb';
 import { CAMPAIGN_STATUS, type CampaignStatus, canTransitionCampaign } from '@knn/shared';
 import { releaseChannelForCampaign } from '../channel-pool/channel.service.js';
-import { resolveCampaignReadAuth } from '../lib/fb-read-auth.js';
+import { resolveCampaignReadAuth, markConnectionBroken } from '../lib/fb-read-auth.js';
 import { sendNotification } from '../lib/notify.js';
 import { resyncOffersToKv } from '../launch-trigger.js';
 
@@ -78,7 +78,12 @@ async function defaultFetchDelivery(c: CampaignRow): Promise<CampaignDeliveryDTO
   if (!c.fbCampaignId) return { effectiveStatus: '', accountId: '', adSets: [], ads: [] };
   const auth = await resolveCampaignReadAuth({ fbAccountId: c.fbAccountId, adAccountId: c.adAccountId });
   if (!auth) return { effectiveStatus: '', accountId: '', adSets: [], ads: [] };
-  return fetchCampaignDelivery(auth.fbAccountId, auth.token, c.fbCampaignId, auth.appKind);
+  try {
+    return await fetchCampaignDelivery(auth.fbAccountId, auth.token, c.fbCampaignId, auth.appKind);
+  } catch (err) {
+    if (err instanceof FbConnectionBrokenError) await markConnectionBroken(auth.connectionId, `reconcile: ${err.message}`);
+    throw err;
+  }
 }
 
 const defaultNotify = (n: Notification): void => sendNotification(n);

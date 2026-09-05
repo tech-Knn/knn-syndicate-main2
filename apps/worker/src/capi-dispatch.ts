@@ -83,11 +83,11 @@ export async function dispatchConversion(
   const campaign = await withSystem((tx) => tx.campaign.findUnique({ where: { id: ev.campaignId }, select: { adAccountId: true } }));
   const acc = campaign?.adAccountId
     ? await withSystem((tx) =>
-        tx.fbAdAccount.findUnique({ where: { id: campaign.adAccountId! }, select: { connection: { select: { accessTokenEnc: true, status: true } } } }),
+        tx.fbAdAccount.findUnique({ where: { id: campaign.adAccountId! }, select: { connection: { select: { id: true, accessTokenEnc: true, status: true, tokenExpiresAt: true } } } }),
       )
     : null;
   const conn = acc?.connection ?? null;
-  if (!conn || conn.status === FbConnectionStatus.CONNECTION_BROKEN) {
+  if (!conn || conn.status === FbConnectionStatus.CONNECTION_BROKEN || conn.tokenExpiresAt.getTime() <= Date.now()) {
     await markFailed(ev.id, 'no usable Facebook connection');
     return { status: 'failed' };
   }
@@ -135,6 +135,15 @@ export async function dispatchConversion(
     return { status: 'sent' };
   } catch (err) {
     if (err instanceof FbConnectionBrokenError) {
+      // Flip the CONNECTION, not just this event — otherwise every subsequent event for this
+      // buyer burns another 190 against the app-wide error-rate quota until someone disables
+      // it by hand (see fb_connections.last_error history).
+      await withSystem((tx) =>
+        tx.fbConnection.updateMany({
+          where: { id: conn.id, status: FbConnectionStatus.ACTIVE },
+          data: { status: FbConnectionStatus.CONNECTION_BROKEN, lastError: `CAPI: ${formatFbError(err)}`.slice(0, 200) },
+        }),
+      );
       await markFailed(ev.id, `connection broken: ${formatFbError(err)}`);
       return { status: 'failed' };
     }

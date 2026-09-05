@@ -9,6 +9,7 @@ export interface ReadAuth {
   token: string;
   /** The issuing app, so `appsecret_proof` is signed with that app's secret (DATA/VERIFY/LAUNCH). */
   appKind: FbAppKind;
+  connectionId: string;
 }
 
 /**
@@ -42,9 +43,9 @@ export async function resolveCampaignReadAuth(
     // Pick a live row for that Meta account under any ACTIVE connection (most-recently updated wins
     // — the connection the buyer is actually using now).
     const live = await db.fbAdAccount.findFirst({
-      where: { fbAccountId: stableId, connection: { status: FbConnectionStatus.ACTIVE } },
-      orderBy: { updatedAt: 'desc' },
-      select: { fbAccountId: true, currency: true, connection: { select: { accessTokenEnc: true, appKind: true } } },
+      where: { fbAccountId: stableId, connection: { status: FbConnectionStatus.ACTIVE, tokenExpiresAt: { gt: new Date() } } },
+orderBy: { updatedAt: 'desc' },
+select: { fbAccountId: true, currency: true, connection: { select: { id: true, accessTokenEnc: true, appKind: true } } },
     });
     if (!live) return null;
     return {
@@ -52,8 +53,22 @@ export async function resolveCampaignReadAuth(
       currency: live.currency,
       token: decryptToken(live.connection.accessTokenEnc),
       appKind: live.connection.appKind as FbAppKind,
+      connectionId: live.connection.id
     };
   };
   // Reuse the caller's transaction when given (attribution runs inside one); else open our own.
   return tx ? run(tx) : withSystem(run);
+}
+
+/** Degrade a connection after Meta returned 190 (token dead before its expiry — checkpoint, password
+ *  change, app removed). token-refresh only catches expiry / refresh-window failures, so without
+ *  this a mid-life dead token is re-hit by every job until someone flips it by hand — each hit a
+ *  failed call against the app-wide Marketing API error-rate quota. Idempotent (ACTIVE → BROKEN only). */
+export async function markConnectionBroken(connectionId: string, message: string): Promise<void> {
+  await withSystem((tx) =>
+    tx.fbConnection.updateMany({
+      where: { id: connectionId, status: FbConnectionStatus.ACTIVE },
+      data: { status: FbConnectionStatus.CONNECTION_BROKEN, lastError: message.slice(0, 200) },
+    }),
+  );
 }

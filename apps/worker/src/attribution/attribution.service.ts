@@ -1,6 +1,7 @@
 import { type TxClient, withSystem } from '@knn/db';
 import type { ChannelDayRevenue } from '@knn/adsense';
-import { type FbAdInsightRow, fetchAdInsights } from '@knn/fb';
+import { type FbAdInsightRow, FbConnectionBrokenError, fetchAdInsights } from '@knn/fb';
+import { markConnectionBroken, resolveCampaignReadAuth } from '../lib/fb-read-auth.js';
 import {
   AFS_CLICK_SUPPRESSION_THRESHOLD,
   type AdSignals,
@@ -13,7 +14,6 @@ import {
 } from '@knn/shared';
 import { liveAdsenseFetch } from './adsense-source.js';
 import { ensureFxRatesForDays, getUsdRate } from './fx.service.js';
-import { resolveCampaignReadAuth } from '../lib/fb-read-auth.js';
 
 /**
  * Revenue attribution (Phase 9, D8/D15). Two pulls feed three daily tables:
@@ -94,7 +94,23 @@ async function pullFbStatsForCampaign(
     const adByFbId = new Map(ads.map((a) => [a.fbAdId as string, a.id]));
     if (adByFbId.size === 0) return 0;
 
-    const rows: FbAdInsightRow[] = await deps.fetchInsights({
+    // Every insights call goes through this: a 190 (token dead before its expiry — checkpoint,
+    // password change) degrades the CONNECTION so the next campaign in this run, and every other
+    // job, stops hitting it. Without this each dead token costs 3 failed calls per campaign per
+    // hour against the app-wide Marketing API error-rate quota. Uses its own txn (not `tx`) so
+    // the flip commits even if this campaign's stats txn rolls back.
+    const fetchOrDegrade = async (params: Parameters<typeof deps.fetchInsights>[0]): Promise<FbAdInsightRow[]> => {
+      try {
+        return await deps.fetchInsights(params);
+      } catch (err) {
+        if (err instanceof FbConnectionBrokenError) {
+          await markConnectionBroken(auth.connectionId, `attribution: ${err.message}`);
+        }
+        throw err;
+      }
+    };
+
+    const rows: FbAdInsightRow[] = await fetchOrDegrade({
       fbCampaignId: campaign.fbCampaignId,
       accountId: auth.fbAccountId,
       accessToken: auth.token,
@@ -139,7 +155,7 @@ async function pullFbStatsForCampaign(
     // never affects the core cost/revenue attribution above.
     for (const dim of ['country', 'hour'] as const) {
       try {
-        const dimRows = await deps.fetchInsights({
+        const dimRows = await fetchOrDegrade({
           fbCampaignId: campaign.fbCampaignId,
           accountId: auth.fbAccountId,
           accessToken: auth.token,
