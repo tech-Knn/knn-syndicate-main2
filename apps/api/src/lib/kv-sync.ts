@@ -75,6 +75,13 @@ export interface ClickRecord {
    *  click so Facebook sees a stable browser id per visitor. Absent on legacy records
    *  written before this field was added — CAPI dispatch handles the missing case. */
   fbp?: string;
+  /** Visitor's real IP at click time, captured at the Cloudflare edge via
+   *  `CF-Connecting-IP`. This is the IP Facebook saw when issuing the fbclid, so it's
+   *  the best match signal for CAPI's `client_ip_address`. Beacon-time `req.ip` (used
+   *  as the fallback in events.service) can be a shared reverse-proxy IP, which is why
+   *  we prefer this value. Absent on legacy records written before this field was
+   *  added — the service layer falls back to the beacon-time IP. */
+  clientIp?: string;
 }
 
 /** Read a click record by txid from KV. Returns null when the key is absent (404). */

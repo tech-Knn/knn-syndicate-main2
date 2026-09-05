@@ -99,7 +99,11 @@ export async function recordConversion(
         eventName,
         valueMinor: input.valueMinor ?? null,
         currency: input.currency || 'USD',
-        clientIp: input.clientIp ?? null,
+        // Prefer the click-time IP captured at the Cloudflare edge (CF-Connecting-IP,
+        // stored in KV by the redirect Worker) — that's the IP Facebook saw when they
+        // issued the fbclid, so it's the strongest match signal. Fall back to the
+        // beacon-time req.ip only for legacy KV records that predate `clientIp` capture.
+        clientIp: click.clientIp ?? input.clientIp ?? null,
         clientUa: input.clientUa ?? null,
         eventSourceUrl: input.url ?? null,
         eventTime: new Date(),

@@ -72,9 +72,12 @@ describe('recordConversion', () => {
     const redirectId = await seedAd(true);
     const enqueue = vi.fn(async () => {});
     const fbp = 'fb.1.1779950000000.9876543210';
+    // Distinct IPs: KV = click-time (from Cloudflare edge), input = beacon-time (from Fastify req.ip).
+    // The service must PREFER the click-time IP — same visitor, but the click-time value is what
+    // Facebook saw when issuing the fbclid, so it's the best match signal.
     const res = await recordConversion(
-      { clickId: 'tx-1', valueMinor: 5, currency: 'USD', clientIp: '1.2.3.4', clientUa: 'UA', url: 'https://articles.x/search' },
-      deps({ redirectId, fbclid: 'FBCL1', ts: 1779950000000, fbp }, enqueue),
+      { clickId: 'tx-1', valueMinor: 5, currency: 'USD', clientIp: '9.9.9.9', clientUa: 'UA', url: 'https://articles.x/search' },
+      deps({ redirectId, fbclid: 'FBCL1', ts: 1779950000000, fbp, clientIp: '1.2.3.4' }, enqueue),
     );
     expect(res).toEqual({ recorded: true, deduped: false, dispatched: true });
 
@@ -85,7 +88,7 @@ describe('recordConversion', () => {
       fbclid: 'FBCL1',
       valueMinor: 5,
       currency: 'USD',
-      clientIp: '1.2.3.4',
+      clientIp: '1.2.3.4', // KV click-time IP wins over the beacon-time input.clientIp ('9.9.9.9')
       status: 'pending',
       fbp,
     });
@@ -93,6 +96,20 @@ describe('recordConversion', () => {
     expect(ev!.clickTimeMs).toBe(BigInt(1779950000000));
     expect(enqueue).toHaveBeenCalledTimes(1);
     expect(enqueue).toHaveBeenCalledWith(ev!.id);
+  });
+
+  it('falls back to beacon-time req.ip when the KV click record has no clientIp (legacy record)', async () => {
+    // Legacy KV records written before the Worker started capturing CF-Connecting-IP.
+    // The service must degrade gracefully to `input.clientIp` (the beacon-time value) so
+    // in-flight legacy clicks keep sending an IP to Facebook, not null.
+    const redirectId = await seedAd(true);
+    const enqueue = vi.fn(async () => {});
+    await recordConversion(
+      { clickId: 'tx-legacy', clientIp: '5.6.7.8', clientUa: 'UA' },
+      deps({ redirectId, fbclid: 'F', ts: 1 }, enqueue), // no clientIp on the KV record
+    );
+    const ev = await withSystem((tx) => tx.conversionEvent.findFirst({ where: { clickId: 'tx-legacy' } }));
+    expect(ev!.clientIp).toBe('5.6.7.8');
   });
 
   it('is idempotent on click id — second call dedups, does not re-enqueue', async () => {
