@@ -98,20 +98,23 @@ async function resolveWriteAuth(tx: TxClient, dataConn: OwningConnection): Promi
     return { token: decryptConnectionToken(dataConn.accessTokenEnc), appKind: 'VERIFY', connectionId: dataConn.id };
   }
   if (hasLaunchApp()) {
+    // Only a HEALTHY launch connection qualifies — push the health check into the query so a
+    // dead/expired LAUNCH row simply doesn't match (rather than hard-failing the write).
     const launch = await tx.fbConnection.findFirst({
-      where: { userId: dataConn.userId, appKind: 'LAUNCH' },
+      where: {
+        userId: dataConn.userId,
+        appKind: 'LAUNCH',
+        status: FbConnectionStatus.ACTIVE,
+        tokenExpiresAt: { gt: new Date() },
+      },
       orderBy: { tokenExpiresAt: 'desc' },
-      select: { id: true, accessTokenEnc: true, tokenExpiresAt: true, status: true },
+      select: { id: true, accessTokenEnc: true },
     });
     if (launch) {
-      if (launch.status === FbConnectionStatus.CONNECTION_BROKEN || launch.tokenExpiresAt.getTime() <= Date.now()) {
-        throw new AppError(
-          409,
-          'Your Facebook launch-app connection needs reconnecting — open Settings → Facebook → Connect launch app, then relaunch.',
-        );
-      }
       return { token: decryptConnectionToken(launch.accessTokenEnc), appKind: 'LAUNCH', connectionId: launch.id };
     }
+    // No healthy LAUNCH connection → fall through to DATA below (no 409). A dead/abandoned
+    // LAUNCH app must not block writes when a working DATA token exists.
   }
   if (dataConn.status === FbConnectionStatus.CONNECTION_BROKEN) {
     throw new AppError(409, 'Facebook connection is broken — reconnect first');
