@@ -146,7 +146,7 @@ describe('launchCampaign (Phase 8)', () => {
       return { slug: artSlug };
     });
     const writeRedirectConfigs = vi.fn(
-      async (_entries: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {},
+      async (_entries: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => { },
     );
 
     const result = await launchCampaign(auth(), campaignId, { generateArticle, writeRedirectConfigs });
@@ -248,7 +248,7 @@ describe('launchCampaign (Phase 8)', () => {
         await withSystem((tx) => tx.campaign.update({ where: { id: campaignId }, data: { articleId: art.id } }));
         return { slug: artSlug };
       });
-      const writeRedirectConfigs = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {});
+      const writeRedirectConfigs = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => { });
       await launchCampaign(auth(), campaignId, { generateArticle, writeRedirectConfigs });
 
       const camp = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { whiteDomainHost: true } }));
@@ -277,7 +277,7 @@ describe('launchCampaign (Phase 8)', () => {
     const campaignId = await makeCampaign();
     vi.mocked(fb.createFbCampaign).mockClear();
     const gen = vi.fn(async () => ({ slug: `concur-${suffix}` }));
-    const kv = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {});
+    const kv = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => { });
 
     // Two triggers fire at once (auto-launch + a manual click). Exactly ONE FB campaign must be created.
     const results = await Promise.allSettled([
@@ -440,18 +440,25 @@ describe('launchCampaign (Phase 8)', () => {
     }
   });
 
-  it('two-app: an EXPIRED launch token yields a clear reconnect-launch 409 (no silent DATA fallback)', async () => {
+  it('two-app: an EXPIRED launch token falls back to the DATA token (no hard 409)', async () => {
     const launchConn = await withSystem((tx) =>
       tx.fbConnection.create({
         data: { orgId, userId: buyerId, fbUserId: 'fb', appKind: 'LAUNCH', accessTokenEnc: 'enc-launch', tokenExpiresAt: new Date(Date.now() - 1_000), status: 'ACTIVE' },
       }),
     );
     vi.mocked(fb.hasLaunchApp).mockReturnValue(true);
+    vi.mocked(fb.createFbCampaign).mockClear();
     try {
       const campaignId = await makeCampaign();
-      await expect(
-        launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
-      ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('launch-app connection needs reconnecting') });
+      // An expired LAUNCH connection no longer blocks writes — resolveWriteAuth skips it (the health
+      // check is in the query) and falls through to the healthy DATA token, so the launch succeeds.
+      const result = await launchCampaign(auth(), campaignId, {
+        generateArticle: vi.fn(async () => ({ slug: 'health-2026' })),
+        writeRedirectConfigs: vi.fn(async () => undefined),
+      });
+      expect(result.status).toBe('ACTIVE');
+      // 4th arg = appKind. The dead LAUNCH connection is skipped → writes go via the DATA token.
+      expect(fb.createFbCampaign).toHaveBeenCalledWith('act_1', 'tok', expect.any(Object), 'DATA');
     } finally {
       vi.mocked(fb.hasLaunchApp).mockReturnValue(false);
       await withSystem((tx) => tx.fbConnection.delete({ where: { id: launchConn.id } }));
@@ -508,7 +515,7 @@ describe('launchCampaign (Phase 8)', () => {
     vi.mocked(fb.createFbCampaign).mockImplementationOnce(async () => {
       throw new fb.FbApiError('Invalid objective/optimization combination', { code: 100 });
     });
-    const writeRedirectConfigs = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {});
+    const writeRedirectConfigs = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => { });
     await expect(
       launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs }),
     ).rejects.toThrow('Invalid objective');
@@ -601,7 +608,7 @@ describe('launchCampaign (Phase 8)', () => {
       await tx.offer.create({ data: { orgId, campaignId, domainId: domA, weightPct: 0, kind: 'ORGANIC' } });
     });
 
-    const writeRedirectConfigs = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {});
+    const writeRedirectConfigs = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => { });
     const result = await launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 'health-2026' })), writeRedirectConfigs });
     expect(result.status).toBe('ACTIVE');
 
@@ -628,7 +635,7 @@ describe('launchCampaign (Phase 8)', () => {
       await tx.offer.create({ data: { orgId, campaignId, domainId: domB, weightPct: 50, kind: 'PAID', channelRef: chB.id } }); // no variant → default
     });
 
-    const writeRedirectConfigs = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {});
+    const writeRedirectConfigs = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => { });
     // The campaign's default article slug is 'health-2026' (generateArticle stub).
     const result = await launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 'health-2026' })), writeRedirectConfigs });
     expect(result.status).toBe('ACTIVE');
@@ -658,14 +665,14 @@ describe('setCampaignActive — edge KV stays in sync with status (B1)', () => {
     });
 
     // Pause: the resync must publish active:false so the redirect stops monetizing residual clicks.
-    const pauseWrite = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {});
+    const pauseWrite = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => { });
     const paused = await setCampaignActive(auth(), campaignId, false, { writeRedirectConfigs: pauseWrite });
     expect(paused.status).toBe('PAUSED');
     expect(pauseWrite).toHaveBeenCalledTimes(1);
     expect(pauseWrite.mock.calls[0]![0][0]!.config.active).toBe(false);
 
     // Resume: active:true again.
-    const resumeWrite = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => {});
+    const resumeWrite = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => { });
     const resumed = await setCampaignActive(auth(), campaignId, true, { writeRedirectConfigs: resumeWrite });
     expect(resumed.status).toBe('ACTIVE');
     expect(resumeWrite.mock.calls[0]![0][0]!.config.active).toBe(true);
