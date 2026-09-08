@@ -371,7 +371,11 @@ async function loadConnection(auth: AuthContext, connectionId: string) {
 export async function syncAllConnections(): Promise<{ connections: number; synced: number; failed: number }> {
   const conns = await withSystem((tx) =>
     tx.fbConnection.findMany({
-      where: { status: FbConnectionStatus.ACTIVE, appKind: { in: ['DATA', 'VERIFY'] } },
+      where: {
+        status: FbConnectionStatus.ACTIVE,
+        appKind: { in: ['DATA', 'VERIFY'] },
+        tokenExpiresAt: { gt: new Date() },   // <-- expired tokens skip
+      },
       select: { id: true, orgId: true, accessTokenEnc: true },
     }),
   );
@@ -383,6 +387,11 @@ export async function syncAllConnections(): Promise<{ connections: number; synce
       synced += 1;
     } catch (err) {
       failed += 1;
+      // On a 190, degrade the connection so the next sweep (and every other job) skips it —
+      // otherwise each dead DATA token burns ~4 failed calls every 6h against the error-rate quota.
+      if (err instanceof FbConnectionBrokenError) {
+        await markConnectionBroken(c.id, `sync: ${err.message}`).catch(() => undefined);
+      }
       console.warn(`[sync-connections] connection ${c.id} failed:`, err instanceof Error ? err.message : String(err));
     }
   }
