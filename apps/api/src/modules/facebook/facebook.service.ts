@@ -22,7 +22,7 @@ import {
   isFbConfigured,
   verifyAppCredentials,
 } from '@knn/fb';
-import { ROLES } from '@knn/shared';
+import { CAMPAIGN_STATUS, ROLES } from '@knn/shared';
 import { AppError } from '../../lib/errors.js';
 import { notify } from '../../lib/notify.js';
 import { runScoped } from '../../lib/scope.js';
@@ -199,6 +199,12 @@ async function syncFromFacebook(args: {
  * the error, and emit a notification so the buyer can one-click reconnect. The
  * durable in-app signal is the row's own `status` — polling/launches for this
  * profile stop until it's reconnected. Keyed by connection id (a user can have many).
+ *
+ * Also auto-pauses this connection's live campaigns: a dead token can't fire CAPI, so a
+ * still-ACTIVE campaign on a broken connection just bleeds failed calls against the app-wide
+ * Marketing API error-rate quota. DB-side only — the FB token is dead, so FB-side spend still
+ * needs a manual Ads Manager pause. Campaigns stay PAUSED after a later reconnect (a human
+ * decides what to turn back on).
  */
 export async function markConnectionBroken(connectionId: string, message: string): Promise<void> {
   await withSystem(async (tx) => {
@@ -208,6 +214,14 @@ export async function markConnectionBroken(connectionId: string, message: string
       where: { id: connectionId },
       data: { status: FbConnectionStatus.CONNECTION_BROKEN, lastError: message },
     });
+    // Pause the live campaigns whose ad account belongs to this connection.
+    const accounts = await tx.fbAdAccount.findMany({ where: { connectionId }, select: { id: true } });
+    if (accounts.length > 0) {
+      await tx.campaign.updateMany({
+        where: { adAccountId: { in: accounts.map((a) => a.id) }, status: CAMPAIGN_STATUS.ACTIVE },
+        data: { status: CAMPAIGN_STATUS.PAUSED },
+      });
+    }
     await notify({
       orgId: conn.orgId,
       userId: conn.userId,

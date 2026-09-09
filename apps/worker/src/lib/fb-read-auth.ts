@@ -1,5 +1,6 @@
 import { FbConnectionStatus, type TxClient, withSystem } from '@knn/db';
 import { type FbAppKind, decryptToken } from '@knn/fb';
+import { CAMPAIGN_STATUS } from '@knn/shared';
 
 export interface ReadAuth {
   /** The stable Meta ad-account id (`act_…` numeric body) to gate the call by + read against. */
@@ -44,8 +45,8 @@ export async function resolveCampaignReadAuth(
     // — the connection the buyer is actually using now).
     const live = await db.fbAdAccount.findFirst({
       where: { fbAccountId: stableId, connection: { status: FbConnectionStatus.ACTIVE, tokenExpiresAt: { gt: new Date() } } },
-orderBy: { updatedAt: 'desc' },
-select: { fbAccountId: true, currency: true, connection: { select: { id: true, accessTokenEnc: true, appKind: true } } },
+      orderBy: { updatedAt: 'desc' },
+      select: { fbAccountId: true, currency: true, connection: { select: { id: true, accessTokenEnc: true, appKind: true } } },
     });
     if (!live) return null;
     return {
@@ -63,12 +64,25 @@ select: { fbAccountId: true, currency: true, connection: { select: { id: true, a
 /** Degrade a connection after Meta returned 190 (token dead before its expiry — checkpoint, password
  *  change, app removed). token-refresh only catches expiry / refresh-window failures, so without
  *  this a mid-life dead token is re-hit by every job until someone flips it by hand — each hit a
- *  failed call against the app-wide Marketing API error-rate quota. Idempotent (ACTIVE → BROKEN only). */
+ *  failed call against the app-wide Marketing API error-rate quota. Idempotent (ACTIVE → BROKEN only).
+ *  Also pauses the connection's live campaigns on the transition, so a dead token's campaigns stop
+ *  bleeding CAPI errors (DB-side; FB-side spend needs a manual Ads Manager pause). */
 export async function markConnectionBroken(connectionId: string, message: string): Promise<void> {
-  await withSystem((tx) =>
-    tx.fbConnection.updateMany({
+  await withSystem(async (tx) => {
+    const updated = await tx.fbConnection.updateMany({
       where: { id: connectionId, status: FbConnectionStatus.ACTIVE },
       data: { status: FbConnectionStatus.CONNECTION_BROKEN, lastError: message.slice(0, 200) },
-    }),
-  );
+    });
+    // Only on the ACTIVE → BROKEN transition (idempotent — a repeat call for an already-broken
+    // connection does nothing), pause its live campaigns.
+    if (updated.count > 0) {
+      const accounts = await tx.fbAdAccount.findMany({ where: { connectionId }, select: { id: true } });
+      if (accounts.length > 0) {
+        await tx.campaign.updateMany({
+          where: { adAccountId: { in: accounts.map((a) => a.id) }, status: CAMPAIGN_STATUS.ACTIVE },
+          data: { status: CAMPAIGN_STATUS.PAUSED },
+        });
+      }
+    }
+  });
 }
