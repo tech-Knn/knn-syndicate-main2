@@ -18,7 +18,7 @@ async function seedAd(withPixel: boolean): Promise<string> {
   const redirectId = randomUUID();
   await withSystem(async (tx) => {
     const campaign = await tx.campaign.create({
-      data: { orgId, buyerId, name: `cv ${n++}`, status: 'ACTIVE', keywords: [], fbCampaignId: `fbc-${redirectId}` },
+      data: { orgId, buyerId, name: `cv ${n++}`, status: 'ACTIVE', keywords: [], fbCampaignId: `fbc-${redirectId}`, adAccountId: accountId },
     });
     const adSet = await tx.adSet.create({
       data: { orgId, campaignId: campaign.id, name: 'set', pxeEvent: 'search', pixelId: withPixel ? pixelRowId : null },
@@ -70,7 +70,7 @@ describe('capiJobId (BullMQ de-dupe key)', () => {
 describe('recordConversion', () => {
   it('resolves the click → ad → pixel, records pending, and enqueues CAPI dispatch', async () => {
     const redirectId = await seedAd(true);
-    const enqueue = vi.fn(async () => {});
+    const enqueue = vi.fn(async () => { });
     const fbp = 'fb.1.1779950000000.9876543210';
     // Distinct IPs: KV = click-time (from Cloudflare edge), input = beacon-time (from Fastify req.ip).
     // The service must PREFER the click-time IP — same visitor, but the click-time value is what
@@ -103,7 +103,7 @@ describe('recordConversion', () => {
     // The service must degrade gracefully to `input.clientIp` (the beacon-time value) so
     // in-flight legacy clicks keep sending an IP to Facebook, not null.
     const redirectId = await seedAd(true);
-    const enqueue = vi.fn(async () => {});
+    const enqueue = vi.fn(async () => { });
     await recordConversion(
       { clickId: 'tx-legacy', clientIp: '5.6.7.8', clientUa: 'UA' },
       deps({ redirectId, fbclid: 'F', ts: 1 }, enqueue), // no clientIp on the KV record
@@ -114,7 +114,7 @@ describe('recordConversion', () => {
 
   it('is idempotent on click id — second call dedups, does not re-enqueue', async () => {
     const redirectId = await seedAd(true);
-    const enqueue = vi.fn(async () => {});
+    const enqueue = vi.fn(async () => { });
     const d = deps({ redirectId, fbclid: 'X', ts: 1 }, enqueue);
     await recordConversion({ clickId: 'tx-dup' }, d);
     const second = await recordConversion({ clickId: 'tx-dup' }, d);
@@ -124,7 +124,7 @@ describe('recordConversion', () => {
   });
 
   it('drops an unknown click (no KV record)', async () => {
-    const enqueue = vi.fn(async () => {});
+    const enqueue = vi.fn(async () => { });
     const res = await recordConversion({ clickId: 'nope' }, deps(null, enqueue));
     expect(res).toEqual({ recorded: false, reason: 'unknown_click' });
     expect(enqueue).not.toHaveBeenCalled();
@@ -132,7 +132,7 @@ describe('recordConversion', () => {
 
   it('records but skips dispatch when the ad set has no pixel (still a first-party signal)', async () => {
     const redirectId = await seedAd(false);
-    const enqueue = vi.fn(async () => {});
+    const enqueue = vi.fn(async () => { });
     const res = await recordConversion({ clickId: 'tx-nopx' }, deps({ redirectId, ts: 1 }, enqueue));
     expect(res).toEqual({ recorded: true, deduped: false, dispatched: false });
     const ev = await withSystem((tx) => tx.conversionEvent.findFirst({ where: { clickId: 'tx-nopx' } }));
@@ -142,7 +142,7 @@ describe('recordConversion', () => {
 
   it('records the funnel: one click fires lander/search/adclick as distinct FB events', async () => {
     const redirectId = await seedAd(true);
-    const enqueue = vi.fn(async () => {});
+    const enqueue = vi.fn(async () => { });
     const d = deps({ redirectId, fbclid: 'F', ts: 1 }, enqueue);
     await recordConversion({ clickId: 'tx-funnel', stage: 'lander' }, d);
     await recordConversion({ clickId: 'tx-funnel', stage: 'search' }, d);
