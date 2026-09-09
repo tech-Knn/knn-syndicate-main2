@@ -1,4 +1,4 @@
-import { withSystem } from '@knn/db';
+import { FbConnectionStatus, withSystem } from '@knn/db';
 import { QUEUES, getQueue } from '@knn/queue';
 import { type FunnelStage, MAIN_CONVERSION_STAGE, pxeToFbEvent } from '@knn/shared';
 import { type ClickRecord, readClick as defaultReadClick } from '../../lib/kv-sync.js';
@@ -81,12 +81,36 @@ export async function recordConversion(
     });
     if (!ad) return null;
 
-    const pixel = ad.adSet.pixelId
+        const pixel = ad.adSet.pixelId
       ? await tx.fbPixel.findUnique({ where: { id: ad.adSet.pixelId }, select: { fbPixelId: true } })
       : null;
     const pixelFbId = pixel?.fbPixelId ?? '';
-    // No pixel → still record (first-party D8 signal) but skip CAPI dispatch.
-    const status = pixelFbId ? 'pending' : 'skipped';
+
+    // Resolve the campaign's owning FB connection and check it's alive BEFORE queuing CAPI.
+    // A campaign paused on our side can still be live on Facebook (e.g. its account is
+    // checkpointed and couldn't be paused in Ads Manager), so conversions keep beaconing in.
+    // Firing CAPI against a dead token just burns a failed 190 call per conversion against the
+    // app-wide Marketing API error-rate quota. So record the event (first-party signal kept)
+    // but SKIP dispatch when the connection is broken/expired.
+    const campaign = await tx.campaign.findUnique({
+      where: { id: ad.adSet.campaignId },
+      select: { adAccountId: true },
+    });
+    const conn = campaign?.adAccountId
+      ? (
+          await tx.fbAdAccount.findUnique({
+            where: { id: campaign.adAccountId },
+            select: { connection: { select: { status: true, tokenExpiresAt: true } } },
+          })
+        )?.connection ?? null
+      : null;
+    const connectionDead =
+      !conn ||
+      conn.status === FbConnectionStatus.CONNECTION_BROKEN ||
+      conn.tokenExpiresAt.getTime() <= Date.now();
+
+    // Dispatch only when we have a pixel AND a live connection to send it with.
+    const status = pixelFbId && !connectionDead ? 'pending' : 'skipped';
 
     const created = await tx.conversionEvent.create({
       data: {
