@@ -207,7 +207,7 @@ export default function AnalyticsPage() {
   const isAdmin = user?.role === 'SUPER_ADMIN' || user?.role === 'COMPANY_ADMIN';
   const isSuper = user?.role === 'SUPER_ADMIN';
 
-  const [range, setRange] = useState<DateRange>(() => rangeFor(30));
+  const [range, setRange] = useState<DateRange>(() => rangeFor(1));
   const [rows, setRows] = useState<CampaignPerf[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
