@@ -60,9 +60,26 @@ export interface GeneratedArticleAI {
   relatedSearchTerms: string[];
 }
 
+// -----------------------------------------------------------------------------
+// PROMPT HISTORY — DO NOT DELETE (preserved for reference / rollback).
+//
+// The original prompt (pre-2026-09-19) hard-coded "US audience" / "US buyers" and
+// gave US-only examples (medicare, car insurance, solar). Result: RSOC keyword
+// fill rate collapsed to ~27% on India-served FB traffic (verified 2026-09-19,
+// 341 renders → 93 fills). Winning terms in real fill data were India-flavored
+// with commercial modifiers ("used cars monthly payments" 100% CTR, "car price
+// 1 lakh to 2 lakh" 57% CTR). Losing terms were 2-word generic phrases with no
+// commercial modifier ("mechanic service", "service mechanic" — 0 fills).
+//
+// The prompt below removes the US hardcoding, requires an explicit commercial
+// modifier on every term, and swaps examples to a mix that fills across geos.
+// If we ever need to revert, `git log -p packages/ai/src/openai.ts` shows the
+// original in full at any prior commit.
+// -----------------------------------------------------------------------------
+
 const ARTICLE_SYSTEM =
   'You are an SEO content writer for a search-arbitrage landing page. Given a TOPIC, write a plain, ' +
-  'factual, 1,000-1,500 word guide for a general US audience at an 8th-grade reading level. Be concrete: ' +
+  'factual, 1,000-1,500 word guide for a general adult reader at an 8th-grade reading level. Be concrete: ' +
   'include real-world numbers, price ranges, and specifics. No fluff, no author, no in-text calls to action. ' +
   'Use this structure in the body markdown: an opening paragraph (60-90 words: hook, then define, then ' +
   'promise value), then "## Understanding {topic}", "## The Benefits of {topic}" (3-4 bolded sub-points), ' +
@@ -74,13 +91,20 @@ const ARTICLE_SYSTEM =
   '"teaser" (string, a short 35-55 word opening hook, plain text — a few lines that set up the ' +
   'topic so the related-search unit sits high on the page), ' +
   '"body_markdown" (string, the full article in markdown starting with the opening paragraph), ' +
-  '"related_search_terms" (array of exactly 6 short related-search queries, 2-5 words each, plain ' +
-  'lowercase). They MUST be high-commercial / transactional intent that real US buyers type and that ' +
-  'have strong ad inventory — e.g. "best medicare advantage plans", "affordable car insurance quotes", ' +
-  '"solar panel installation cost". Stay tightly on the article TOPIC and its vertical; do NOT drift to ' +
-  'unrelated verticals. Do NOT include questions ("how/what/why..."), brand or navigational queries, ' +
-  'anything explicit/adult/sensitive, or implausible/clickbait phrasing ("free money", "one weird trick"). ' +
-  'Each query should plausibly trigger relevant high-CPC ads.';
+  '"related_search_terms" (array of exactly 6 short related-search queries, 3-5 words each, plain ' +
+  'lowercase). They MUST be high-commercial / transactional intent — the exact phrase a ready-to-buy ' +
+  'buyer would type into Google, so they trigger high-CPC ad inventory. EVERY query MUST include AT ' +
+  'LEAST ONE of these modifier types: (a) a PRICE / QUANTITY signal (e.g. "under 5 lakh", "below 50000", ' +
+  '"monthly payments", "cheap", "affordable", "cost", "quote", "price"); (b) a PURCHASE-INTENT signal ' +
+  '(e.g. "buy", "for sale", "hire", "quote", "near me"); or (c) a LOCATION modifier (a city or region ' +
+  'name relevant to the topic). Example patterns that fill well across geographies: ' +
+  '"used cars monthly payments", "buy [item] near me", "[item] price under [amount]", "[trade] jobs ' +
+  'in [city]", "second hand [item] for sale", "affordable [service] quotes", "cheap [service] near me". ' +
+  'Stay tightly on the article TOPIC and its vertical; do NOT drift to unrelated verticals. ' +
+  'STRICTLY AVOID: 2-word phrases with no commercial modifier ("mechanic service", "car repair"); ' +
+  'questions ("how/what/why..."); brand or platform names ("olx cars", "amazon jobs", "swiggy delivery"); ' +
+  'navigational queries; anything explicit/adult/sensitive; implausible/clickbait phrasing ("free money", ' +
+  '"one weird trick").';
 
 interface ArticleJson {
   title?: string;
