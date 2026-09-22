@@ -290,7 +290,7 @@ export async function setCampaignActive(
         throw new AppError(
           409,
           'Facebook has temporarily restricted this ad account for security ("authenticate your account in Ads Manager"). The account owner must complete the authentication prompt in Ads Manager, then try again.' +
-            (err.checkpointUrl ? ` Authenticate here: ${err.checkpointUrl}` : ''),
+          (err.checkpointUrl ? ` Authenticate here: ${err.checkpointUrl}` : ''),
         );
       }
       if (err instanceof FbConnectionBrokenError) {
@@ -337,7 +337,7 @@ async function throwFbWriteError(err: unknown, connectionId: string): Promise<ne
     throw new AppError(
       409,
       'Facebook has temporarily restricted this ad account for security ("authenticate your account in Ads Manager"). The account owner must complete the prompt in Ads Manager, then try again.' +
-        (err.checkpointUrl ? ` Authenticate here: ${err.checkpointUrl}` : ''),
+      (err.checkpointUrl ? ` Authenticate here: ${err.checkpointUrl}` : ''),
     );
   }
   if (err instanceof FbConnectionBrokenError) {
@@ -618,6 +618,32 @@ async function assertLaunchAssetsAccessible(plan: LaunchPlan): Promise<void> {
   );
 }
 
+/**
+ * Poll Facebook for a video's thumbnail after upload. FB processes videos asynchronously, so the
+ * thumbnail is frequently not ready immediately — retry with backoff (~30s total across 6 attempts)
+ * before giving up. Returns the thumbnail URL, or null if it never became available in the budget.
+ */
+async function pollForVideoThumbnail(
+  videoId: string,
+  token: string,
+  appKind: FbAppKind,
+  accountId: string,
+): Promise<string | null> {
+  // ms delays: 0 (immediate try), then 2s, 3s, 5s, 8s, 12s ≈ 30s total.
+  const delays = [0, 2_000, 3_000, 5_000, 8_000, 12_000];
+  for (let i = 0; i < delays.length; i++) {
+    const delay = delays[i] ?? 0;
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+    try {
+      const url = await fetchFbVideoThumbnail(videoId, token, appKind, { accountId });
+      if (url) return url;
+    } catch (err) {
+      console.warn(`[launch] thumbnail poll ${i + 1}/${delays.length} for video ${videoId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return null;
+}
+
 async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'): Promise<FbStructureResult> {
   const { campaign, token, appKind, fbAccountId, fbPageId } = plan;
   const cbo = campaign.budgetMode === 'CAMPAIGN';
@@ -695,9 +721,15 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
           { bytes, filename: filename ?? `${ad.name}.mp4`, mimeType: mimeType ?? 'video/mp4' },
           appKind,
         );
-        const thumbnailUrl = await fetchFbVideoThumbnail(videoId, token, appKind, { accountId: fbAccountId });
+        // FB processes uploaded videos asynchronously — the thumbnail is often not ready the instant
+        // the upload returns. Poll with backoff (~30s total) instead of failing on the first miss, so
+        // a video ad doesn't get stuck in PROCESSING waiting for a manual relaunch.
+        const thumbnailUrl = await pollForVideoThumbnail(videoId, token, appKind, fbAccountId);
         if (!thumbnailUrl) {
-          throw new AppError(409, `Ad "${ad.name}" — Facebook is still processing your video (no thumbnail available yet). Wait a minute, then relaunch.`);
+          throw new AppError(
+            409,
+            `Ad "${ad.name}" — Facebook is still processing your video after ~30s of retries. It may be a large or slow-processing file; wait a minute and relaunch.`,
+          );
         }
         objectStorySpec = {
           page_id: fbPageId,
@@ -1124,8 +1156,8 @@ export async function launchCampaign(
       throw new AppError(
         409,
         'Facebook has temporarily restricted this ad account for security ("authenticate your account in Ads Manager"). The account owner must open Ads Manager and complete the authentication prompt (Facebook emails a 6-digit code), then relaunch. Existing ads keep running.' +
-          (err.checkpointUrl ? ` Authenticate here: ${err.checkpointUrl}` : '') +
-          (detail ? ` (Facebook: ${detail})` : ''),
+        (err.checkpointUrl ? ` Authenticate here: ${err.checkpointUrl}` : '') +
+        (detail ? ` (Facebook: ${detail})` : ''),
       );
     }
 
