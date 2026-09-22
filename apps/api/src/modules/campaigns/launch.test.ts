@@ -375,25 +375,23 @@ describe('launchCampaign (Phase 8)', () => {
   });
 
   it('polls and recovers a VIDEO launch when the thumbnail is not ready on the first attempt', async () => {
-    const campaignId = await makeVideoCampaign('nothumb');
-    // FB still processing on the first poll → null; ready on the retry → default thumbnail URL.
+    const campaignId = await makeVideoCampaign('nothumb-recover');  
     vi.mocked(fb.fetchFbVideoThumbnail).mockResolvedValueOnce(null);
     const result = await launchCampaign(auth(), campaignId, {
       generateArticle: vi.fn(async () => ({ slug: 's' })),
       writeRedirectConfigs: vi.fn(async () => undefined),
     });
-    expect(result.status).toBe('ACTIVE'); // poll recovered once the thumbnail was ready
+    expect(result.status).toBe('ACTIVE');
   });
 
   it('reverts a VIDEO launch to PROCESSING with an actionable 409 when the thumbnail never becomes ready', async () => {
-    const campaignId = await makeVideoCampaign('nothumb');
-    // FB never finishes processing → every poll returns null → launch throws after the retry budget.
+    const campaignId = await makeVideoCampaign('nothumb-fail');   
     vi.mocked(fb.fetchFbVideoThumbnail).mockResolvedValue(null);
     await expect(
       launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) }),
     ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('still processing') });
     const c = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { status: true } }));
-    expect(c?.status).toBe('PROCESSING'); // relaunchable once FB finishes processing
+    expect(c?.status).toBe('PROCESSING');
   });
 
   it('two-app: writes use the same person\'s LAUNCH connection (short-lived token) when configured', async () => {
