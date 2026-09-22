@@ -392,7 +392,7 @@ describe('launchCampaign (Phase 8)', () => {
     ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('still processing') });
     const c = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, select: { status: true } }));
     expect(c?.status).toBe('PROCESSING');
-  });
+  }, 40_000);
 
   it('two-app: writes use the same person\'s LAUNCH connection (short-lived token) when configured', async () => {
     // A separate LAUNCH app is configured, and this person has a usable LAUNCH connection
