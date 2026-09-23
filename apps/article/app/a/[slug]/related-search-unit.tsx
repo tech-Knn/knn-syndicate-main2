@@ -169,18 +169,19 @@ export function RelatedSearchUnit({
     if (withChannel) pageOptions.channel = withChannel;
     else if (channel) pageOptions.channel = channel;
 
-    // Terms are NOT sent by default (see the "INTENTIONALLY NOT SENT" note above): live testing
-    // on 2026-08-05 found Google returned an empty ads[] with `terms` present. `channel` was
-    // dropped for the same reason and later accepted (2026-08-12), so terms is worth re-probing
-    // the same way before deciding whether publisher terms can come back permanently.
-    //   ?withterms=1           → send the article's own publisher terms this pageview only
-    //   ?withterms=a,b,c       → send a specific comma-separated list instead
-    // If chips still fill with terms present, flip this to `else if (terms)` like channel above.
+    // Terms are now sent BY DEFAULT (re-enabled 2026-09-23 after ?withterms=1 verified Google
+    // still fills chips with `terms` present on this account — same re-test path as `channel`
+    // which was re-enabled 2026-08-12). Note: with `relatedSearchTargeting='content'` (default),
+    // Google generates chips from article body — the sent `terms` are additional context, not
+    // the direct chip source. If Google starts returning empty ads[] with terms present, revert
+    // this block back to the diagnostic-only gate (`if (withTerms === '1') ...`).
+    //   (no URL flag)          → send the article's own publisher terms
+    //   ?withterms=a,b,c       → override with a specific comma-separated list this pageview only
     const withTerms = usp.get('withterms');
-    if (withTerms === '1') {
-      if (terms) pageOptions.terms = terms;
-    } else if (withTerms) {
+    if (withTerms && withTerms !== '1') {
       pageOptions.terms = withTerms;
+    } else if (terms) {
+      pageOptions.terms = terms;
     }
 
     // styleId override / removal — AdSense styles are TYPED (ads vs. relatedsearch); a style
