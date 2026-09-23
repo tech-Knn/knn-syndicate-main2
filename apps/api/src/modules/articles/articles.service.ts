@@ -12,10 +12,10 @@ import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
+import { articleMatchesQuery, queryFitsKeywords } from './topic-match.js';
 
 /** Injectable AI calls (defaults = the real @knn/ai clients); tests pass mocks. */
 export interface ArticleAiDeps {
-  
   embedText: (text: string) => Promise<number[]>;
   generateArticle: (input: {
     keywords: string[];
@@ -286,29 +286,22 @@ function toVectorLiteral(vec: number[]): string {
   return `[${vec.join(',')}]`;
 }
 
-interface SimilarRow {
-  id: string;
-  slug: string;
-  title: string;
-  similarity: number;
-}
-
 /**
  * Nearest READY article by cosine similarity (pgvector `<=>` is cosine distance,
  * so similarity = 1 - distance). Runs inside the tenant txn, so RLS limits it to
- * the current org — reuse never crosses tenants. Returns null below the threshold.
+ * the current org — reuse never crosses tenants. Returns the nearest candidates, the caller applies the threshold and the topic check.
  */
-async function findSimilarArticle(tx: TxClient, vectorLiteral: string): Promise<SimilarRow | null> {
-  const rows = await tx.$queryRawUnsafe<SimilarRow[]>(
-    `SELECT id, slug, title, 1 - (embedding <=> $1::vector) AS similarity
+interface SimilarRow { id: string; slug: string; title: string; query: string | null; similarity: number }
+
+async function findSimilarArticles(tx: TxClient, vectorLiteral: string): Promise<SimilarRow[]> {
+  return tx.$queryRawUnsafe<SimilarRow[]>(
+    `SELECT id, slug, title, query, 1 - (embedding <=> $1::vector) AS similarity
      FROM articles
      WHERE embedding IS NOT NULL AND status = 'READY'
      ORDER BY embedding <=> $1::vector
-     LIMIT 1`,
+     LIMIT 5`,
     vectorLiteral,
   );
-  const top = rows[0];
-  return top && Number(top.similarity) >= ARTICLE_SIMILARITY_THRESHOLD ? top : null;
 }
 
 async function getCompliancePrompt(tx: TxClient): Promise<string> {
@@ -358,6 +351,9 @@ export async function generateArticleForCampaign(
   if (keywords.length === 0) {
     throw new AppError(422, 'Campaign has no keywords to generate an article from');
   }
+  if (campaign.query && !queryFitsKeywords(campaign.query, keywords)) {
+    throw new AppError(422, `Query "${campaign.query}" doesn't match the campaign keywords — fix one of them before generating an article`);
+  }
 
   const orgId = campaign.orgId;
   // CRITICAL: the AI calls (embed / generate / compliance) take many seconds — they
@@ -386,7 +382,11 @@ export async function generateArticleForCampaign(
     // Reuse an existing similar article (short txn for the vector query only).
     if (vector) {
       const vectorLiteral = toVectorLiteral(vector);
-      const similar = await withTenant(orgId, (tx) => findSimilarArticle(tx, vectorLiteral));
+      const anchor = campaign.query?.trim() || keywords[0]!;
+      const candidates = await withTenant(orgId, (tx) => findSimilarArticles(tx, vectorLiteral));
+      const similar = candidates.find(
+        (r) => Number(r.similarity) >= ARTICLE_SIMILARITY_THRESHOLD && articleMatchesQuery(anchor, r),
+      );
       if (similar) {
         await withTenant(orgId, async (tx) => {
           await tx.campaign.update({ where: { id: campaignId }, data: { articleId: similar.id } });
@@ -407,6 +407,15 @@ export async function generateArticleForCampaign(
     const compliant = compliancePrompt.trim()
       ? await deps.complianceRewrite({ content: generated.content, compliancePrompt })
       : generated.content;
+    // Embed the article's actual content so future reuse matches what it's really about,
+    // not what the campaign asked for. On failure store no embedding (the article just
+    // isn't reusable) rather than falling back to the request topic.
+    let articleVector: number[] | null = null;
+    try {
+      articleVector = await deps.embedText(`${generated.title}. ${compliant.slice(0, 1500)}`);
+    } catch {
+      articleVector = null;
+    }
     const slug = slugify(generated.title);
 
     // Persist (short txn — pure DB writes, no network).
@@ -426,11 +435,11 @@ export async function generateArticleForCampaign(
         },
         select: { id: true, slug: true, title: true, status: true },
       });
-      if (vector) {
-        await tx.$executeRawUnsafe('UPDATE articles SET embedding = $1::vector WHERE id = $2::uuid', toVectorLiteral(vector), created.id);
+      if (articleVector) {
+        await tx.$executeRawUnsafe('UPDATE articles SET embedding = $1::vector WHERE id = $2::uuid', toVectorLiteral(articleVector), created.id);
       }
       await tx.campaign.update({ where: { id: campaignId }, data: { articleId: created.id } });
-      await writeAudit(tx, { orgId, actorId: auth.userId, action: 'article.generated', entityType: 'article', entityId: created.id, details: { campaignId, hasEmbedding: vector !== null } });
+      await writeAudit(tx, { orgId, actorId: auth.userId, action: 'article.generated', entityType: 'article', entityId: created.id, details: { campaignId, hasEmbedding: articleVector !== null } });
       return { ...created, reused: false };
     });
   } catch (err) {
