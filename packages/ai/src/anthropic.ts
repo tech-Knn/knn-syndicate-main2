@@ -51,18 +51,26 @@ function splitTitle(raw: string, fallback: string): GeneratedArticle {
   return { title: fallback, content: raw };
 }
 
-/** Generate a fresh monetizable article for the given keywords / angle (D16). */
+/** Generate a fresh monetizable article for the given keywords / angle (D16). Legacy Claude path —
+ *  OpenAI is the default (see openai.ts). Kept for fallback / when OpenAI is unavailable. */
 export async function generateArticle(input: {
   keywords: string[];
   query?: string;
+  /** Target country / market (e.g. "India", "USA"). Parity with generateArticleOpenAI so the
+   *  caller can pass market symmetrically. When set, injects a "use LOCAL currency" instruction. */
+  market?: string;
 }): Promise<GeneratedArticle> {
   const topic = input.query?.trim() || input.keywords.join(', ');
   const system =
     'You are an expert content writer producing clear, informative, SEO-friendly articles for a ' +
     'monetized landing page. Write engaging, factual prose in several short paragraphs. ' +
     'Respond with a single line "TITLE: <article title>", then a blank line, then the article body.';
+  const marketLine = input.market
+    ? `The reader is in ${input.market}. Use the LOCAL currency and reference LOCAL cities / price scales throughout — never mix currencies within the article.\n`
+    : '';
   const user =
     `Write an informative article about: ${topic}\n` +
+    marketLine +
     `Naturally incorporate these themes: ${input.keywords.join(', ')}.\n` +
     'Target 400-700 words. Do not include markdown headings or lists — just paragraphs.';
   const raw = await callClaude(system, user, 2048);

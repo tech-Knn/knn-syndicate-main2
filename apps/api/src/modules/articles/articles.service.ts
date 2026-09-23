@@ -20,8 +20,28 @@ export interface ArticleAiDeps {
   generateArticle: (input: {
     keywords: string[];
     query?: string;
+    /** Target country / market — localizes currency + city examples in the article. */
+    market?: string;
   }) => Promise<{ title: string; content: string; relatedSearchTerms?: string[] }>;
   complianceRewrite: (input: { content: string; compliancePrompt: string }) => Promise<string>;
+}
+
+/** Recognised markets — kept small on purpose (only the countries we actually target).
+ *  Parsed from campaign name pattern like "22/09 | EH | X | VC | India | 22/09".
+ *  Extend this list when a new market is targeted. */
+const KNOWN_MARKETS = ['India', 'USA', 'US', 'UK', 'UAE', 'Australia', 'Canada'] as const;
+const MARKET_PATTERN = new RegExp(`\\|\\s*(${KNOWN_MARKETS.join('|')})\\s*\\|`, 'i');
+const DEFAULT_MARKET = 'India'; // 100% of live FB traffic today is India-served (verified 2026-09-23).
+
+/** Parse the target market from a campaign name (e.g. "22/09 | EH | X | VC | India | 22/09" → "India").
+ *  Falls back to the platform default when the name doesn't contain a known market segment. */
+export function extractMarketFromCampaignName(name?: string | null): string {
+  if (!name) return DEFAULT_MARKET;
+  const m = MARKET_PATTERN.exec(name);
+  if (!m || !m[1]) return DEFAULT_MARKET;
+  const raw = m[1];
+  // Normalize "US" → "USA" so downstream sees a canonical value.
+  return raw.toUpperCase() === 'US' ? 'USA' : raw;
 }
 const defaultAiDeps: ArticleAiDeps = {
   embedText: defaultEmbedText,
@@ -402,7 +422,12 @@ export async function generateArticleForCampaign(
     // compliance policy configured — a non-compliant landing page risks suspension of the shared
     // AdSense account the WHOLE platform's revenue depends on.
     assertComplianceConfigured(compliancePrompt, isProd);
-    const generated = await deps.generateArticle({ keywords, query: campaign.query ?? undefined });
+    // Target market (India / USA / etc.) drives currency + city examples in the generated body.
+    // Parsed from the campaign name (our convention embeds it: "... | India | ..."). Falls back
+    // to India — the platform's actual live-traffic geography today. If we ever add an explicit
+    // `targetMarket` column on Campaign, prefer that over the name-parse.
+    const market = extractMarketFromCampaignName(campaign.name);
+    const generated = await deps.generateArticle({ keywords, query: campaign.query ?? undefined, market });
     // Only spend a second model call when an admin has actually set compliance rules.
     const compliant = compliancePrompt.trim()
       ? await deps.complianceRewrite({ content: generated.content, compliancePrompt })

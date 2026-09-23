@@ -174,14 +174,47 @@ function deriveContextVertical(parts: (string | undefined)[]): string | null {
   return null;
 }
 
+/** Localize currency + city examples in the prompt based on the article's target market.
+ *  Extend this table as new markets are added. Falls back to a neutral "local currency" note
+ *  so an unknown market still gets a "don't mix currencies" instruction. */
+function marketGuidance(market: string): string {
+  const m = market.trim().toLowerCase();
+  if (m === 'india' || m === 'in') {
+    return 'TARGET MARKET: India. Use INR (₹) throughout — never dollars. Reference Indian cities (Delhi, Mumbai, Bangalore, Chennai, Hyderabad, Pune, Kolkata, Noida, Gurgaon, Ahmedabad). Use Indian salary/price scales (thousands and lakhs, not tens/hundreds of thousands of USD). Prefer Indian institutions/context (ITI, government hospital, NEET, UPSC, Aadhaar) where relevant. Never mix currencies or geographies inside the article.';
+  }
+  if (m === 'usa' || m === 'us' || m === 'united states') {
+    return 'TARGET MARKET: United States. Use USD ($) throughout. Reference US cities (New York, Los Angeles, Chicago, Houston, Phoenix, Dallas, Atlanta, Miami, Seattle, Boston). Use US salary/price scales. Prefer US institutions/context (community college, DMV, IRS, Social Security). Never mix currencies or geographies inside the article.';
+  }
+  if (m === 'uk' || m === 'united kingdom' || m === 'gb') {
+    return 'TARGET MARKET: United Kingdom. Use GBP (£) throughout. Reference UK cities (London, Manchester, Birmingham, Glasgow, Leeds, Liverpool). Use UK salary/price scales. Prefer UK institutions/context (NHS, HMRC, sixth form). Never mix currencies or geographies inside the article.';
+  }
+  if (m === 'uae' || m === 'united arab emirates' || m === 'ae') {
+    return 'TARGET MARKET: United Arab Emirates. Use AED (د.إ) throughout. Reference UAE cities (Dubai, Abu Dhabi, Sharjah, Ajman). Never mix currencies or geographies inside the article.';
+  }
+  if (m === 'australia' || m === 'au') {
+    return 'TARGET MARKET: Australia. Use AUD (A$) throughout. Reference Australian cities (Sydney, Melbourne, Brisbane, Perth, Adelaide). Never mix currencies or geographies inside the article.';
+  }
+  if (m === 'canada' || m === 'ca') {
+    return 'TARGET MARKET: Canada. Use CAD (C$) throughout. Reference Canadian cities (Toronto, Vancouver, Montreal, Calgary, Ottawa). Never mix currencies or geographies inside the article.';
+  }
+  // Unknown market — at least prevent currency mixing
+  return `TARGET MARKET: ${market}. Use the LOCAL currency and reference LOCAL cities / price scales for ${market} throughout. Never mix currencies or geographies inside the article.`;
+}
+
 /** Generate a monetizable article + high-CPC related-search terms for a topic (OpenAI). */
 export async function generateArticleOpenAI(input: {
   keywords: string[];
   query?: string;
+  /** Target country / market (e.g. "India", "USA", "UK"). Localizes currency + city examples in the
+   *  prompt so the article never mixes $ into an India-served page. Defaults to "India" upstream —
+   *  100% of live FB traffic today is India-served (verified 2026-09-23). */
+  market?: string;
 }): Promise<GeneratedArticleAI> {
   const topic = input.query?.trim() || input.keywords.join(', ');
+  const marketLine = input.market ? marketGuidance(input.market) + '\n' : '';
   const user =
     `TOPIC: ${topic}\n` +
+    marketLine +
     (input.keywords.length ? `Related themes to weave in: ${input.keywords.join(', ')}.` : '');
   const raw = await callOpenAiChat(ARTICLE_SYSTEM, user, { json: true, maxTokens: 3000 });
 
