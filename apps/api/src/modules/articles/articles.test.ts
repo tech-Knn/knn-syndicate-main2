@@ -90,6 +90,8 @@ describe('article engine', () => {
     expect(result.title).toBe('Health Plans 2026');
     expect(d.generateArticle).toHaveBeenCalledTimes(1);
     expect(d.complianceRewrite).toHaveBeenCalledTimes(1);
+    // Two embeds: the campaign topic (for reuse lookup) + the generated article's own content.
+    expect(d.embedText).toHaveBeenCalledTimes(2);
     firstArticleId = result.id;
     firstSlug = result.slug;
 
@@ -131,7 +133,7 @@ describe('article engine', () => {
   });
 
   it('reuses a similar existing article (cosine ≥ threshold) without generating', async () => {
-    const campaignId = await makeCampaign(['health cover', 'medicare advantage']);
+    const campaignId = await makeCampaign(['health plans', 'medicare advantage']);
     const d = deps(unit(0)); // same embedding as the first article → cosine 1.0
     const result = await generateArticleForCampaign(authFor(buyerId), campaignId, d);
     expect(result.reused).toBe(true);
