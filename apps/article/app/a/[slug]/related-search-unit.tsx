@@ -169,6 +169,20 @@ export function RelatedSearchUnit({
     if (withChannel) pageOptions.channel = withChannel;
     else if (channel) pageOptions.channel = channel;
 
+    // Terms are NOT sent by default (see the "INTENTIONALLY NOT SENT" note above): live testing
+    // on 2026-08-05 found Google returned an empty ads[] with `terms` present. `channel` was
+    // dropped for the same reason and later accepted (2026-08-12), so terms is worth re-probing
+    // the same way before deciding whether publisher terms can come back permanently.
+    //   ?withterms=1           → send the article's own publisher terms this pageview only
+    //   ?withterms=a,b,c       → send a specific comma-separated list instead
+    // If chips still fill with terms present, flip this to `else if (terms)` like channel above.
+    const withTerms = usp.get('withterms');
+    if (withTerms === '1') {
+      if (terms) pageOptions.terms = terms;
+    } else if (withTerms) {
+      pageOptions.terms = withTerms;
+    }
+
     // styleId override / removal — AdSense styles are TYPED (ads vs. relatedsearch); a style
     // created for one command silently returns zero when used with the other. If /search
     // ('ads' command) serves fine on the same pubId but article-page ('relatedsearch') does
