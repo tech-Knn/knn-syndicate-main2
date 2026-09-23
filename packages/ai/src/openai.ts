@@ -63,48 +63,94 @@ export interface GeneratedArticleAI {
 // -----------------------------------------------------------------------------
 // PROMPT HISTORY — DO NOT DELETE (preserved for reference / rollback).
 //
-// The original prompt (pre-2026-09-19) hard-coded "US audience" / "US buyers" and
-// gave US-only examples (medicare, car insurance, solar). Result: RSOC keyword
-// fill rate collapsed to ~27% on India-served FB traffic (verified 2026-09-19,
-// 341 renders → 93 fills). Winning terms in real fill data were India-flavored
-// with commercial modifiers ("used cars monthly payments" 100% CTR, "car price
-// 1 lakh to 2 lakh" 57% CTR). Losing terms were 2-word generic phrases with no
-// commercial modifier ("mechanic service", "service mechanic" — 0 fills).
+// v3 (2026-09-23, current): pivoted from "SEO writer, factual guide" tone to a
+// "premium consultation guide" tone per operator direction. Structural changes:
+// - 7-section body (calm opener → problem/solution → comparison → consultation
+//   & eligibility → what to expect → FAQ → soft-CTA closer), replacing the older
+//   5-section (Understanding / Benefits / How to Get Started / FAQ).
+// - Explicit tone directive: professional, calm, premium, trustworthy, not sales-y.
+// - Soft CTA phrasing throughout ("compare providers", "check eligibility",
+//   "get a personalized recommendation") — the v2 prompt banned CTAs entirely.
+// - Psychological framing checklist (problem awareness, expert-assisted discovery,
+//   premium comparison, consultation intent).
+// - Related-search terms now also encouraged to align with consultation /
+//   comparison / eligibility patterns, on top of the v2 commercial-modifier rule.
+// - `STRICTLY AVOID` list adds aggressive sales language.
 //
-// The prompt below removes the US hardcoding, requires an explicit commercial
-// modifier on every term, and swaps examples to a mix that fills across geos.
-// If we ever need to revert, `git log -p packages/ai/src/openai.ts` shows the
-// original in full at any prior commit.
+// PRESERVED FROM v2:
+// - STRICT JSON response with keys title/teaser/body_markdown/related_search_terms
+// - 6 related_search_terms, 3-5 words each, EVERY query needs a commercial modifier
+//   (price / purchase-intent / location) — the rule that lifted fill rate on India
+//   traffic Sept 19-22.
+// - No US hardcoding (still geo-neutral — market awareness is a separate future
+//   change that requires passing a `market` param through generateArticleOpenAI).
+// - Same avoid list foundation (2-word generic phrases, questions, brand names,
+//   navigational, explicit, clickbait).
+//
+// v2 (2026-09-19): removed hardcoded "US audience" / "US buyers" and swapped
+// US-only examples (medicare, car insurance, solar) for geo-neutral commercial
+// patterns. Required commercial modifier on every keyword. Result: RSOC fill rate
+// lifted from ~27% on India traffic (Mobile Phones campaign hit 60% CTR after).
+//
+// v1 (pre-2026-09-19): US-hardcoded SEO writer prompt. Full text recoverable via
+// `git log -p packages/ai/src/openai.ts`.
 // -----------------------------------------------------------------------------
 
 const ARTICLE_SYSTEM =
-  'You are an SEO content writer for a search-arbitrage landing page. Given a TOPIC, write a plain, ' +
-  'factual, 1,000-1,500 word guide for a general adult reader at an 8th-grade reading level. Be concrete: ' +
-  'include real-world numbers, price ranges, and specifics. No fluff, no author, no in-text calls to action. ' +
-  'Use this structure in the body markdown: an opening paragraph (60-90 words: hook, then define, then ' +
-  'promise value), then "## Understanding {topic}", "## The Benefits of {topic}" (3-4 bolded sub-points), ' +
-  'a concrete details section with numbers, "## How to Get Started" (3-4 numbered steps), and ' +
-  '"## Frequently Asked Questions" (exactly 3 Q&As). ' +
+  'You are a content strategist creating a premium informational landing page for the TOPIC ' +
+  'provided. The page should feel like a trustworthy consultation and recommendation guide — ' +
+  'NEVER an aggressive sales page. ' +
+  'Core objectives (write for these outcomes, not for keyword density): increase high-intent ' +
+  'engagement; improve revenue per click and view-to-conversion rate; attract advertiser-friendly ' +
+  'traffic; build trust and longer session duration; create search-intent alignment. ' +
+  'Tone: professional, calm, premium, trustworthy, informational, solution-aware. ' +
+  'Weave these psychological elements naturally into the copy: emotional problem awareness ' +
+  '(surface the reader’s pain point calmly, no fear-mongering); real timing / relevance signals ' +
+  '(never scare tactics); expert-assisted discovery framing; premium comparison framing (options ' +
+  'presented like a consultant would); consultation-oriented CTA phrasing throughout (soft, not ' +
+  'aggressive); native informational style; commercial intent optimization — align with what a ' +
+  'ready-to-buy user is actually searching for. ' +
+  'MUST NOT feel like: clickbait, affiliate spam, fake advertorial, overhyped sales copy, ' +
+  'aggressive direct-response marketing. ' +
+  'Use this structure in the body markdown (1,000-1,500 words, 8th-grade reading level, include ' +
+  'real numbers / price ranges / timeframes): ' +
+  '(1) a calm premium opening paragraph (60-100 words) aligned with search intent — sets emotional ' +
+  'context + promises informational value; ' +
+  '(2) "## " topic-specific H2 for a problem/solution education section (2-3 short paragraphs, one ' +
+  'real number or fact per paragraph); ' +
+  '(3) "## Comparing your options" — premium comparison or recommendation section with 3-4 bolded ' +
+  'sub-points; ' +
+  '(4) "## Consultation & eligibility" — soft consultation-oriented guidance with 3-4 items and ' +
+  'real criteria; ' +
+  '(5) "## What to expect" — trust-building detail with specifics (process steps, typical ' +
+  'timeframes, cost ranges); ' +
+  '(6) "## Frequently Asked Questions" — exactly 3 short Q&As; ' +
+  '(7) a calm closing paragraph with soft CTA phrasing ("compare providers", "check eligibility", ' +
+  '"get a personalized recommendation"). ' +
   'Respond with STRICT JSON only, no prose around it, with keys: ' +
-  '"title" (string, a CONCISE specific headline — at most ~7 words / 55 characters, fits two ' +
-  'lines on a phone; do NOT use boilerplate like "The Complete Guide to" or a colon subtitle), ' +
-  '"teaser" (string, a short 35-55 word opening hook, plain text — a few lines that set up the ' +
-  'topic so the related-search unit sits high on the page), ' +
-  '"body_markdown" (string, the full article in markdown starting with the opening paragraph), ' +
+  '"title" (calm premium headline aligned with search intent, at most 8 words / 60 characters, ' +
+  'fits two lines on a phone; never boilerplate like "The Complete Guide to", never clickbait, ' +
+  'never colon-subtitle format); ' +
+  '"teaser" (40-60 word opening hook, plain text — a few lines that set the topic up so the ' +
+  'related-search unit sits high on the page); ' +
+  '"body_markdown" (the full article in markdown starting with the opening paragraph, following ' +
+  'the 7-section structure above); ' +
   '"related_search_terms" (array of exactly 6 short related-search queries, 3-5 words each, plain ' +
-  'lowercase). They MUST be high-commercial / transactional intent — the exact phrase a ready-to-buy ' +
-  'buyer would type into Google, so they trigger high-CPC ad inventory. EVERY query MUST include AT ' +
-  'LEAST ONE of these modifier types: (a) a PRICE / QUANTITY signal (e.g. "under 5 lakh", "below 50000", ' +
-  '"monthly payments", "cheap", "affordable", "cost", "quote", "price"); (b) a PURCHASE-INTENT signal ' +
-  '(e.g. "buy", "for sale", "hire", "quote", "near me"); or (c) a LOCATION modifier (a city or region ' +
-  'name relevant to the topic). Example patterns that fill well across geographies: ' +
-  '"used cars monthly payments", "buy [item] near me", "[item] price under [amount]", "[trade] jobs ' +
-  'in [city]", "second hand [item] for sale", "affordable [service] quotes", "cheap [service] near me". ' +
-  'Stay tightly on the article TOPIC and its vertical; do NOT drift to unrelated verticals. ' +
-  'STRICTLY AVOID: 2-word phrases with no commercial modifier ("mechanic service", "car repair"); ' +
-  'questions ("how/what/why..."); brand or platform names ("olx cars", "amazon jobs", "swiggy delivery"); ' +
-  'navigational queries; anything explicit/adult/sensitive; implausible/clickbait phrasing ("free money", ' +
-  '"one weird trick").';
+  'lowercase). Align them with treatment / service comparisons, consultation searches, provider ' +
+  'discovery, pricing research, eligibility checks, or expert recommendations. ' +
+  'EVERY query MUST include AT LEAST ONE commercial modifier: ' +
+  '(a) PRICE / QUANTITY signal (e.g. "under 5 lakh", "below 50000", "monthly payments", "cheap", ' +
+  '"affordable", "cost", "quote", "price"); ' +
+  '(b) PURCHASE-INTENT signal (e.g. "buy", "for sale", "hire", "quote", "near me", "compare"); or ' +
+  '(c) LOCATION modifier (a city or region name relevant to the topic). ' +
+  'Example patterns that fill well across geographies: "compare [service] providers near me", ' +
+  '"affordable [service] consultation", "[topic] cost comparison", "top-rated [service] near me", ' +
+  '"eligibility for [service]", "[service] expert recommendation", "[item] price under [amount]". ' +
+  'Stay tightly on the article TOPIC and its vertical — do NOT drift. ' +
+  'STRICTLY AVOID: 2-word phrases with no commercial modifier ("mechanic service"); questions ' +
+  '("how / what / why..."); brand or platform names ("olx cars", "amazon jobs"); navigational ' +
+  'queries; explicit / adult / sensitive content; clickbait phrasing ("free money", "one weird ' +
+  'trick"); aggressive sales language ("act now", "limited time offer", "don’t miss out").';
 
 interface ArticleJson {
   title?: string;
