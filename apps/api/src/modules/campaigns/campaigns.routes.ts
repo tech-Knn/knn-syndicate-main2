@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { ROLES, campaignDraftSchema } from '@knn/shared';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate, requireRole } from '../../middleware/authenticate.js';
-import { generateArticleForCampaign } from '../articles/articles.service.js';
+import { generateArticleForCampaign, regenerateArticleContent } from '../articles/articles.service.js';
 import { approveCampaign, listPendingApprovals, rejectCampaign } from './approval.service.js';
 import { rejectCampaignSchema } from './approval.schemas.js';
 import {
@@ -364,6 +364,23 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
         return reply.send({ article: await generateArticleForCampaign(req.auth, req.params.id) });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Regenerate the ALREADY-attached article's body + terms IN PLACE, keeping the same slug
+  // (URL stability — running ad keeps working, no republish, no attribution reset). Used to
+  // fix articles generated for the wrong market before `resolveMarket` learned to read
+  // ad-set countries (Sep 2026). Owner/admin scoped in the service.
+  app.post<{ Params: { id: string } }>(
+    '/:id/article/regenerate',
+    { preHandler: [authenticate] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.send({ article: await regenerateArticleContent(req.auth, req.params.id) });
       } catch (err) {
         return handleRouteError(err, reply);
       }

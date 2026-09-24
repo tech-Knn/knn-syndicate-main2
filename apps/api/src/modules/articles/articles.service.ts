@@ -515,3 +515,91 @@ export async function generateArticleForCampaign(
     throw err;
   }
 }
+
+/** Rewrite the campaign's ALREADY-attached article body + related-search terms IN PLACE,
+ *  keeping the same article `id`, `slug`, and `title` (URL stability — the running FB ad
+ *  keeps pointing at the same `/a/<slug>`, no republish, no attribution reset).
+ *
+ *  Use when the article was generated for the wrong market (e.g. campaign was launched for
+ *  Saudi Arabia but got India-flavored content because the market resolver couldn't figure
+ *  out the geo). The re-run picks up the current `resolveMarket()` — which now prefers
+ *  ad-set `countries[0]` — so the new body reflects the buyer's actual FB targeting.
+ *
+ *  Costs one article-model call (+ one compliance call if a policy is set) — same as
+ *  first-time generation. */
+export async function regenerateArticleContent(
+  auth: AuthContext,
+  campaignId: string,
+  deps: ArticleAiDeps = defaultAiDeps,
+): Promise<{ id: string; slug: string; title: string; market: string }> {
+  const campaign = await runScoped(auth, async (tx) => {
+    const c = await tx.campaign.findUnique({
+      where: { id: campaignId },
+      include: { adSets: { select: { countries: true }, orderBy: { createdAt: 'asc' }, take: 1 } },
+    });
+    if (!c) throw new AppError(404, 'Campaign not found');
+    if (auth.role === ROLES.MEDIA_BUYER && c.buyerId !== auth.userId) {
+      throw new AppError(404, 'Campaign not found');
+    }
+    return c;
+  });
+
+  if (!campaign.articleId) {
+    throw new AppError(422, "Campaign has no article yet — call POST /campaigns/:id/article first");
+  }
+  const keywords = Array.isArray(campaign.keywords) ? (campaign.keywords as string[]) : [];
+  if (keywords.length === 0) {
+    throw new AppError(422, 'Campaign has no keywords to regenerate an article from');
+  }
+
+  const orgId = campaign.orgId;
+  const market = resolveMarket({ name: campaign.name, countries: campaign.adSets[0]?.countries });
+
+  try {
+    const compliancePrompt = await withSystem((tx) => getCompliancePrompt(tx));
+    assertComplianceConfigured(compliancePrompt, isProd);
+
+    const generated = await deps.generateArticle({ keywords, query: campaign.query ?? undefined, market });
+    const compliant = compliancePrompt.trim()
+      ? await deps.complianceRewrite({ content: generated.content, compliancePrompt })
+      : generated.content;
+
+    let articleVector: number[] | null = null;
+    try {
+      articleVector = await deps.embedText(`${generated.title}. ${compliant.slice(0, 1500)}`);
+    } catch {
+      articleVector = null;
+    }
+
+    return await withTenant(orgId, async (tx) => {
+      // Deliberately DON'T update slug or title: URL stability for the running ad.
+      const updated = await tx.article.update({
+        where: { id: campaign.articleId! },
+        data: {
+          rawContent: generated.content,
+          compliantContent: compliant,
+          relatedSearchTerms: generated.relatedSearchTerms ?? [],
+          model: env.OPENAI_ARTICLE_MODEL,
+        },
+        select: { id: true, slug: true, title: true },
+      });
+      if (articleVector) {
+        await tx.$executeRawUnsafe('UPDATE articles SET embedding = $1::vector WHERE id = $2::uuid', toVectorLiteral(articleVector), updated.id);
+      }
+      await writeAudit(tx, {
+        orgId,
+        actorId: auth.userId,
+        action: 'article.regenerated',
+        entityType: 'article',
+        entityId: updated.id,
+        details: { campaignId, market, hasEmbedding: articleVector !== null },
+      });
+      return { ...updated, market };
+    });
+  } catch (err) {
+    if (err instanceof AiNotConfiguredError) {
+      throw new AppError(503, 'AI generation is not configured (set ANTHROPIC_API_KEY / OPENAI_API_KEY)');
+    }
+    throw err;
+  }
+}
