@@ -182,7 +182,6 @@ export default async function ArticlePage({
               terms={terms}
               txid={txid}
               channel={channel}
-              token={gate.params.token}
               site={site}
             />
           )}

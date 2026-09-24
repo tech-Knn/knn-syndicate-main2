@@ -1,6 +1,6 @@
 'use client';
 
-import { preconnect, prefetchDNS } from 'react-dom';
+import { preconnect, prefetchDNS, preload } from 'react-dom';
 
 /**
  * Warm Google's ad origins for the WHOLE funnel. Both the article (content) page and
@@ -19,5 +19,10 @@ export function ResourceHints(): null {
   preconnect('https://www.google.com');
   preconnect('https://syndicatedsearch.goog');
   preconnect('https://afs.googleusercontent.com');
+  // Start the ads.js download in parallel with HTML parse — otherwise the article page waits
+  // for React to hydrate before even requesting it (measured 1–3s chip-render delay on mobile,
+  // Sep 2026), which drops paid visitors before chips appear. High fetch priority since this
+  // script is on the critical monetization path.
+  preload('https://www.google.com/adsense/search/ads.js', { as: 'script', fetchPriority: 'high' });
   return null;
 }
