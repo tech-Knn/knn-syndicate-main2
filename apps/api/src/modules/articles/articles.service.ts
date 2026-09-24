@@ -29,19 +29,55 @@ export interface ArticleAiDeps {
 /** Recognised markets — kept small on purpose (only the countries we actually target).
  *  Parsed from campaign name pattern like "22/09 | EH | X | VC | India | 22/09".
  *  Extend this list when a new market is targeted. */
-const KNOWN_MARKETS = ['India', 'USA', 'US', 'UK', 'UAE', 'Australia', 'Canada'] as const;
+const KNOWN_MARKETS = [
+  'India',
+  'USA',
+  'US',
+  'UK',
+  'UAE',
+  'Australia',
+  'Canada',
+  'Saudi Arabia',
+  'Saudi',
+] as const;
 const MARKET_PATTERN = new RegExp(`\\|\\s*(${KNOWN_MARKETS.join('|')})\\s*\\|`, 'i');
 const DEFAULT_MARKET = 'India'; // 100% of live FB traffic today is India-served (verified 2026-09-23).
 
+/** ISO-3166 alpha-2 (the codes FB targeting uses on AdSet.countries) → canonical market name.
+ *  Only the countries with explicit prompt guidance in @knn/ai `marketGuidance()`; anything
+ *  else falls through to the generic "use LOCAL currency for X" branch in that helper. */
+const ISO_TO_MARKET: Record<string, string> = {
+  IN: 'India',
+  US: 'USA',
+  GB: 'UK',
+  AE: 'UAE',
+  SA: 'Saudi Arabia',
+  AU: 'Australia',
+  CA: 'Canada',
+};
+
 /** Parse the target market from a campaign name (e.g. "22/09 | EH | X | VC | India | 22/09" → "India").
- *  Falls back to the platform default when the name doesn't contain a known market segment. */
+ *  Fallback only — the primary source is the campaign's ad-set `countries` (set by the buyer in the
+ *  launch UI). Used when no ad sets exist yet (pre-launch preview generation). */
 export function extractMarketFromCampaignName(name?: string | null): string {
   if (!name) return DEFAULT_MARKET;
   const m = MARKET_PATTERN.exec(name);
   if (!m || !m[1]) return DEFAULT_MARKET;
   const raw = m[1];
-  // Normalize "US" → "USA" so downstream sees a canonical value.
-  return raw.toUpperCase() === 'US' ? 'USA' : raw;
+  // Normalize aliases → canonical form so downstream sees one value per market.
+  const upper = raw.toUpperCase();
+  if (upper === 'US') return 'USA';
+  if (upper === 'SAUDI') return 'Saudi Arabia';
+  return raw;
+}
+
+/** Resolve the target market for an article: prefer the campaign's actual FB geo targeting
+ *  (`AdSet.countries[0]`, ISO-3166 alpha-2 the buyer picked in the launch UI), fall back to
+ *  the campaign name pattern, then to the platform default. */
+export function resolveMarket(input: { name?: string | null; countries?: string[] }): string {
+  const iso = input.countries?.[0]?.toUpperCase();
+  if (iso && ISO_TO_MARKET[iso]) return ISO_TO_MARKET[iso];
+  return extractMarketFromCampaignName(input.name);
 }
 const defaultAiDeps: ArticleAiDeps = {
   embedText: defaultEmbedText,
@@ -357,9 +393,14 @@ export async function generateArticleForCampaign(
   campaignId: string,
   deps: ArticleAiDeps = defaultAiDeps,
 ): Promise<ArticleResult> {
-  // 1. Authz + load (respects buyer self-scope / admin org-scope).
+  // 1. Authz + load (respects buyer self-scope / admin org-scope). Also pull the ad-set
+  //     `countries` so market resolution can prefer the buyer's actual FB geo pick over
+  //     any convention-based hint in the campaign name.
   const campaign = await runScoped(auth, async (tx) => {
-    const c = await tx.campaign.findUnique({ where: { id: campaignId } });
+    const c = await tx.campaign.findUnique({
+      where: { id: campaignId },
+      include: { adSets: { select: { countries: true }, orderBy: { createdAt: 'asc' }, take: 1 } },
+    });
     if (!c) throw new AppError(404, 'Campaign not found');
     if (auth.role === ROLES.MEDIA_BUYER && c.buyerId !== auth.userId) {
       throw new AppError(404, 'Campaign not found');
@@ -423,10 +464,10 @@ export async function generateArticleForCampaign(
     // AdSense account the WHOLE platform's revenue depends on.
     assertComplianceConfigured(compliancePrompt, isProd);
     // Target market (India / USA / etc.) drives currency + city examples in the generated body.
-    // Parsed from the campaign name (our convention embeds it: "... | India | ..."). Falls back
-    // to India — the platform's actual live-traffic geography today. If we ever add an explicit
-    // `targetMarket` column on Campaign, prefer that over the name-parse.
-    const market = extractMarketFromCampaignName(campaign.name);
+    // Preferred source: the primary ad-set's `countries[0]` (ISO-3166 alpha-2 the buyer selected
+    // in the launch UI). If no ad sets yet (pre-launch preview), fall back to the "| Market |"
+    // slot in the campaign name, then to the platform default.
+    const market = resolveMarket({ name: campaign.name, countries: campaign.adSets[0]?.countries });
     const generated = await deps.generateArticle({ keywords, query: campaign.query ?? undefined, market });
     // Only spend a second model call when an admin has actually set compliance rules.
     const compliant = compliancePrompt.trim()

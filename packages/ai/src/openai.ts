@@ -191,6 +191,9 @@ function marketGuidance(market: string): string {
   if (m === 'uae' || m === 'united arab emirates' || m === 'ae') {
     return 'TARGET MARKET: United Arab Emirates. Use AED (د.إ) throughout. Reference UAE cities (Dubai, Abu Dhabi, Sharjah, Ajman). Never mix currencies or geographies inside the article.';
   }
+  if (m === 'saudi arabia' || m === 'saudi' || m === 'ksa' || m === 'sa') {
+    return 'TARGET MARKET: Saudi Arabia. Use SAR (ر.س) throughout — never INR, never USD, never rupees. Reference Saudi cities (Riyadh, Jeddah, Mecca, Medina, Dammam, Khobar). The audience is residents of Saudi Arabia (Saudi nationals and long-term expats); do NOT frame the article around "Indian professionals relocating" or any other single-nationality expat group. Prefer Saudi institutions/context (iqama, MOL, Absher, GOSI, Nitaqat) where relevant. Never mix currencies or geographies inside the article.';
+  }
   if (m === 'australia' || m === 'au') {
     return 'TARGET MARKET: Australia. Use AUD (A$) throughout. Reference Australian cities (Sydney, Melbourne, Brisbane, Perth, Adelaide). Never mix currencies or geographies inside the article.';
   }
