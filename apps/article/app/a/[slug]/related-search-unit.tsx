@@ -107,14 +107,19 @@ export function RelatedSearchUnit({
     // 3. Diagnostic URL param overrides (super-admin tools, unused by real traffic). Match
     //    the historical set from the old useEffect path so pre-existing debug links keep
     //    working: ?withchannel=<v>, ?testChannel=<v>, ?withterms=<v>, ?nostyle=1,
-    //    ?testStyle=<v>, ?adtest=1, ?minimal=1, ?testRc=<v>, ?plainurl=1.
+    //    ?testStyle=<v>, ?adtest=1, ?minimal=1, ?testRc=<v>, ?plainurl=1,
+    //    ?nortstargeting=1 (2026-09-24: probe whether removing relatedSearchTargeting:'content'
+    //    lets Google actually use the publisher `terms` we send — currently observed to be
+    //    ignored because 'content' targeting overrides them. Safe: URL-flag-only, real traffic
+    //    keeps sending the field until we see evidence one way or the other).
     `try{var _u=new URLSearchParams(location.search);` +
     `var _c=_u.get('withchannel')||_u.get('testChannel');if(_c){po.channel=_c;}` +
     `var _t=_u.get('withterms');if(_t&&_t!=='1'){po.terms=_t;}` +
     `if(_u.get('nostyle')==='1'){delete po.styleId;}` +
     `var _s=_u.get('testStyle');if(_s){po.styleId=_s;}` +
     `if(_u.get('adtest')==='1'){po.adtest='on';}` +
-    `if(_u.get('minimal')==='1'){delete po.terms;delete po.channel;delete po.ignoredPageParams;delete po.ivt;delete po.resultsPageQueryParam;}` +
+    `if(_u.get('nortstargeting')==='1'){delete po.relatedSearchTargeting;}` +
+    `if(_u.get('minimal')==='1'){delete po.terms;delete po.channel;delete po.ignoredPageParams;delete po.ivt;delete po.resultsPageQueryParam;delete po.relatedSearchTargeting;}` +
     `var _r=_u.get('testRc');if(_r){po.referrerAdCreative=_r;}` +
     `if(_u.get('plainurl')==='1'){po.resultsPageBaseUrl=window.location.origin+'/search';}` +
     `}catch(e){}` +
