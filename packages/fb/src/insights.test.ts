@@ -48,7 +48,7 @@ describe('fetchAdInsights', () => {
             ad_id: 'fbad_1',
             date_start: '2026-05-27',
             impressions: '1000',
-            clicks: '40',
+            inline_link_clicks: '40',
             spend: '12.34',
             actions: [
               { action_type: 'link_click', value: '40' },
@@ -82,8 +82,8 @@ describe('fetchAdInsights', () => {
     const fetchMock = vi.fn().mockResolvedValue(
       res({
         data: [
-          { ad_id: 'a1', date_start: '2026-05-27', impressions: '100', clicks: '5', spend: '2.00', country: 'US' },
-          { ad_id: 'a1', date_start: '2026-05-27', impressions: '40', clicks: '1', spend: '0.50', country: 'CA' },
+          { ad_id: 'a1', date_start: '2026-05-27', impressions: '100', inline_link_clicks: '5', spend: '2.00', country: 'US' },
+          { ad_id: 'a1', date_start: '2026-05-27', impressions: '40', inline_link_clicks: '1', spend: '0.50', country: 'CA' },
         ],
       }),
     );
@@ -95,7 +95,7 @@ describe('fetchAdInsights', () => {
 
   it('requests an hourly breakdown via the advertiser-timezone field', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      res({ data: [{ ad_id: 'a1', date_start: '2026-05-27', impressions: '10', clicks: '1', spend: '1.00', hourly_stats_aggregated_by_advertiser_time_zone: '06:00:00 - 06:59:59' }] }),
+      res({ data: [{ ad_id: 'a1', date_start: '2026-05-27', impressions: '10', inline_link_clicks: '1', spend: '1.00', hourly_stats_aggregated_by_advertiser_time_zone: '06:00:00 - 06:59:59' }] }),
     );
     vi.stubGlobal('fetch', fetchMock);
     const rows = await fetchAdInsights({ fbCampaignId: 'c', accountId: 'act_1', accessToken: 'tok', since: '2026-05-27', until: '2026-05-27', breakdown: 'hour' });
@@ -108,13 +108,13 @@ describe('fetchAdInsights', () => {
       .fn()
       .mockResolvedValueOnce(
         res({
-          data: [{ ad_id: 'a1', date_start: '2026-05-27', impressions: '10', clicks: '1', spend: '1.00' }],
+          data: [{ ad_id: 'a1', date_start: '2026-05-27', impressions: '10', inline_link_clicks: '1', spend: '1.00' }],
           paging: { cursors: { after: 'C1' }, next: 'https://graph.facebook.com/vX/fbcamp_1/insights?after=C1' },
         }),
       )
       .mockResolvedValueOnce(
         res({
-          data: [{ ad_id: 'a2', date_start: '2026-05-27', impressions: '20', clicks: '2', spend: '2.00' }],
+          data: [{ ad_id: 'a2', date_start: '2026-05-27', impressions: '20', inline_link_clicks: '2', spend: '2.00' }],
           paging: { cursors: { after: 'C2' } },
         }),
       );

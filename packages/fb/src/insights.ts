@@ -27,6 +27,8 @@ export interface FbAdInsightRow {
   fbAdId: string;
   day: string;
   impressions: number;
+  /** Link clicks (`inline_link_clicks`) — clicks that actually reach the article.
+   *  Was `clicks` ("Clicks (all)", incl. likes/comments/profile taps) before 2026-09-24. */
   clicks: number;
   spendMinor: number;
   conversions: number;
@@ -45,7 +47,7 @@ interface RawInsight {
   ad_id?: string;
   date_start?: string;
   impressions?: string;
-  clicks?: string;
+  inline_link_clicks?: string;
   spend?: string;
   actions?: FbAction[];
   country?: string;
@@ -115,7 +117,7 @@ export async function fetchAdInsights(
         appKind: params.appKind,
         params: {
           level: 'ad',
-          fields: 'ad_id,impressions,clicks,spend,actions',
+          fields: 'ad_id,impressions,inline_link_clicks,spend,actions',
           time_increment: '1',
           time_range: JSON.stringify({ since: params.since, until: params.until }),
           limit: '500',
@@ -131,7 +133,7 @@ export async function fetchAdInsights(
         fbAdId: r.ad_id,
         day: r.date_start,
         impressions: toInt(r.impressions),
-        clicks: toInt(r.clicks),
+        clicks: toInt(r.inline_link_clicks),
         // Native minor units (account currency, 2-decimal assumption); USD via caller.
         spendMinor: Math.round((Number(r.spend) || 0) * 100),
         conversions: extractConversions(r.actions),
