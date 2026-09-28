@@ -177,13 +177,32 @@ export default async function ArticlePage({
               and the money-vs-white cloaking is enforced upstream at the go.* Worker. The signed
               token (when present) is forwarded to /search so its params travel without plaintext. */}
           {gate.monetize && (
-            <RelatedSearchUnit
-              referrerAdCreative={referrerAdCreative}
-              terms={terms}
-              txid={txid}
-              channel={channel}
-              site={site}
-            />
+            <>
+              <RelatedSearchUnit
+                referrerAdCreative={referrerAdCreative}
+                terms={terms}
+                txid={txid}
+                channel={channel}
+                site={site}
+              />
+              {/* Tap/click an h2/h3 in the article body → smooth-scroll to the first chip strip.
+                  Reduces dead clicks flagged by Clarity (users tap headings expecting an interaction;
+                  without this it's a no-op → they bounce). Only fires when a chip strip is present
+                  (gate.monetize) and only when the strip isn't already fully in the viewport. */}
+              <script
+                dangerouslySetInnerHTML={{
+                  __html:
+                    "(function(){document.addEventListener('click',function(e){" +
+                    "var el=e.target;if(!(el instanceof HTMLElement))return;" +
+                    "var h=el.closest('h2, h3');if(!h||!h.closest('article'))return;" +
+                    "var t=document.getElementById('relatedsearches1');if(!t)return;" +
+                    "var r=t.getBoundingClientRect();" +
+                    "if(r.top>=0&&r.bottom<=window.innerHeight)return;" +
+                    "t.scrollIntoView({behavior:'smooth',block:'start'});" +
+                    "},{passive:true});})();",
+                }}
+              />
+            </>
           )}
 
           <div className={styles.body}>
