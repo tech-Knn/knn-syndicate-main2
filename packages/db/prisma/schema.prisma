@@ -836,6 +836,49 @@ model TermStatDaily {
   @@map("term_stat_daily")
 }
 
+/// Where a blocked Referrer Ad Creative word came from (D28).
+enum RcTermSource {
+  /// Tested by hand on live landing pages (shipped in the migration).
+  SEED
+  /// Learned automatically from real traffic by the daily job.
+  LEARNED
+  /// Added by a super-admin.
+  MANUAL
+}
+
+/// BLOCKED = buyers can't use it in an rc. ALLOWED = a super-admin override: never blocked,
+/// never re-learned.
+enum RcTermStatus {
+  BLOCKED
+  ALLOWED
+}
+
+/// Words/phrases that make Google hide the related-search keyword block when they appear in the
+/// Referrer Ad Creative (D28). Platform-wide (Google's behaviour isn't per tenant) — no org_id, no
+/// RLS, like term_stat_daily; buyers read only the BLOCKED terms, super-admins manage the list.
+/// `term` is normalized (`normalizeRcTerm`: lowercase, stemmed tokens joined by one space).
+model RcBlockedTerm {
+  id     String       @id @default(uuid()) @db.Uuid
+  term   String       @unique
+  source RcTermSource
+  status RcTermStatus @default(BLOCKED)
+  /// Human-readable evidence ("hid the block 3/3 on live pages", or the learner's numbers).
+  note   String?
+  /// Learner evidence (last run): suppressed campaigns using it / all campaigns using it, and the
+  /// keyword-click rate of the campaigns using it vs the platform baseline (per 100 visits).
+  suppressedCampaigns Int?   @map("suppressed_campaigns")
+  campaignsUsing      Int?   @map("campaigns_using")
+  keywordClicksPer100 Float? @map("keyword_clicks_per_100")
+  baselinePer100      Float? @map("baseline_per_100")
+  learnedAt   DateTime? @map("learned_at")
+  updatedById String?   @map("updated_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("rc_blocked_terms")
+}
+
 /// Cloaker decision telemetry (observe-first ad-ID verification). The edge redirect beacons every
 /// decision so we can SEE the money-vs-white split — and, before enforcing, whether real ad clicks
 /// carry the FB `{{ad.id}}` macro. `money`/`white` = where the click was actually routed. For PAID

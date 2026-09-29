@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prisma, withSystem } from '@knn/db';
 import { ROLES, USER_STATUS } from '@knn/shared';
-import { type FbLaunchJob, launchJobId, runFbLaunch, syncAllFbConnections, triggerAutoLaunch } from './launch-trigger.js';
+import { type FbLaunchJob, launchJobId, learnRcTermsNow, runFbLaunch, syncAllFbConnections, triggerAutoLaunch } from './launch-trigger.js';
 
 const suffix = Date.now().toString(36);
 let orgId = '';
@@ -239,5 +239,31 @@ describe('syncAllFbConnections', () => {
       syncAllFbConnections({ fetch: fetchMock as unknown as typeof fetch, token: '', baseUrl: 'http://api:3000' }),
     ).rejects.toThrow(/INTERNAL_API_TOKEN is not configured/);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('learnRcTermsNow (D28)', () => {
+  it('POSTs the internal learn-rc-terms endpoint with the shared token and returns the summary', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ added: [{ term: 'career' }], eligibleCampaigns: 48 }), { status: 200 }));
+
+    const r = await learnRcTermsNow({ fetch: fetchMock as unknown as typeof fetch, token: 'secret-token', baseUrl: 'http://api:3000' });
+
+    expect(fetchMock).toHaveBeenCalledWith('http://api:3000/api/internal/learn-rc-terms', {
+      method: 'POST',
+      headers: { 'x-internal-token': 'secret-token' },
+    });
+    expect(r).toEqual({ added: [{ term: 'career' }], eligibleCampaigns: 48 });
+  });
+
+  it('throws on a non-2xx response and without a token', async () => {
+    const fail = vi.fn(async () => new Response('boom', { status: 500 }));
+    await expect(learnRcTermsNow({ fetch: fail as unknown as typeof fetch, token: 't', baseUrl: 'http://api:3000' })).rejects.toThrow(
+      /internal rc-word learning failed \(500\)/,
+    );
+    const never = vi.fn();
+    await expect(learnRcTermsNow({ fetch: never as unknown as typeof fetch, token: '', baseUrl: 'http://api:3000' })).rejects.toThrow(
+      /INTERNAL_API_TOKEN is not configured/,
+    );
+    expect(never).not.toHaveBeenCalled();
   });
 });

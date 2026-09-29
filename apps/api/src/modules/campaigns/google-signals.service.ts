@@ -14,12 +14,14 @@ import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 import { loadOwnedCampaign } from './campaigns.service.js';
 import { type LaunchDeps, syncCampaignRedirectConfigs } from './launch.service.js';
+import { assertRcTextsAllowed } from './rc-terms.service.js';
 
 /**
  * Buyer-editable Google signals (D27): see EXACTLY what each paid article view sends Google — the
  * per-ad Referrer Ad Creative and the RSOC `terms` — and change it on a LIVE campaign without
  * approval. Owner-scoped like every campaign read/write (a buyer: their own; an admin: their org).
- * Buyer text is stored and sent as entered; the only checks are technical (`googleSignalsUpdateSchema`).
+ * Buyer text is stored and sent as entered. Checks: technical limits (`googleSignalsUpdateSchema`) and,
+ * for a changed rc, the D28 blocked-word list (words that make Google hide the keyword block).
  */
 
 type Campaign = Awaited<ReturnType<typeof loadOwnedCampaign>>;
@@ -110,6 +112,14 @@ export async function updateGoogleSignals(
     for (const a of input.ads ?? []) {
       if (!adIds.has(a.adId)) throw new AppError(400, `Ad ${a.adId} does not belong to this campaign`);
     }
+    // D28: a NEW rc (campaign default or per-ad) can't contain a word that makes Google hide the
+    // keyword block. Values that aren't being changed are left alone.
+    const adById = new Map(c.adSets.flatMap((s) => s.ads.map((a) => [a.id, a] as const)));
+    const changedRc = [
+      ...(input.racValue !== undefined && trimOrNull(input.racValue) !== c.racValue ? [input.racValue] : []),
+      ...(input.ads ?? []).filter((a) => trimOrNull(a.racValue) !== (adById.get(a.adId)?.racValue ?? null)).map((a) => a.racValue),
+    ];
+    await assertRcTextsAllowed(changedRc);
     // Technical, not content: the draft editor deletes + recreates ads on every save, which would
     // silently drop a per-ad override. The campaign default + terms are fine on a draft.
     if (c.status === CAMPAIGN_STATUS.DRAFT && (input.ads?.length ?? 0) > 0) {

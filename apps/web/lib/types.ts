@@ -392,3 +392,29 @@ export interface FbAccessRequestList {
   launchAppRolesUrl: string | null;
   approveUrl: string;
 }
+
+/** D28 — a Referrer Ad Creative word that makes Google hide the keyword block (super-admin view). */
+export interface RcTermRow {
+  id: string;
+  /** Normalized word/phrase (lowercase, plurals folded). */
+  term: string;
+  source: 'SEED' | 'LEARNED' | 'MANUAL';
+  /** BLOCKED = buyers can't use it in a new rc; ALLOWED = override (never blocked, never re-learned). */
+  status: 'BLOCKED' | 'ALLOWED';
+  note: string | null;
+  suppressedCampaigns: number | null;
+  campaignsUsing: number | null;
+  keywordClicksPer100: number | null;
+  baselinePer100: number | null;
+  learnedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** D28 — result of a learning run (daily cron or "Learn now"). */
+export interface RcLearningRunResult {
+  baselinePer100: number | null;
+  eligibleCampaigns: number;
+  suppressedCampaigns: number;
+  added: { term: string; suppressedCampaigns: number; campaignsUsing: number; keywordClicksPer100: number }[];
+}

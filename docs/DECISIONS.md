@@ -494,7 +494,8 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   edge cache. Visitors already on a page keep their 30-min token. Facebook is never touched. If the edge
   push fails after the DB save, the API returns 502 "Saved, but the live redirect could not be updated
   yet…". The dashboard keeps the edits, so Save retries the same idempotent PUT.
-- **No content rules (Aman's call):** wording is the buyer's decision. Nothing is filtered, reworded,
+- **No content rules (Aman's call):** wording is the buyer's decision. *(Superseded for rc words by
+  D28: a new rc can't contain a word that makes Google hide the keyword block. Keywords stay free.)* Nothing is filtered, reworded,
   ranked or warned about. Normalization is limited to trimming, collapsing whitespace, turning a comma into
   a space (CSA `terms` is comma-delimited), and case-insensitive de-duplication. The only limits are
   technical: rc ≤ 500 chars, ≤ 10 terms, each ≤ 60 chars. Measured 2026-09-29:
@@ -532,3 +533,69 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   - If the Worker ever falls back to a plaintext Location (no token secret), custom terms degrade to the
     cleaned path. rc is unaffected.
   - The dashboard panel shows for every non-draft campaign, on the campaign page.
+
+### 2026-09-30 — D28: Block rc words that make Google hide the keyword block — seeded from live tests, learned daily
+
+- **Finding (live test, 2026-09-30):** on real landing pages, rc passed as `?rc=` exactly like a paid click.
+
+  | rc | Hospital job page | Packing job page | Flat-rent page (control) |
+  |---|---|---|---|
+  | none | shows | shows | shows |
+  | "Hospital Job" / "packing Job" / "Job" | **hidden** | **hidden** | — |
+  | "Hospital Careers", "Hospitals are hiring", "Hospital Vacancy 2026" | **hidden** | — | — |
+  | "Packing work from home" | — | **hidden** | — |
+  | "Free nursing course in India" / "Free flat on rent" / "Flat on rent free listing" | **hidden** | — | **hidden** |
+  | "Nursing course fees in India", "Patient care assistant course fees" | shows | — | — |
+  | "Packing company near me", "Packing ki naukri" | — | shows | — |
+  | "Flat on rent", "Flat on rent Job" | — | — | shows |
+
+  - Job-seeking wording hides the block on job pages. "Free" hides it on any page.
+  - When the block does show, Google fills it with its own job chips, so job keywords themselves aren't
+    banned; it reacts to the rc.
+  - Hindi was mixed ("हॉस्पिटल में नौकरी" showed 2/2, "पैकिंग की नौकरी" hid 1/1), so it's not seeded.
+  - Real traffic agrees: Sept 2026 campaigns whose rc reads like job-seeking got **17 keyword clicks per
+    100 visits vs 60** for the rest (ROAS 18% vs 57%). "Carpenter Job" got 0 and "Hospital Job" 0.9.
+  - **Test-method trap:** any page-URL param Google isn't told to ignore (`?x=1`, the old `?testRc=`,
+    `?adtest=1`) hides the block by itself. Always pass rc as `?rc=`, which is in `ignoredPageParams`.
+    This is why earlier `adtest`/`testRc` browser tests were "inconclusive".
+- **Decision (Aman):** keep a list of such words and stop buyers from putting them in a new rc.
+  - **Storage:** `rc_blocked_terms` is global (no org_id / RLS, like `term_stat_daily`). Terms are
+    normalized: lowercase, whole words, plurals folded.
+  - **Three sources:**
+    - SEED — tested words, shipped in migration `20260929210517_rc_blocked_terms`: job, career, hiring,
+      vacancy, free, work from home.
+    - LEARNED — added by the daily learner.
+    - MANUAL — added by a super-admin.
+  - **ALLOWED** is a super-admin override: the word is never blocked and never re-learned.
+- **Learner** (`learnRcBlockedTerms` in `packages/shared/src/rc-blocked-terms.ts`, run by
+  `learnRcTerms` via the worker cron, daily at 03:40 IST, or "Learn now"):
+  - It uses the last 30 IST days.
+  - A campaign's keyword-click rate is AFS requests ÷ FB link clicks, since /search is only reached
+    from a chip.
+  - A campaign is **suppressed** when its rate is below 35% of the median (campaigns with ≥ 100 visits
+    only).
+  - It greedily picks the word that explains the most suppressed campaigns not already explained by a
+    known blocked word. That word needs:
+    - ≥ 3 suppressed campaigns;
+    - ≥ 3 different wordings;
+    - ≥ 75% of all campaigns using it suppressed.
+
+    Topic words that ride along ("hospital" in "Hospital Job") are therefore never learned.
+  - Replayed on the Aug–Sep data (48 campaigns), it learns exactly **job** and **career**, and nothing
+    beyond the seeds (pinned in `rc-blocked-terms.test.ts` with a fixture).
+  - Known false positive: "Driving Career: Executive Chauffeur" performs well, so a super-admin can Allow
+    "career" if needed.
+  - New learned words ping the alert webhook.
+- **Enforcement:** only on **new** rc text.
+  - The Sent to Google PUT returns 400 for a changed campaign-default or per-ad rc that contains a
+    blocked word. Existing saved values stay untouched and show an amber warning.
+  - Submit adds the explanation to the 422 issues list.
+  - The wizard and panel flag the word inline and disable Save/Submit.
+  - Launching already-approved campaigns is not blocked.
+  - The message tells buyers to change the **ad's wording**, because rc must stay the ad's real text.
+    Putting a different rc than the ad says would misreport the ad to Google and risk the shared
+    account's RAF.
+- **UI:** super-admin page Platform → **RC words** (evidence per word, Block a word, Allow/Block, Learn
+  now). `GET /api/campaigns/rc-blocked-terms` (any signed-in user);
+  `GET|POST /api/admin/rc-terms`, `PATCH /api/admin/rc-terms/:id`, `POST /api/admin/rc-terms/learn`
+  (super-admin); `POST /api/internal/learn-rc-terms` (worker).

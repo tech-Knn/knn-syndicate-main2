@@ -2,6 +2,16 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
+_Last updated: 2026-09-30 — **D28: rc words that make Google hide the keyword block are blocked, seeded from live tests and learned daily.**
+- **Live test:** job-seeking rc wording (job, career, hiring, vacancy, work from home) hid the related-search block on job pages, and "free" hid it on any page. Real Sept traffic agreed: 17 vs 60 keyword clicks per 100 visits, ROAS 18% vs 57%.
+- **List:** `rc_blocked_terms` (migration `20260929210517_rc_blocked_terms`, 6 seeds). A daily learner (worker cron 03:40 IST → `POST /api/internal/learn-rc-terms`) adds words from 30 days of traffic; replayed on Aug–Sep it learns exactly job + career.
+- **Management:** super-admins manage the list at Platform → RC words.
+- **Enforcement:** new rc only. The wizard and Sent to Google panel flag it inline, and the API returns 400 on save / 422 on submit. Existing values get an amber warning.
+- **Tests:** shared 16 (incl. the real-data replay), api rc-terms 8, worker +2.
+- **Test-method note:** any page-URL param Google doesn't ignore hides the block by itself. Test rc with `?rc=`, never `?testRc=`/`?adtest=1`.
+
+See `docs/DECISIONS.md` D28._
+
 _Last updated: 2026-09-29 — **D27: buyers see and edit what goes to Google, live, with no approval.** The campaign page's new **Sent to Google** panel (`apps/web/app/dashboard/campaigns/[id]/google-signals-editor.tsx`, every non-draft campaign) shows:
 - each ad's effective Referrer Ad Creative, with an optional per-ad override (`ads.rac_value`; null means the campaign default);
 - the exact RSOC `terms` each landing article sends;

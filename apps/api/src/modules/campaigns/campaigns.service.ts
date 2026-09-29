@@ -15,6 +15,7 @@ import {
   type SpecialAdCategory,
   campaignSubmitIssues,
   canTransitionCampaign,
+  rcBlockedMessage,
 } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { enqueueChannelAssign } from '../../lib/channel-queue.js';
@@ -23,6 +24,7 @@ import { generateRedirectId } from '../../lib/ids.js';
 import { notify } from '../../lib/notify.js';
 import { runScoped } from '../../lib/scope.js';
 import { type OfferInput, setOffers } from './offers.service.js';
+import { blockedRcHits } from './rc-terms.service.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 
 export const campaignInclude = {
@@ -504,6 +506,9 @@ export async function submitCampaign(
     if (paidOffers === 0) {
       issues.push('Add at least one paid offer (a website to send traffic to) before submitting');
     }
+    // D28: an rc with a word that makes Google hide the keyword block can't go live.
+    const rcHits = await blockedRcHits([existing.racValue, ...existing.adSets.flatMap((s) => s.ads.map((a) => a.racValue))]);
+    if (rcHits.length > 0) issues.push(rcBlockedMessage(rcHits));
     if (issues.length > 0) {
       throw new AppError(422, 'Campaign is not ready to submit', issues);
     }

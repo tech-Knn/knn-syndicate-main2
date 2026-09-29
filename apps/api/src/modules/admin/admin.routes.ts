@@ -59,6 +59,7 @@ import {
 } from './platform.service.js';
 import { getCloakStats } from '../telemetry/cloak-telemetry.service.js';
 import { getTermPerformance } from '../telemetry/term-telemetry.service.js';
+import { addRcTerm, learnRcTerms, listRcTermsAdmin, setRcTermStatus } from '../campaigns/rc-terms.service.js';
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
   app.post(
@@ -351,6 +352,41 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
   // Redirect domains (super-admin): the go.* hosts the edge Worker serves; the default is
   // what new ad creatives link to. Reachability check via /verify.
   const superOnly = { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN)] };
+
+  // D28 — rc words that make Google hide the keyword block: review evidence, add, allow/block,
+  // and run the learner on demand (it also runs daily from the worker).
+  app.get('/rc-terms', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ terms: await listRcTermsAdmin() });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+  app.post<{ Body: { term?: unknown; note?: unknown } }>('/rc-terms', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.code(201).send({ term: await addRcTerm(req.auth, { term: req.body?.term, note: req.body?.note }) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+  app.patch<{ Params: { id: string }; Body: { status?: unknown } }>('/rc-terms/:id', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ term: await setRcTermStatus(req.auth, req.params.id, req.body?.status) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+  app.post('/rc-terms/learn', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send(await learnRcTerms());
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
 
   app.get('/redirect-domains', superOnly, async (req, reply) => {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });

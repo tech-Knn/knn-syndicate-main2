@@ -6,7 +6,9 @@ import {
   type GoogleSignalsUpdate,
   type GoogleSignalsView,
   type TermsSource,
+  findBlockedRcTerms,
   normalizeCustomTerms,
+  rcBlockedMessage,
 } from '@knn/shared';
 import { Badge, Button, Card, Spinner, useToast } from '@/components/ui';
 import { ApiError, campaigns } from '@/lib/api';
@@ -28,6 +30,22 @@ function toText(terms: readonly string[]): string {
 function clean(v: string): string | null {
   const t = v.trim();
   return t ? t : null;
+}
+
+/**
+ * D28 inline check for one rc box. A CHANGED value with a blocked word is an error (Save is off, the
+ * API rejects it too); an unchanged saved value with one is a warning — it predates the list.
+ */
+function RcWordCheck({ hits, changed }: { hits: readonly string[]; changed: boolean }) {
+  if (hits.length === 0) return null;
+  return changed ? (
+    <p className={`${adminStyles.fieldHint} ${styles.over}`}>{rcBlockedMessage(hits)}</p>
+  ) : (
+    <p className={`${adminStyles.fieldHint} ${styles.warn}`}>
+      This saved text contains {hits.map((h) => `“${h}”`).join(', ')}, which makes Google hide the keyword block. Change the
+      ad&apos;s wording and update it here.
+    </p>
+  );
 }
 
 function CharCount({ value, max }: { value: string; max: number }) {
@@ -59,6 +77,8 @@ export function GoogleSignalsEditor({
   const [adRac, setAdRac] = useState<Record<string, string>>({});
   const [termsText, setTermsText] = useState('');
   const [busy, setBusy] = useState(false);
+  // D28: rc words that make Google hide the keyword block (flag inline; the API enforces the same list).
+  const [blockedTerms, setBlockedTerms] = useState<string[]>([]);
 
   const hydrate = useCallback((v: GoogleSignalsView) => {
     setView(v);
@@ -72,6 +92,10 @@ export function GoogleSignalsEditor({
       .googleSignals(campaignId)
       .then(hydrate)
       .catch(() => setView('error'));
+    void campaigns
+      .rcBlockedTerms()
+      .then(setBlockedTerms)
+      .catch(() => setBlockedTerms([]));
   }, [campaignId, hydrate]);
 
   const customTerms = useMemo(() => normalizeCustomTerms(termsText), [termsText]);
@@ -108,7 +132,10 @@ export function GoogleSignalsEditor({
   const racTooLong =
     campaignRac.trim().length > GOOGLE_SIGNAL_LIMITS.racMaxChars ||
     view.ads.some((a) => (adRac[a.id] ?? '').trim().length > GOOGLE_SIGNAL_LIMITS.racMaxChars);
-  const blocked = tooManyTerms || Boolean(longTerm) || racTooLong;
+  const rcHits = (text: string): string[] => findBlockedRcTerms(text, blockedTerms);
+  const defaultHits = rcHits(campaignRac);
+  const rcWordBlocked = (campaignRacChanged && defaultHits.length > 0) || changedAds.some((a) => rcHits(adRac[a.id] ?? '').length > 0);
+  const blocked = tooManyTerms || Boolean(longTerm) || racTooLong || rcWordBlocked;
 
   const reset = (): void => hydrate(view);
 
@@ -186,6 +213,7 @@ export function GoogleSignalsEditor({
           <span>Used by every ad below that has no text of its own.</span>
           <CharCount value={campaignRac} max={GOOGLE_SIGNAL_LIMITS.racMaxChars} />
         </div>
+        <RcWordCheck hits={defaultHits} changed={campaignRacChanged} />
 
         {view.ads.length > 0 && (
           <div>
@@ -234,6 +262,7 @@ export function GoogleSignalsEditor({
                         <CharCount value={own} max={GOOGLE_SIGNAL_LIMITS.racMaxChars} />
                       </span>
                     </div>
+                    <RcWordCheck hits={rcHits(own)} changed={clean(own) !== (a.racValue ?? null)} />
                   </div>
                 </div>
               );

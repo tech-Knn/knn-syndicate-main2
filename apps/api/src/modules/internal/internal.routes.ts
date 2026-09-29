@@ -7,6 +7,7 @@ import { handleRouteError } from '../../lib/http.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 import { launchCampaign, relaunchCampaign, syncCampaignRedirectConfigs } from '../campaigns/launch.service.js';
 import { syncAllConnections } from '../facebook/facebook.service.js';
+import { learnRcTerms } from '../campaigns/rc-terms.service.js';
 
 /**
  * Internal worker→API routes (Phase 8 auto-launch). Guarded by the shared
@@ -84,6 +85,20 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
     }
     try {
       return reply.send(await syncAllConnections());
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // D28: daily rc-word learning run (worker cron) — adds words that make Google hide the keyword block.
+  app.post('/learn-rc-terms', async (req, reply) => {
+    const header = req.headers['x-internal-token'];
+    const tok = Array.isArray(header) ? header[0] : header;
+    if (!env.INTERNAL_API_TOKEN || tok !== env.INTERNAL_API_TOKEN) {
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+    try {
+      return reply.send(await learnRcTerms());
     } catch (err) {
       return handleRouteError(err, reply);
     }

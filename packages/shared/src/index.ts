@@ -5,6 +5,7 @@ export * from './countries.js';
 export * from './facebook-options.js';
 export * from './funnel.js';
 export * from './google-signals.js';
+export * from './rc-blocked-terms.js';
 export * from './constants.js';
 export * from './conversions.js';
 export * from './datetime.js';

@@ -14,7 +14,8 @@ import { getGoogleSignals, updateGoogleSignals } from './google-signals.service.
 
 /**
  * D27 — buyer-editable Google signals: the per-ad Referrer Ad Creative + the campaign's RSOC terms,
- * viewable and editable LIVE with no approval and no content rules (technical limits only).
+ * viewable and editable LIVE with no approval. Limits are technical, plus the D28 blocked rc words
+ * (covered in rc-terms.test.ts); keywords are never checked.
  */
 
 const suffix = Date.now().toString(36);
@@ -80,7 +81,7 @@ beforeAll(async () => {
         name: 'Hospital Jobs',
         status: 'ACTIVE',
         keywords: ['hospital jobs'],
-        racValue: 'Hospital jobs near you',
+        racValue: 'Hospital staff guide',
         fallbackUrl: 'https://fallback.example.com/',
         channelId: channel.id,
         articleId: article.id,
@@ -140,11 +141,11 @@ afterAll(async () => {
 describe('GET google signals (D27)', () => {
   it('shows exactly what Google gets: per-ad rc (default fallback) and the article terms via the page resolver', async () => {
     const v = await getGoogleSignals(buyer(), liveId);
-    expect(v).toMatchObject({ campaignId: liveId, status: 'ACTIVE', live: true, racValue: 'Hospital jobs near you', customTerms: [] });
+    expect(v).toMatchObject({ campaignId: liveId, status: 'ACTIVE', live: true, racValue: 'Hospital staff guide', customTerms: [] });
     // (Ads created in one transaction share created_at → compare order-insensitively.)
     expect(v.ads.map((a) => [a.name, a.racValue, a.effectiveRac]).sort()).toEqual([
-      ['Ad A', null, 'Hospital jobs near you'],
-      ['Ad B', null, 'Hospital jobs near you'],
+      ['Ad A', null, 'Hospital staff guide'],
+      ['Ad B', null, 'Hospital staff guide'],
     ]);
     const a = v.ads.find((x) => x.id === adA)!;
     expect(a).toMatchObject({ adSetName: 'IN 25-54', creativeType: 'IMAGE', fileName: 'nurse-creative.png' });
@@ -164,7 +165,7 @@ describe('GET google signals (D27)', () => {
   });
 });
 
-describe('PUT google signals (D27) — live, no approval, no content rules', () => {
+describe('PUT google signals (D27) — live, no approval', () => {
   it('saves per-ad rc + custom terms exactly as typed and re-syncs the LIVE redirect configs', async () => {
     const writeRedirectConfigs = vi.fn(async (_e: Entries): Promise<void> => undefined);
     const v = await updateGoogleSignals(
@@ -180,7 +181,7 @@ describe('PUT google signals (D27) — live, no approval, no content rules', () 
 
     expect(v.synced).toBe(true);
     expect(v.status).toBe('ACTIVE'); // no re-approval
-    expect(v.ads.find((a) => a.id === adA)!.effectiveRac).toBe('Hospital jobs near you'); // untouched → default
+    expect(v.ads.find((a) => a.id === adA)!.effectiveRac).toBe('Hospital staff guide'); // untouched → default
     expect(v.ads.find((a) => a.id === adB)!).toMatchObject({
       racValue: 'हॉस्पिटल में नौकरियां — Apply Today',
       effectiveRac: 'हॉस्पिटल में नौकरियां — Apply Today',
@@ -195,7 +196,7 @@ describe('PUT google signals (D27) — live, no approval, no content rules', () 
     expect(writeRedirectConfigs).toHaveBeenCalledTimes(1);
     const entries = writeRedirectConfigs.mock.calls[0]![0];
     const byRedirect = Object.fromEntries(entries.map((e) => [e.redirectId, e.config]));
-    expect(byRedirect[`gs-a-${suffix}`]!.adCreative).toBe('Hospital jobs near you');
+    expect(byRedirect[`gs-a-${suffix}`]!.adCreative).toBe('Hospital staff guide');
     expect(byRedirect[`gs-b-${suffix}`]!.adCreative).toBe('हॉस्पिटल में नौकरियां — Apply Today');
     for (const cfg of Object.values(byRedirect)) {
       const url = new URL(cfg.articleUrl);
@@ -222,13 +223,13 @@ describe('PUT google signals (D27) — live, no approval, no content rules', () 
 
   it('changing the campaign default moves every ad without its own text; clearing reverts to AI terms', async () => {
     const writeRedirectConfigs = vi.fn(async (_e: Entries): Promise<void> => undefined);
-    const v = await updateGoogleSignals(buyer(), liveId, { racValue: 'Jobs', terms: [], ads: [{ adId: adB, racValue: null }] }, { writeRedirectConfigs });
-    expect(v.racValue).toBe('Jobs'); // a single word is fine
-    expect(v.ads.map((a) => a.effectiveRac)).toEqual(['Jobs', 'Jobs']);
+    const v = await updateGoogleSignals(buyer(), liveId, { racValue: 'Nursing', terms: [], ads: [{ adId: adB, racValue: null }] }, { writeRedirectConfigs });
+    expect(v.racValue).toBe('Nursing'); // a single word is fine
+    expect(v.ads.map((a) => a.effectiveRac)).toEqual(['Nursing', 'Nursing']);
     expect(v.customTerms).toEqual([]);
     expect(v.articles[0]!.source).toBe('article');
     const cfgs = writeRedirectConfigs.mock.calls[0]![0].map((e) => e.config);
-    expect(cfgs.every((c) => c.adCreative === 'Jobs')).toBe(true);
+    expect(cfgs.every((c) => c.adCreative === 'Nursing')).toBe(true);
     expect(cfgs.every((c) => new URL(c.articleUrl).searchParams.has('terms') === false)).toBe(true);
   });
 
@@ -238,7 +239,7 @@ describe('PUT google signals (D27) — live, no approval, no content rules', () 
     expect(v.racValue).toBeNull();
     expect(v.ads.every((a) => a.effectiveRac === null)).toBe(true);
     expect(writeRedirectConfigs.mock.calls[0]![0].every((e) => e.config.adCreative === undefined)).toBe(true);
-    await updateGoogleSignals(buyer(), liveId, { racValue: 'Hospital jobs near you' }, { writeRedirectConfigs });
+    await updateGoogleSignals(buyer(), liveId, { racValue: 'Hospital staff guide' }, { writeRedirectConfigs });
   });
 
   it('rejects only oversized values (400), never wording', async () => {
@@ -315,7 +316,7 @@ describe('clone + draft edits (D27) — per-ad rc follows its creative', () => {
         select: { status: true, termsOverride: true, racValue: true, adSets: { select: { ads: { select: { name: true, racValue: true, redirectId: true } } } } },
       }),
     );
-    expect(row).toMatchObject({ status: 'DRAFT', termsOverride: ['Hospital Job', 'Job'], racValue: 'Hospital jobs near you' });
+    expect(row).toMatchObject({ status: 'DRAFT', termsOverride: ['Hospital Job', 'Job'], racValue: 'Hospital staff guide' });
     const ads = row!.adSets.flatMap((s) => s.ads);
     expect(ads.find((a) => a.name === 'Ad A')!.racValue).toBe('Ad A own text');
     expect(ads.find((a) => a.name === 'Ad B')!.racValue).toBeNull();

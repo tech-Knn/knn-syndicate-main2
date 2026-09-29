@@ -73,6 +73,10 @@
   color: var(--red-text);
   font-weight: 600;
 }
+/* An existing saved value that predates a rule (D28): flagged, not blocked. */
+.warn {
+  color: var(--amber);
+}
 
 .linkBtn {
   background: none;

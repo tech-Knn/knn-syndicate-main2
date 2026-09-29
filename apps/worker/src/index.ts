@@ -16,7 +16,7 @@ import { sweepDomainHealth } from './jobs/domain-health.js';
 import { reconcileCampaigns } from './jobs/meta-rejection.js';
 import { SYNC_KEYS, markSyncRun } from './lib/sync-state.js';
 import { refreshFbTokens } from './jobs/token-refresh.js';
-import { type FbLaunchJob, resyncOffersToKv, runFbLaunch, syncAllFbConnections, triggerAutoLaunch } from './launch-trigger.js';
+import { type FbLaunchJob, learnRcTermsNow, resyncOffersToKv, runFbLaunch, syncAllFbConnections, triggerAutoLaunch } from './launch-trigger.js';
 
 interface ChannelJob {
   action: 'assign' | 'release' | 'rollover' | 'process-queue' | 'rebalance';
@@ -257,6 +257,18 @@ async function main(): Promise<void> {
     { timezone: env.BUSINESS_TIMEZONE },
   );
 
+  // D28: learn rc words that make Google hide the keyword block, daily at 03:40 IST (after the
+  // overnight stats/revenue pulls settle). Fire-and-forget; tomorrow's run retries.
+  const rcTermLearningCron = cron.schedule(
+    '40 3 * * *',
+    () => {
+      void learnRcTermsNow()
+        .then((r) => console.log(`[rc-terms] learned ${r.added.length} new word(s) from ${r.eligibleCampaigns} campaigns${r.added.length ? `: ${r.added.map((a) => a.term).join(', ')}` : ''}`))
+        .catch((e) => console.error('[rc-terms] learning failed:', e instanceof Error ? e.message : String(e)));
+    },
+    { timezone: env.BUSINESS_TIMEZONE },
+  );
+
   console.log(
     `[worker] started — processing ${QUEUES.HEALTH}; business tz=${env.BUSINESS_TIMEZONE}`,
   );
@@ -270,6 +282,7 @@ async function main(): Promise<void> {
     finalizationCron.stop();
     domainHealthCron.stop();
     connectionSyncCron.stop();
+    rcTermLearningCron.stop();
     await healthWorker.close();
     await tokenRefreshWorker.close();
     await channelWorker.close();
