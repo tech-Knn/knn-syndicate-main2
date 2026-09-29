@@ -540,11 +540,12 @@ export async function reopenCampaign(
     return updated;
   });
   // Channels are global (no org_id) → release them under withSystem, back to the pool.
+  // `lockedForDay` is kept so the pool's same-day cooldown (D25) applies here too.
   if (channelIds.length > 0) {
     await withSystem((tx) =>
       tx.channel.updateMany({
         where: { id: { in: channelIds } },
-        data: { status: CHANNEL_STATUS.AVAILABLE, currentCampaignId: null, lockedForDay: null, assignedAt: null },
+        data: { status: CHANNEL_STATUS.AVAILABLE, currentCampaignId: null, assignedAt: null },
       }),
     );
   }

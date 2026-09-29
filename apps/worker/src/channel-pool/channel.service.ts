@@ -11,7 +11,16 @@ import { CAMPAIGN_STATUS, type CampaignStatus, canTransitionCampaign, currentBus
  * Time is the IST business day (D4): a channel is locked for the day; the midnight
  * cron releases channels from ended campaigns, renews active locks (per-day
  * attribution spans for Phase 9), and drains the FIFO wait queue.
+ *
+ * Same-day cooldown (D25): a released channel keeps `lockedForDay` = the last IST day it
+ * was held, and no claim hands out a channel whose `lockedForDay` is today. Revenue maps
+ * to a campaign by (channel, IST day), so a channel freed mid-day (Meta rejection, offer
+ * removal) must not get a second holder that day — its tail traffic would be credited to
+ * the newcomer. Rollover releases keep YESTERDAY's day, so they're re-issuable at once.
  */
+
+/** Claim filter: skip channels already used by some campaign today (same-day cooldown). */
+const NOT_USED_TODAY = 'locked_for_day IS DISTINCT FROM';
 
 /** Campaign states that legitimately hold a channel; anything else releases it. */
 const HOLDING_STATUSES: readonly CampaignStatus[] = [
@@ -62,9 +71,10 @@ export async function assignChannel(campaignId: string): Promise<AssignResult> {
     // skip locked rows. Domain-tagged channels are reserved for per-offer assignment (Phase E)
     // so a legacy single-channel campaign can't grab a specific website's allocation.
     const rows = await tx.$queryRawUnsafe<{ id: string }[]>(
-      `SELECT id FROM channels WHERE status = 'AVAILABLE' AND domain_id IS NULL
+      `SELECT id FROM channels WHERE status = 'AVAILABLE' AND domain_id IS NULL AND ${NOT_USED_TODAY} $1
        ORDER BY created_at ASC, id ASC
        FOR UPDATE SKIP LOCKED LIMIT 1`,
+      day,
     );
     const claimed = rows[0];
 
@@ -130,16 +140,18 @@ export async function assignOfferChannels(campaignId: string): Promise<AssignRes
         // Atomically claim one available channel FROM THIS OFFER'S DOMAIN; concurrent
         // claims skip each other's locked rows (zero double-assignment across offers).
         let rows = await tx.$queryRawUnsafe<{ id: string }[]>(
-          `SELECT id FROM channels WHERE status = 'AVAILABLE' AND domain_id = $1::uuid
+          `SELECT id FROM channels WHERE status = 'AVAILABLE' AND domain_id = $1::uuid AND ${NOT_USED_TODAY} $2
            ORDER BY created_at ASC, id ASC
            FOR UPDATE SKIP LOCKED LIMIT 1`,
           offer.domainId,
+          day,
         );
         if (!rows[0]) {
           rows = await tx.$queryRawUnsafe<{ id: string }[]>(
-            `SELECT id FROM channels WHERE status = 'AVAILABLE' AND domain_id IS NULL
+            `SELECT id FROM channels WHERE status = 'AVAILABLE' AND domain_id IS NULL AND ${NOT_USED_TODAY} $1
              ORDER BY created_at ASC, id ASC
              FOR UPDATE SKIP LOCKED LIMIT 1`,
+            day,
           );
         }
         const claimed = rows[0];
@@ -187,11 +199,14 @@ export async function assignForCampaign(campaignId: string): Promise<AssignResul
  * Release one channel row → AVAILABLE: close its open attribution span, clear the offer
  * that pointed at it (Phase E) and the legacy `campaign.channelId` that held it. Used by
  * both the explicit release path and the midnight rollover (per channel).
+ *
+ * `lockedForDay` is deliberately KEPT (the last day this channel was held) — it drives the
+ * same-day cooldown in the claim queries above.
  */
 async function releaseChannelRow(tx: TxClient, channelId: string): Promise<void> {
   await tx.channel.update({
     where: { id: channelId },
-    data: { status: 'AVAILABLE', currentCampaignId: null, lockedForDay: null, assignedAt: null },
+    data: { status: 'AVAILABLE', currentCampaignId: null, assignedAt: null },
   });
   await tx.channelAssignment.updateMany({ where: { channelRef: channelId, releasedAt: null }, data: { releasedAt: new Date() } });
   await tx.offer.updateMany({ where: { channelRef: channelId }, data: { channelRef: null } });

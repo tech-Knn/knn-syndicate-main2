@@ -20,6 +20,11 @@ per channel = per campaign. Lives in the worker (the single writer); the API enq
 - **IST day (D4).** `rolloverChannels` runs at 00:05 IST: release channels from ended campaigns,
   renew still-active locks (close the prior `channel_assignment` span, open today's for per-day
   attribution in Phase 9), then drain the queue.
+- **Same-day cooldown (D25).** Release KEEPS `lockedForDay` (the last IST day the channel was held) and
+  every claim query skips `locked_for_day = today`, so a channel freed mid-day gets no second holder that
+  day (attribution maps (channel, day) → one campaign). Don't null `lockedForDay` on release, and add the
+  `NOT_USED_TODAY` filter to any new claim query. Tests simulate "the next day" by backdating
+  `lockedForDay` (e.g. `'2000-01-01'`), not by mocking the clock.
 - **`campaign.channelId` holds the Channel row id (uuid)**, not the AdSense channel string — join to
   `channels.channel_id` for the `ch` value the redirect passes. `assignChannel` is idempotent (a
   campaign that already holds a channel is returned unchanged).

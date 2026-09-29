@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma, withSystem } from '@knn/db';
 import { encryptToken } from '@knn/fb';
-import { ROLES, USER_STATUS } from '@knn/shared';
+import { ROLES, USER_STATUS, currentBusinessDay } from '@knn/shared';
 import {
   assignChannel,
   assignForCampaign,
@@ -122,7 +122,7 @@ describe('channel pool', () => {
     expect(dupes).toHaveLength(0);
   });
 
-  it('queues overflow FIFO and assigns the oldest waiter when a channel frees', async () => {
+  it('queues overflow FIFO and assigns the oldest waiter when a channel frees (the next IST day, D25)', async () => {
     await makeChannels(2);
     const ids: string[] = [];
     for (let i = 0; i < 5; i++) ids.push(await makeCampaign('APPROVED'));
@@ -141,11 +141,21 @@ describe('channel pool', () => {
     );
     expect(queue.map((q) => q.campaignId)).toEqual([ids[2], ids[3], ids[4]]); // FIFO
 
-    // Free the first campaign's channel → the oldest waiter (ids[2]) should get it.
+    // Free the first campaign's channel mid-day. D25 same-day cooldown: it was used today, so
+    // it is NOT handed to anyone else today — the oldest waiter keeps waiting.
+    const freedRef = (await withSystem((tx) => tx.campaign.findUnique({ where: { id: ids[0]! }, select: { channelId: true } })))!.channelId!;
     await releaseChannelForCampaign(ids[0]!);
+    const freed = await withSystem((tx) => tx.channel.findUnique({ where: { id: freedRef }, select: { status: true, currentCampaignId: true, lockedForDay: true } }));
+    expect(freed).toMatchObject({ status: 'AVAILABLE', currentCampaignId: null, lockedForDay: currentBusinessDay() });
+    const waiting = await withSystem((tx) => tx.campaign.findUnique({ where: { id: ids[2]! }, select: { status: true, channelId: true } }));
+    expect(waiting).toMatchObject({ status: 'QUEUED_NO_CHANNEL', channelId: null });
+
+    // Next IST day (simulated: the lock now lies in the past) → the oldest waiter (ids[2]) gets it.
+    await withSystem((tx) => tx.channel.update({ where: { id: freedRef }, data: { lockedForDay: '2000-01-01' } }));
+    await processQueue();
     const revived = await withSystem((tx) => tx.campaign.findUnique({ where: { id: ids[2]! }, select: { status: true, channelId: true } }));
     expect(revived?.status).toBe('PROCESSING');
-    expect(revived?.channelId).toBeTruthy();
+    expect(revived?.channelId).toBe(freedRef);
 
     const remaining = await withSystem((tx) =>
       tx.campaignQueue.findMany({ where: { status: 'WAITING' }, orderBy: { enqueuedAt: 'asc' }, select: { campaignId: true } }),
@@ -255,6 +265,61 @@ describe('per-offer channel assignment (Phase E)', () => {
     expect(stillHeld).toBe(0);
     const refsLeft = await withSystem((tx) => tx.offer.count({ where: { campaignId: id, channelRef: { not: null } } }));
     expect(refsLeft).toBe(0);
+  });
+
+  describe('same-day cooldown (D25)', () => {
+    // Revenue maps to a campaign by (channel, IST day). A channel freed mid-day must not get a
+    // second holder that day, or the newcomer is credited the old holder's revenue for the day.
+    it('a channel released mid-day is not re-issued to another campaign that day', async () => {
+      await makeDomainChannels(domA, 1); // domA's only channel
+      const first = await makeOfferCampaign([domA]);
+      const ref = (await assignForCampaign(first)).channelRefs![0]!;
+
+      await releaseChannelForCampaign(first); // e.g. a Meta rejection mid-day
+      const ch = await withSystem((tx) => tx.channel.findUnique({ where: { id: ref }, select: { status: true, currentCampaignId: true, lockedForDay: true } }));
+      expect(ch).toMatchObject({ status: 'AVAILABLE', currentCampaignId: null, lockedForDay: currentBusinessDay() });
+
+      const second = await makeOfferCampaign([domA]);
+      const r = await assignForCampaign(second);
+      // In a shared DB the claim may fall back to a foreign global channel — but never to the
+      // channel `first` held today.
+      expect(r.channelRefs ?? []).not.toContain(ref);
+      const after = await withSystem((tx) => tx.channel.findUnique({ where: { id: ref }, select: { status: true, currentCampaignId: true } }));
+      expect(after).toMatchObject({ status: 'AVAILABLE', currentCampaignId: null });
+    });
+
+    it('the next IST day the same channel is re-issued', async () => {
+      await makeDomainChannels(domA, 1);
+      const first = await makeOfferCampaign([domA]);
+      const ref = (await assignForCampaign(first)).channelRefs![0]!;
+      await releaseChannelForCampaign(first);
+
+      // Simulate the day turning over: the lock now lies in the past.
+      await withSystem((tx) => tx.channel.update({ where: { id: ref }, data: { lockedForDay: '2000-01-01' } }));
+      const second = await makeOfferCampaign([domA]);
+      const r = await assignForCampaign(second);
+      expect(r.channelRefs).toEqual([ref]);
+    });
+
+    it('a channel released by the midnight rollover keeps the previous day and is re-issuable at once', async () => {
+      await makeDomainChannels(domA, 1);
+      const paused = await makeOfferCampaign([domA]);
+      const ref = (await assignForCampaign(paused)).channelRefs![0]!;
+      // Held through a previous IST day, then paused (non-holding) before midnight.
+      await withSystem(async (tx) => {
+        await tx.campaign.update({ where: { id: paused }, data: { status: 'PAUSED' } });
+        await tx.channel.update({ where: { id: ref }, data: { lockedForDay: '2000-01-01' } });
+      });
+
+      await rolloverChannels(currentBusinessDay());
+      const ch = await withSystem((tx) => tx.channel.findUnique({ where: { id: ref }, select: { status: true, currentCampaignId: true, lockedForDay: true } }));
+      // Released, but locked for the day it was last HELD (not today) → no cooldown today.
+      expect(ch).toMatchObject({ status: 'AVAILABLE', currentCampaignId: null, lockedForDay: '2000-01-01' });
+
+      const next = await makeOfferCampaign([domA]);
+      const r = await assignForCampaign(next);
+      expect(r.channelRefs).toEqual([ref]);
+    });
   });
 
   it('two offer campaigns racing on a 1-channel domain → exactly one wins', async () => {

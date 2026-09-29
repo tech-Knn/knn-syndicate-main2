@@ -700,9 +700,10 @@ describe('reopenCampaign (edit/relaunch a stuck pre-launch campaign)', () => {
     expect(reopened.status).toBe('DRAFT');
     expect(reopened.channelId).toBeNull();
 
-    // The channel is back in the pool, free for the next campaign.
+    // The channel is back in the pool. It keeps the day it was last held (D25 same-day
+    // cooldown): re-issuable to another campaign from the next IST day, not the same day.
     const ch = await withSystem((tx) => tx.channel.findUnique({ where: { id: channelRef }, select: { status: true, currentCampaignId: true, lockedForDay: true } }));
-    expect(ch).toMatchObject({ status: 'AVAILABLE', currentCampaignId: null, lockedForDay: null });
+    expect(ch).toMatchObject({ status: 'AVAILABLE', currentCampaignId: null, lockedForDay: '2026-05-29' });
   });
 
   it('releases every PAID offer channel when reopening an offers campaign', async () => {
