@@ -424,6 +424,26 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   surface the data, validate it, then act. Deferred: redirect-level curated-terms override (capability wired
   via the article precedence chain), content-substance hard gate, auto term pruning/regeneration.
 
+### 2026-09-29 — D25: Same-day channel cooldown — a freed channel is never re-issued the same IST day
+
+- **Problem:** revenue maps to a campaign by (channel, IST day) via `channel_assignments.for_day`, and
+  when two campaigns hold one channel on the same day the attribution span lookup gives the WHOLE day to
+  the latest holder. The pool claims the oldest `AVAILABLE` channel (`ORDER BY created_at`), which is
+  usually the one just freed — so a channel released mid-day (Meta rejection, offer removal) went straight
+  to the next campaign. Staging, Aug–Sep 2026: 6 of 16 mid-day releases were re-issued the same day (4 of
+  4 on Sep 25); the old holder's earlier hourly rows stayed frozen, so revenue was also double-counted.
+- **Decision:** `lockedForDay` is no longer cleared on release — it keeps the last IST day the channel
+  was held — and every claim query skips `locked_for_day = today` (`channel-pool/channel.service.ts`, the
+  legacy global, per-offer domain and global-fallback claims; `reopenCampaign` keeps it too). A channel
+  freed mid-day is re-issuable from the next IST day; channels freed by the 00:05 rollover carry
+  YESTERDAY's day and stay re-issuable at once. The old holder's tail traffic that day (30-min tokens and
+  cookies) is therefore credited to it, not to a newcomer.
+- **Cost:** at most that day's mid-day releases sit out until midnight (≤ 4/day observed vs ~1,500 free
+  channels). A waiter blocked only by the cooldown gets its channel at the 00:05 rollover drain.
+- **Not covered:** out-of-band DB edits that free a channel (they bypass the pool code); re-issue on the
+  NEXT day (oldest-first ordering still recycles freed channels quickly — revisit with LRU ordering if
+  cross-day tail traffic matters); the article page's historical-channel fallback.
+
 ### 2026-09-29 — D26: RSOC pages default to `adsafe: 'low'` and serve ONE related-search unit
 
 - **Benchmark:** the team's RSOC pages tracked in ClickFlare (`search.entertainmentheute.de`, the SAME

@@ -595,7 +595,8 @@ model Channel {
   /// The Domain (website) whose allocation this channel belongs to (Phase A). Null for
   /// legacy/global channels; populated as channels are imported per-domain.
   domainId          String?       @map("domain_id") @db.Uuid
-  /// IST business day (YYYY-MM-DD) the current assignment is locked for.
+  /// IST business day (YYYY-MM-DD) the current assignment is locked for. Kept after release
+  /// (= the last day it was held) so the pool never re-issues it that same day (D25).
   lockedForDay      String?       @map("locked_for_day")
   assignedAt        DateTime?     @map("assigned_at")
   createdAt         DateTime      @default(now()) @map("created_at")
