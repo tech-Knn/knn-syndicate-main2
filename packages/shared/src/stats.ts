@@ -143,15 +143,11 @@ export interface CampaignPerf {
   budgetMode: 'AD_SET' | 'CAMPAIGN';
   dailyBudgetCents: number | null;
   /**
-   * RPC / vCVR inputs (see unit-economics.ts). Google hides a channel's ad clicks on a day with
-   * < 10 of them; those "masked" days are excluded from all three sums so the ratios stay exact.
-   *   RPC  = adClickRevenueUsd ÷ adClicks      vCVR = adClicks ÷ adClickVisits
+   * Visits that clicked a Google ad, from our own tracking (the funnel's `adclick` stage, at most once
+   * per visit — how ClickFlare counts a conversion). Live and never hidden (D30; see unit-economics.ts).
+   *   RPC = revenueUsd ÷ adClicks      vCVR = adClicks ÷ clicks (visits)
    */
   adClicks: number;
-  adClickRevenueUsd: number;
-  adClickVisits: number;
-  /** Days in range that earned but whose ad clicks Google hid (0 = RPC/vCVR cover every day). */
-  maskedDays: number;
 }
 
 export interface AdPerf {
@@ -210,11 +206,6 @@ export interface BuyerRollup {
   campaignCount: number;
 }
 
-/** Per-offer revenue for a campaign (Phase F). Cost is campaign-level FB spend; revenue
- *  is per offer (its AFS channel). `revenueUsd` is buyer-visible (the platform cut applied) and is
- *  ALWAYS shown — even $0.01 — because Google's AFS rule masks only CLICK-DERIVED metrics below 10
- *  clicks/day, not earnings (answer/10078316). `suppressed` flags that the click-derived columns
- *  (afsClicks / CPC) are hidden below that threshold; it does NOT hide the revenue. */
 /** A breakdown dimension for the campaign drill-down. */
 export type StatDim = 'country' | 'hour';
 
@@ -230,6 +221,9 @@ export interface DimStat {
   conversions: number;
 }
 
+/** Per-offer (website) results for a campaign (Phase F). Cost is campaign-level FB spend; revenue is
+ *  per offer (its AFS channel), buyer-visible (the platform cut applied) and always shown — Google
+ *  never hides earnings. */
 export interface OfferStat {
   offerId: string;
   host: string;
@@ -237,12 +231,10 @@ export interface OfferStat {
   kind: 'PAID' | 'ORGANIC';
   weightPct: number;
   revenueUsd: number;
-  afsClicks: number;
-  suppressed: boolean;
-  /** Revenue ÷ Google ad clicks over the days Google shows the clicks (null when it hid them all). */
+  /** Visits on this website that clicked a Google ad — our own tracking, like CampaignPerf.adClicks. */
+  adClicks: number;
+  /** Revenue ÷ ad clicks (ClickFlare Dynamic payout); null with no ad clicks. */
   rpcUsd: number | null;
-  /** Days that earned but whose ad clicks Google hid (< 10/day) — left out of `rpcUsd`. */
-  maskedDays: number;
 }
 
 /** Per-company rollup (super-admin only). */

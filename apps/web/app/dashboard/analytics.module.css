@@ -483,19 +483,6 @@
   background: rgba(var(--green-rgb), 0.55);
 }
 
-/* RPC / vCVR when Google hid some or all of the ad clicks. */
-.partial,
-.masked {
-  cursor: help;
-  border-bottom: 1px dotted var(--muted-2);
-}
-.masked {
-  color: var(--muted-2);
-  font-style: italic;
-  font-family: var(--font-sans);
-  font-size: 0.76rem;
-}
-
 /* Row actions: Pause/Resume + Open. */
 .actionsCell {
   white-space: nowrap;

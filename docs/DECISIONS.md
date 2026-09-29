@@ -633,7 +633,8 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   | CVR (FB) | Conv (FB) ÷ visits | (Facebook-side) |
 
   Sub-dollar unit prices show 3 decimals (`formatUnitUsd`), so $0.011 and $0.014 don't both read "$0.01".
-- **Google click masking:** AdSense reports a channel-day with fewer than 10 ad clicks as 0 clicks, but
+- **Google click masking:** *(Superseded by D30: RPC and vCVR now use our own ad-click tracking, so
+  nothing is masked or hidden.)* AdSense reports a channel-day with fewer than 10 ad clicks as 0 clicks, but
   still reports the earnings. In Aug–Sep that was 14% of revenue and 36% of earning campaign-days. A naive
   RPC would divide that revenue by nothing and inflate. So `isMaskedAfsDay` flags a masked day (earned,
   < 10 clicks), and RPC and vCVR leave it out on **both** sides (revenue and clicks; visits and clicks).
@@ -666,3 +667,41 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
     back to visits or impressions. Every tab has a total row.
   - **Summary:** Results (Spend, Revenue, Profit, ROI) plus unit economics (EPV vs CPC, CPC, RPC, vCVR).
   - **CSV** carries every metric plus the hidden-day count.
+
+### 2026-09-30 — D30: RPC and vCVR count our own ad clicks — ClickFlare's Dynamic payout, never hidden
+
+- **Problem:** D29 divided by Google's AdSense click count, and Google reports 0 clicks on any channel-day
+  with fewer than 10. On staging most campaigns are that small, so RPC and vCVR read "hidden" on nearly
+  every row. ClickFlare never hides them.
+- **What ClickFlare actually shows** (checked against its API, 2026-09-30):
+  - Its RPC is the **Dynamic payout** column: `dynamicPayout` = revenue ÷ conversions, to the cent.
+  - Conversions are counted **at most once per visit**: in its two largest campaigns, no visit or click id
+    had more than one.
+  - It shows the value on small rows too: 76 of 77 rows with 1–9 conversions had one.
+- **Change:** "ad clicks" = our own `adclick` funnel events (`conversion_events`, event `Search`, at most
+  one per visit). That is the same signal Facebook's CAPI gets, and the same unit ClickFlare counts.
+  - RPC = revenue ÷ ad clicks; vCVR = ad clicks ÷ visits. The values are live, and a campaign with 0 ad
+    clicks shows RPC "—".
+  - Clicks are bucketed by IST business day on `created_at`, the moment the beacon landed.
+  - The Websites tab credits each click to the website it happened on, by the page URL's host. When one
+    host serves several offers, the click's `#c=` channel picks the offer, then traffic share splits the
+    rest (`creditAdClicksToOffers`). Host is the key because channels roll over: only 44% of clicks still
+    carry the offer's current channel, while 100% match an offer host.
+  - The masked-day machinery is gone: `isMaskedAfsDay`, `adClickEconomics`, `maskedDays`, "~"/"hidden",
+    and the CSV hidden-day column.
+  - Migration `20260929224916_conversion_events_ad_click_index` adds `(campaign_id, event_name,
+    created_at)`, so the count is index-only at production volume. It's additive.
+- **Accuracy vs Google** (staging, 14 days, days where Google shows clicks):
+  - **Detection is complete.** Every click our page detects comes to 101–117% of Google's reported clicks;
+    Google's number leaves out the days it hides.
+  - **Per visit reads lower than per click.** The once-per-visit count is 72% of Google's clicks, because a
+    visitor who clicks averages ~1.4 ads.
+  - **So RPC reads ~1.4× revenue-per-Google-click.** For example, $0.047 instead of $0.034 — exactly how
+    ClickFlare's Dynamic payout reads. vCVR is "share of visits with an ad click" (20.5% vs Google's
+    clicks-per-visit 28.2%).
+- **Kept as is:**
+  - Revenue still comes from AdSense, and the platform cut still applies.
+  - Visits are still Facebook link clicks.
+  - Conv / CPA / CVR (FB) are still Facebook's own count. It is usually below Ad clicks, because Facebook
+    can't match every visitor.
+  - Today's RPC climbs through the day, because AdSense earnings lag the clicks by a few hours.

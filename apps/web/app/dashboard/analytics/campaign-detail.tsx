@@ -22,7 +22,7 @@ import { campaigns as campaignApi, stats } from '@/lib/api';
 import admin from '../admin.module.css';
 import styles from '../analytics.module.css';
 import { BudgetCell } from './budget-cell';
-import { fmtCount, maskedAware } from './columns';
+import { fmtCount } from './columns';
 
 type Tab = 'ads' | 'websites' | 'countries' | 'hours';
 
@@ -242,8 +242,8 @@ export function CampaignDetail({
           ) : (
             <>
               <p className={styles.detailNote}>
-                Spend and visits aren&apos;t tracked per website (the redirect splits traffic by share), so compare websites on revenue and
-                RPC. RPC leaves out days where Google hides ad clicks (fewer than 10).
+                Spend and visits aren&apos;t tracked per website (the redirect splits traffic by share), so compare websites on revenue,
+                ad clicks and RPC.
               </p>
               <div className={styles.detailScroll}>
                 <table className={`${admin.table} ${styles.detailTable}`}>
@@ -257,8 +257,8 @@ export function CampaignDetail({
                       </th>
                       <HeadCell label="Traffic share" info="The share of paid traffic this website gets." />
                       <HeadCell label="Revenue" info="AdSense earnings on this website's channel (after any platform cut)." />
-                      <HeadCell label="Ad clicks" info="Paid ad clicks reported by Google for this website (hidden on days with fewer than 10)." />
-                      <HeadCell label="RPC" info="Revenue ÷ Google ad clicks (ClickFlare RPC), over the days Google shows the clicks." />
+                      <HeadCell label="Ad clicks" info="Visits on this website that clicked a Google ad, counted live by our page (once per visit)." />
+                      <HeadCell label="RPC" info="Revenue ÷ ad clicks (ClickFlare Dynamic payout)." />
                     </tr>
                   </thead>
                   <tbody>
@@ -271,8 +271,8 @@ export function CampaignDetail({
                         <td className={admin.subtle}>{o.kind === 'PAID' ? 'Paid' : 'Organic'}</td>
                         <td className={admin.num}>{o.kind === 'PAID' ? `${o.weightPct}%` : '—'}</td>
                         <td className={admin.num}>{formatUsd(o.revenueUsd)}</td>
-                        <td className={admin.num}>{o.afsClicks === 0 && o.maskedDays > 0 ? maskedAware(null, o.maskedDays, () => '') : fmtCount(o.afsClicks)}</td>
-                        <td className={admin.num}>{maskedAware(o.rpcUsd, o.maskedDays, formatUnitUsd)}</td>
+                        <td className={admin.num}>{fmtCount(o.adClicks)}</td>
+                        <td className={admin.num}>{formatUnitUsd(o.rpcUsd)}</td>
                       </tr>
                     ))}
                   </tbody>

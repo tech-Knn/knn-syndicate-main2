@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { type TxClient, prisma, withSystem } from '@knn/db';
 import { closeQueues } from '@knn/queue';
-import { ROLES, USER_STATUS, addBusinessDays, currentBusinessDay } from '@knn/shared';
+import { AD_CLICK_EVENT_NAME, ROLES, USER_STATUS, addBusinessDays, currentBusinessDay, zonedStartOfDayUtc } from '@knn/shared';
 import type { CampaignBreakdown, CampaignPerf, StatsSummary } from '@knn/shared';
 import { hashPassword } from '../../lib/password.js';
 import { buildApp } from '../../app.js';
@@ -285,8 +285,30 @@ describe('admin & super-admin rollups + platform surfaces', () => {
   });
 });
 
+/** Seed tracked funnel events (conversion_events) — the source of Analytics "ad clicks" (D30). */
+async function seedEvents(
+  tx: TxClient,
+  e: { orgId: string; campaignId: string; tag: string },
+  events: { url?: string; at?: Date; eventName?: string }[],
+): Promise<void> {
+  await tx.conversionEvent.createMany({
+    data: events.map((ev, i) => ({
+      orgId: e.orgId,
+      campaignId: e.campaignId,
+      adId: '33333333-3333-3333-3333-333333333333', // no FK — the ad doesn't matter here
+      clickId: `ce-${e.tag}-${i}`,
+      pixelFbId: '',
+      eventName: ev.eventName ?? AD_CLICK_EVENT_NAME,
+      eventSourceUrl: ev.url ?? null,
+      eventTime: ev.at ?? new Date(),
+      createdAt: ev.at ?? new Date(),
+      status: 'skipped',
+    })),
+  });
+}
+
 describe('getCampaignOfferStats (Phase F per-offer revenue)', () => {
-  it('sums per-offer revenue, applies the buyer cut, and flags (but does NOT hide) low-click offers', async () => {
+  it('sums per-offer revenue with the buyer cut, and credits tracked ad clicks to each website (RPC = revenue ÷ ad clicks)', async () => {
     const sfx = `ofs-${suffix}`;
     const CH = '11111111-1111-1111-1111-111111111111';
     let orgId = '';
@@ -306,23 +328,32 @@ describe('getCampaignOfferStats (Phase F per-offer revenue)', () => {
       offerLo = (await tx.offer.create({ data: { orgId, campaignId, domainId: domLo.id, weightPct: 40, kind: 'PAID' } })).id;
       await tx.offerRevenueDaily.create({ data: { orgId, offerId: offerHi, campaignId, channelRef: CH, day: today, revenueMinor: 10000, revenueUsdMinor: 10000, afsClicks: 50, currency: 'USD' } });
       await tx.offerRevenueDaily.create({ data: { orgId, offerId: offerLo, campaignId, channelRef: CH, day: today, revenueMinor: 5000, revenueUsdMinor: 5000, afsClicks: 3, currency: 'USD' } });
+      const hi = `https://hi-${sfx}.example.com/search?q=cheap+bikes#c=4401&r=rc&x=tx`;
+      const lo = `https://LO-${sfx}.example.com/search?q=bikes#r=rc&c=4402&x=tx`;
+      await seedEvents(tx, { orgId, campaignId, tag: sfx }, [
+        ...Array.from({ length: 5 }, () => ({ url: hi })),
+        { url: lo },
+        { url: lo },
+        { url: hi, eventName: 'AddToCart' }, // reached /search — not an ad click
+        { url: 'https://elsewhere.example.com/search#c=1' }, // not one of this campaign's websites
+        { url: hi, at: new Date(zonedStartOfDayUtc(today).getTime() - 1) }, // yesterday (IST), out of range
+      ]);
     });
     try {
       const auth = { userId: buyerId, orgId, role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE };
       const stats = await getCampaignOfferStats(auth, campaignId, { from: today, to: today });
       const byOffer = new Map(stats.map((s) => [s.offerId, s]));
-      // Hi: gross $100 → 30% cut → buyer-visible $70; 50 AFS clicks → not flagged.
-      expect(byOffer.get(offerHi)).toMatchObject({ revenueUsd: 70, suppressed: false });
-      // Lo: gross $50 → 30% cut → buyer-visible $35. 3 AFS clicks (< 10) → revenue is STILL shown
-      // (Google doesn't mask earnings); `suppressed:true` only flags that the click-derived columns
-      // (clicks / CPC) are hidden.
-      expect(byOffer.get(offerLo)).toMatchObject({ revenueUsd: 35, suppressed: true });
-      // RPC is revenue ÷ Google ad clicks over the days Google shows the clicks: Hi $70 / 50 = $1.40.
-      // Lo's only day is masked (earned, < 10 clicks) → no RPC rather than $35 / 3 = $11.67.
-      expect(byOffer.get(offerHi)).toMatchObject({ rpcUsd: 1.4, maskedDays: 0 });
-      expect(byOffer.get(offerLo)).toMatchObject({ rpcUsd: null, maskedDays: 1 });
+      // Hi: gross $100 → 30% cut → buyer-visible $70 over 5 tracked ad clicks → RPC $14.
+      expect(byOffer.get(offerHi)).toEqual(expect.objectContaining({ revenueUsd: 70, adClicks: 5, rpcUsd: 14 }));
+      // Lo: $35 over 2 → $17.50. Google reported just 3 clicks — below 10, which it hides — but our
+      // own count is never hidden, so RPC shows.
+      expect(byOffer.get(offerLo)).toEqual(expect.objectContaining({ revenueUsd: 35, adClicks: 2, rpcUsd: 17.5 }));
+      // A buyer can't read another buyer's campaign.
+      const other = { userId: '44444444-4444-4444-4444-444444444444', orgId, role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE };
+      await expect(getCampaignOfferStats(other, campaignId, { from: today, to: today })).rejects.toThrow('Campaign not found');
     } finally {
       await withSystem(async (tx) => {
+        await tx.conversionEvent.deleteMany({ where: { orgId } });
         await tx.offerRevenueDaily.deleteMany({ where: { orgId } });
         await tx.campaign.deleteMany({ where: { orgId } }); // cascades offers
         await tx.domain.deleteMany({ where: { afsAccountId: afsId } });
@@ -371,31 +402,43 @@ describe('getCampaignDimBreakdown (country/hour)', () => {
   });
 });
 
-describe('getCampaignPerformance — EPV / RPC / vCVR inputs (ClickFlare-named unit economics)', () => {
-  it('excludes days Google masked (< 10 ad clicks) from RPC and vCVR, applies the cut, keeps visits exact', async () => {
-    const CH = '22222222-2222-2222-2222-222222222222';
+describe('getCampaignPerformance — ad clicks for RPC / vCVR come from our own tracking (D30)', () => {
+  it('counts ad-click events per campaign over the IST range — live, never hidden, other funnel events excluded', async () => {
+    const startToday = zonedStartOfDayUtc(today);
     await withSystem(async (tx) => {
-      // Camp A1 (org A, default 10% cut): today 40 Google ad clicks on $75 gross; yesterday earned
-      // $36 but Google hid the clicks (reported 0) → a masked day.
-      await tx.campaignRevenueDaily.create({ data: { orgId: orgAId, campaignId: ids.cA1, channelRef: CH, day: today, afsClicks: 40, revenueMinor: 7500, revenueUsdMinor: 7500, currency: 'USD' } });
-      await tx.campaignRevenueDaily.create({ data: { orgId: orgAId, campaignId: ids.cA1, channelRef: CH, day: yesterday, afsClicks: 0, revenueMinor: 3600, revenueUsdMinor: 3600, currency: 'USD', suppressed: true } });
+      // Google reported 0 clicks yesterday (fewer than 10 → hidden); our tracking still has them.
+      await tx.campaignRevenueDaily.create({ data: { orgId: orgAId, campaignId: ids.cA1, channelRef: '22222222-2222-2222-2222-222222222222', day: yesterday, afsClicks: 0, revenueMinor: 3600, revenueUsdMinor: 3600, currency: 'USD', suppressed: true } });
+      await seedEvents(tx, { orgId: orgAId, campaignId: ids.cA1, tag: `pf-${suffix}` }, [
+        { at: startToday }, // 00:00:00.000 IST today → today
+        { at: new Date(startToday.getTime() + 3_600_000) },
+        { at: new Date(startToday.getTime() + 7_200_000) },
+        { at: new Date(startToday.getTime() - 1) }, // 23:59:59.999 IST yesterday → yesterday
+        { at: new Date(startToday.getTime() - 2 * 86_400_000) }, // two days ago → outside both ranges
+        { at: new Date(startToday.getTime() + 60_000), eventName: 'AddToCart' }, // reached /search, no ad click
+        { at: new Date(startToday.getTime() + 60_000), eventName: 'ViewContent' }, // landed, no ad click
+      ]);
     });
     try {
-      // Company admin → sees both of org A's campaigns (A1 with AdSense rows, A2 without).
+      // Company admin → sees both of org A's campaigns (A1 with tracked clicks, A2 without).
       const u = await withSystem((tx) => tx.user.findUniqueOrThrow({ where: { email: adminA } }));
       const auth = { userId: u.id, orgId: orgAId, role: ROLES.COMPANY_ADMIN, status: USER_STATUS.ACTIVE };
-      const rows = await getCampaignPerformance(auth, { from: yesterday, to: today });
-      const a1 = rows.find((r) => r.id === ids.cA1)!;
-      // Visits (FB link clicks): today 50 + 20, yesterday 30 → 100 in total; only today's 70 are
-      // comparable with today's ad clicks.
-      expect(a1.clicks).toBe(100);
-      expect(a1).toMatchObject({ adClicks: 40, adClickRevenueUsd: 67.5, adClickVisits: 70, maskedDays: 1 });
-      // → RPC $67.50 / 40 = $1.6875 (not ($67.50 + $32.40) / 40); vCVR 40 / 70 = 57%.
-      const a2 = rows.find((r) => r.id === ids.cA2)!;
-      expect(a2).toMatchObject({ adClicks: 0, adClickRevenueUsd: 0, maskedDays: 0 }); // no AdSense rows
-      expect(a2.adClickVisits).toBe(100); // its visits still count (0 ad clicks → vCVR 0%)
+      const both = await getCampaignPerformance(auth, { from: yesterday, to: today });
+      const a1 = both.find((r) => r.id === ids.cA1)!;
+      expect(a1.adClicks).toBe(4);
+      expect(a1.clicks).toBe(100); // visits (FB link clicks) unchanged: 50 + 20 today, 30 yesterday
+      expect(both.find((r) => r.id === ids.cA2)!.adClicks).toBe(0);
+      // Today only: the 23:59:59.999 IST click belongs to yesterday.
+      const todayOnly = await getCampaignPerformance(auth, { from: today, to: today });
+      expect(todayOnly.find((r) => r.id === ids.cA1)!.adClicks).toBe(3);
+      // The buyer sees the same count on their own campaign (RLS-scoped read).
+      const b1 = await withSystem((tx) => tx.user.findUniqueOrThrow({ where: { email: buyerA1 } }));
+      const mine = await getCampaignPerformance({ userId: b1.id, orgId: orgAId, role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE }, { from: yesterday, to: today });
+      expect(mine.map((r) => [r.id, r.adClicks])).toEqual([[ids.cA1, 4]]);
     } finally {
-      await withSystem((tx) => tx.campaignRevenueDaily.deleteMany({ where: { campaignId: ids.cA1 } }));
+      await withSystem(async (tx) => {
+        await tx.conversionEvent.deleteMany({ where: { campaignId: ids.cA1 } });
+        await tx.campaignRevenueDaily.deleteMany({ where: { campaignId: ids.cA1 } });
+      });
     }
   });
 });

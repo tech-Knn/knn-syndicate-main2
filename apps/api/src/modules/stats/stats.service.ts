@@ -1,6 +1,6 @@
 import { type TxClient } from '@knn/db';
 import {
-  AFS_CLICK_SUPPRESSION_THRESHOLD,
+  AD_CLICK_EVENT_NAME,
   type AdPerf,
   type AdSetPerf,
   type BuyerRollup,
@@ -17,19 +17,19 @@ import {
   type StatsSummary,
   SYNC_INTERVALS_SEC,
   SYNC_STATE_KEYS,
-  adClickEconomics,
   addBusinessDays,
   allocateByWeights,
+  businessDayBoundsUtc,
   businessDaysInRange,
   centsToDollars,
   currentBusinessDay,
-  isMaskedAfsDay,
   rpcPerAdClick,
 } from '@knn/shared';
 import { QUEUES, getQueue } from '@knn/queue';
 import { AppError } from '../../lib/errors.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
+import { type AdClickSource, creditAdClicksToOffers } from './offer-ad-clicks.js';
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_RANGE_DAYS = 92;
@@ -71,6 +71,15 @@ function dayWhere(range: DateRange, campaignIds: string[] | null) {
     day: { gte: range.from, lte: range.to },
     ...(campaignIds ? { campaignId: { in: campaignIds } } : {}),
   };
+}
+
+/**
+ * The range as UTC instants [start, end) — for raw events (not daily rollups), bucketed by the IST
+ * business day like everything else. `conversion_events.created_at` is the moment the beacon landed,
+ * i.e. the ad click (and it's the indexed column).
+ */
+function rangeBoundsUtc(range: DateRange): { start: Date; end: Date } {
+  return { start: businessDayBoundsUtc(range.from).start, end: businessDayBoundsUtc(range.to).end };
 }
 
 /** KPI totals + a per-day series (gaps zero-filled) for the actor's scope. */
@@ -158,7 +167,8 @@ export async function getCampaignPerformance(
     const buyerIds = [...new Set(campaigns.map((c) => c.buyerId))];
     const orgIds = [...new Set(campaigns.map((c) => c.orgId))];
 
-    const [statsByCamp, revByCamp, adSets, channels, buyers, orgs, visitsByCampDay, campaignAfsDays, offerAfsDays] = await Promise.all([
+    const { start, end } = rangeBoundsUtc(range);
+    const [statsByCamp, revByCamp, adSets, channels, buyers, orgs, adClicksByCamp] = await Promise.all([
       tx.adStatsDaily.groupBy({
         by: ['campaignId'],
         where,
@@ -175,33 +185,18 @@ export async function getCampaignPerformance(
           ? tx.channel.findMany({ where: { id: { in: refs } }, select: { id: true, label: true, channelId: true } })
           : Promise.resolve([] as { id: string; label: string | null; channelId: string }[]);
       })(),
-      tx.user.findMany({ where: { id: { in: buyerIds } }, select: { id: true, name: true, revenueCutPct: true } }),
-      tx.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true, defaultRevenueCutPct: true } }),
-      // RPC / vCVR inputs: per-day visits, the campaign AdSense rollup (complete totals), and the
-      // per-channel offer rows (reveal a masked channel the summed rollup can't).
-      tx.adStatsDaily.groupBy({ by: ['campaignId', 'day'], where, _sum: { clicks: true } }),
-      tx.campaignRevenueDaily.findMany({ where, select: { campaignId: true, day: true, afsClicks: true, revenueUsdMinor: true } }),
-      tx.offerRevenueDaily.findMany({ where, select: { campaignId: true, day: true, afsClicks: true, revenueUsdMinor: true } }),
+      tx.user.findMany({ where: { id: { in: buyerIds } }, select: { id: true, name: true } }),
+      tx.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } }),
+      // RPC / vCVR input: our own ad-click tracking (D30), live and never hidden like Google's count.
+      tx.conversionEvent.groupBy({
+        by: ['campaignId'],
+        where: { campaignId: { in: ids }, eventName: AD_CLICK_EVENT_NAME, createdAt: { gte: start, lt: end } },
+        _count: { _all: true },
+      }),
     ]);
 
     const statsMap = new Map(statsByCamp.map((r) => [r.campaignId, r._sum]));
-    const cutByBuyer = new Map(buyers.map((b) => [b.id, b.revenueCutPct === null ? null : Number(b.revenueCutPct)]));
-    const cutByOrg = new Map(orgs.map((o) => [o.id, Number(o.defaultRevenueCutPct)]));
-    const visitsByCamp = new Map<string, Map<string, number>>();
-    for (const v of visitsByCampDay) {
-      const m = visitsByCamp.get(v.campaignId) ?? new Map<string, number>();
-      m.set(v.day, (m.get(v.day) ?? 0) + (v._sum.clicks ?? 0));
-      visitsByCamp.set(v.campaignId, m);
-    }
-    const maskedOfferDays = new Set(
-      offerAfsDays.filter((o) => isMaskedAfsDay(o.afsClicks, o.revenueUsdMinor)).map((o) => `${o.campaignId}|${o.day}`),
-    );
-    const afsDaysByCamp = new Map<string, { day: string; afsClicks: number; revenueUsdMinor: number; forceMasked: boolean }[]>();
-    for (const r of campaignAfsDays) {
-      const list = afsDaysByCamp.get(r.campaignId) ?? [];
-      list.push({ day: r.day, afsClicks: r.afsClicks, revenueUsdMinor: r.revenueUsdMinor, forceMasked: maskedOfferDays.has(`${r.campaignId}|${r.day}`) });
-      afsDaysByCamp.set(r.campaignId, list);
-    }
+    const adClicksMap = new Map(adClicksByCamp.map((r) => [r.campaignId, r._count._all]));
     const revMap = new Map(revByCamp.map((r) => [r.campaignId, r._sum.visibleUsdMinor ?? 0]));
     const buyerName = new Map(buyers.map((b) => [b.id, b.name]));
     const orgName = new Map(orgs.map((o) => [o.id, o.name]));
@@ -239,11 +234,7 @@ export async function getCampaignPerformance(
         adCount: adCount.get(c.id) ?? 0,
         budgetMode: c.budgetMode,
         dailyBudgetCents: c.budgetMode === 'CAMPAIGN' ? c.dailyBudgetCents : (adSetBudget.get(c.id) ?? null),
-        ...adClickEconomics({
-          channelDays: afsDaysByCamp.get(c.id) ?? [],
-          visitsByDay: visitsByCamp.get(c.id) ?? new Map(),
-          cutPct: cutByBuyer.get(c.buyerId) ?? cutByOrg.get(c.orgId) ?? 0,
-        }),
+        adClicks: adClicksMap.get(c.id) ?? 0,
       };
     });
   });
@@ -485,10 +476,10 @@ async function offerCutPct(tx: TxClient, orgId: string, buyerId: string): Promis
 }
 
 /**
- * Per-offer revenue for one campaign over the range (Phase F). Each offer's gross AFS
- * channel revenue (offer_revenue_daily) summed, then the platform cut applied → the
- * buyer-visible amount; suppressed (hidden) when AFS clicks are below the threshold.
- * Lets the buyer see WHICH website/offer monetizes best (cost stays campaign-level).
+ * Per-offer (website) results for one campaign over the range (Phase F): each offer's AdSense channel
+ * revenue (offer_revenue_daily) with the platform cut applied — always shown, Google never hides
+ * earnings — plus the ad clicks our tracking saw on that website and the RPC they give (D30).
+ * Lets the buyer see WHICH website monetizes best (cost stays campaign-level).
  * Owner/admin scoped (RLS + a buyer can only see their own campaign).
  */
 export async function getCampaignOfferStats(
@@ -508,58 +499,79 @@ export async function getCampaignOfferStats(
     });
     if (offers.length === 0) return [];
 
-    const rev = await tx.offerRevenueDaily.groupBy({
-      by: ['offerId'],
-      where: { offerId: { in: offers.map((o) => o.id) }, day: { gte: range.from, lte: range.to } },
-      _sum: { revenueUsdMinor: true, afsClicks: true },
-    });
-    const byOffer = new Map(rev.map((r) => [r.offerId, r]));
-    const cut = await offerCutPct(tx, campaign.orgId, campaign.buyerId);
-    // RPC per offer over the days Google shows its clicks (a masked day — earned, < 10 clicks —
-    // would otherwise count its revenue over zero clicks and inflate RPC).
-    const days = await tx.offerRevenueDaily.findMany({
-      where: { offerId: { in: offers.map((o) => o.id) }, day: { gte: range.from, lte: range.to } },
-      select: { offerId: true, afsClicks: true, revenueUsdMinor: true },
-    });
-    const rpcInputs = new Map<string, { clicks: number; visibleMinor: number; masked: number }>();
-    for (const d of days) {
-      const acc = rpcInputs.get(d.offerId) ?? { clicks: 0, visibleMinor: 0, masked: 0 };
-      if (isMaskedAfsDay(d.afsClicks, d.revenueUsdMinor)) acc.masked += 1;
-      else {
-        acc.clicks += d.afsClicks;
-        acc.visibleMinor += Math.round(d.revenueUsdMinor * (1 - cut));
-      }
-      rpcInputs.set(d.offerId, acc);
+    const { start, end } = rangeBoundsUtc(range);
+    const [rev, cut, sources] = await Promise.all([
+      // By channel too: a shared-host tie-break needs every channel an offer rolled over through.
+      tx.offerRevenueDaily.groupBy({
+        by: ['offerId', 'channelRef'],
+        where: { offerId: { in: offers.map((o) => o.id) }, day: { gte: range.from, lte: range.to } },
+        _sum: { revenueUsdMinor: true },
+      }),
+      offerCutPct(tx, campaign.orgId, campaign.buyerId),
+      // The website host + AFS channel (the `#c=` the results page URL carries) of each tracked click.
+      tx.$queryRaw<AdClickSource[]>`
+        SELECT lower(substring(event_source_url from '^https?://([^/:?#]+)')) AS host,
+               substring(event_source_url from '#(?:.*&)?c=([^&]*)') AS channel,
+               count(*)::int AS clicks
+        FROM conversion_events
+        WHERE campaign_id = ${campaignId}::uuid
+          AND event_name = ${AD_CLICK_EVENT_NAME}
+          AND created_at >= (${start.toISOString()}::timestamptz AT TIME ZONE 'UTC')
+          AND created_at < (${end.toISOString()}::timestamptz AT TIME ZONE 'UTC')
+        GROUP BY 1, 2`,
+    ]);
+
+    const grossByOffer = new Map<string, number>();
+    const channelRefsByOffer = new Map(offers.map((o) => [o.id, new Set(o.channelRef ? [o.channelRef] : [])]));
+    for (const r of rev) {
+      grossByOffer.set(r.offerId, (grossByOffer.get(r.offerId) ?? 0) + (r._sum.revenueUsdMinor ?? 0));
+      channelRefsByOffer.get(r.offerId)?.add(r.channelRef);
     }
+    // Channel ids only matter when two offers share a host — look them up only then.
+    const hosts = offers.map((o) => o.domain.host.toLowerCase());
+    const sharedHost = new Set(hosts).size < hosts.length;
+    const channelIdByRef = new Map<string, string>();
+    if (sharedHost) {
+      const refs = [...new Set([...channelRefsByOffer.values()].flatMap((s) => [...s]))];
+      for (const c of await tx.channel.findMany({ where: { id: { in: refs } }, select: { id: true, channelId: true } })) {
+        channelIdByRef.set(c.id, c.channelId);
+      }
+    }
+    const adClicks = creditAdClicksToOffers(
+      sources.map((s) => ({ ...s, channel: s.channel === null ? null : safeDecode(s.channel) })),
+      offers.map((o) => ({
+        id: o.id,
+        host: o.domain.host,
+        weightPct: o.weightPct,
+        channelIds: [...(channelRefsByOffer.get(o.id) ?? [])].map((ref) => channelIdByRef.get(ref)).filter((x): x is string => Boolean(x)),
+      })),
+    );
 
     return offers.map((o): OfferStat => {
-      const r = byOffer.get(o.id);
-      const grossMinor = r?._sum.revenueUsdMinor ?? 0;
-      const afsClicks = r?._sum.afsClicks ?? 0;
-      // Google's AFS rule (support.google.com/adsense/answer/10078316): below 10 clicks/day it masks
-      // CLICK-DERIVED metrics (clicks, CTR, CPC) to 0 — but NOT estimated earnings. So we ALWAYS show
-      // the revenue (even $0.01 if the channel earned it); `suppressed` now flags only that the
-      // click-derived columns are hidden, never the earnings.
-      const suppressed = afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD;
-      const visibleMinor = Math.round(grossMinor * (1 - cut));
+      const revenueUsd = round2(centsToDollars(Math.round((grossByOffer.get(o.id) ?? 0) * (1 - cut))));
+      const clicks = adClicks.get(o.id) ?? 0;
+      const rpc = rpcPerAdClick(revenueUsd, clicks);
       return {
         offerId: o.id,
         host: o.domain.host,
         afsLabel: o.domain.afsAccount.label,
         kind: o.kind,
         weightPct: o.weightPct,
-        revenueUsd: round2(centsToDollars(visibleMinor)), // earnings always shown (Google doesn't mask earnings)
-        afsClicks,
-        suppressed, // click-derived metrics (clicks / CPC) hidden below 10 clicks/day — revenue is NOT
-        rpcUsd: (() => {
-          const i = rpcInputs.get(o.id);
-          const v = i ? rpcPerAdClick(centsToDollars(i.visibleMinor), i.clicks) : null;
-          return v === null ? null : Math.round(v * 10000) / 10000;
-        })(),
-        maskedDays: rpcInputs.get(o.id)?.masked ?? 0,
+        revenueUsd,
+        adClicks: clicks,
+        rpcUsd: rpc === null ? null : Math.round(rpc * 10000) / 10000,
       };
     });
   });
+}
+
+/** URL-decode a query value, keeping it as-is if it isn't valid encoding. */
+function safeDecode(v: string): string {
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return v;
+  }
 }
 
 /**

@@ -964,6 +964,8 @@ model ConversionEvent {
   @@unique([clickId, eventName])
   @@index([orgId, createdAt])
   @@index([campaignId, createdAt])
+  /// Analytics counts one event type (the ad click) per campaign over a range — index-only (D30).
+  @@index([campaignId, eventName, createdAt])
   @@index([status])
   @@map("conversion_events")
 }

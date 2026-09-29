@@ -11,7 +11,6 @@ import {
   rpcPerAdClick,
   vcvr,
 } from '@knn/shared';
-import { Tooltip } from '@/components/tooltip';
 import styles from '../analytics.module.css';
 
 /**
@@ -30,10 +29,8 @@ export interface MetricInputs {
   clicks: number;
   /** Facebook-reported conversions (the pixel `Search` event = an ad click). */
   conversions: number;
+  /** Visits that clicked a Google ad — our own tracking, live and never hidden (ClickFlare Conversions). */
   adClicks: number;
-  adClickRevenueUsd: number;
-  adClickVisits: number;
-  maskedDays: number;
 }
 
 export const derive = {
@@ -41,8 +38,8 @@ export const derive = {
   roi: (r: MetricInputs): number | null => (r.spendUsd > 0 ? (r.revenueUsd - r.spendUsd) / r.spendUsd : null),
   epv: (r: MetricInputs): number | null => epv(r.revenueUsd, r.clicks),
   cpc: (r: MetricInputs): number | null => costPer(r.spendUsd, r.clicks),
-  rpc: (r: MetricInputs): number | null => rpcPerAdClick(r.adClickRevenueUsd, r.adClicks),
-  vcvr: (r: MetricInputs): number | null => vcvr(r.adClicks, r.adClickVisits),
+  rpc: (r: MetricInputs): number | null => rpcPerAdClick(r.revenueUsd, r.adClicks),
+  vcvr: (r: MetricInputs): number | null => vcvr(r.adClicks, r.clicks),
   ctr: (r: MetricInputs): number | null => perVisit(r.clicks, r.impressions),
   cpa: (r: MetricInputs): number | null => costPer(r.spendUsd, r.conversions),
   cvrFb: (r: MetricInputs): number | null => perVisit(r.conversions, r.clicks),
@@ -58,7 +55,7 @@ export function fmtCount(n: number): string {
 
 /** Sum rows into totals inputs (ratios are then re-derived from the sums, never averaged). */
 export function sumInputs(rows: readonly MetricInputs[]): MetricInputs {
-  const t: MetricInputs = { spendUsd: 0, revenueUsd: 0, impressions: 0, clicks: 0, conversions: 0, adClicks: 0, adClickRevenueUsd: 0, adClickVisits: 0, maskedDays: 0 };
+  const t: MetricInputs = { spendUsd: 0, revenueUsd: 0, impressions: 0, clicks: 0, conversions: 0, adClicks: 0 };
   for (const r of rows) {
     t.spendUsd += r.spendUsd;
     t.revenueUsd += r.revenueUsd;
@@ -66,9 +63,6 @@ export function sumInputs(rows: readonly MetricInputs[]): MetricInputs {
     t.clicks += r.clicks;
     t.conversions += r.conversions;
     t.adClicks += r.adClicks;
-    t.adClickRevenueUsd += r.adClickRevenueUsd;
-    t.adClickVisits += r.adClickVisits;
-    t.maskedDays += r.maskedDays;
   }
   return t;
 }
@@ -81,7 +75,7 @@ export const GROUPS: Record<GroupKey, { label: string; info: string }> = {
     label: 'Per visit & per click',
     info: 'Unit economics, named exactly like ClickFlare. A campaign makes money when EPV (earned per visit) beats CPC (paid per visit).',
   },
-  traffic: { label: 'Traffic', info: 'Visitors from Facebook and the paid ad clicks they made on Google.' },
+  traffic: { label: 'Traffic', info: 'Visitors from Facebook and the Google ads they clicked.' },
   facebook: { label: 'Facebook', info: "Facebook's own conversion reporting — used for its optimization and CPA." },
   controls: { label: '', info: '' },
 };
@@ -132,27 +126,6 @@ const csvNum = (n: number | null, digits: number): string => (n === null ? '' : 
 function dataBar(value: number, max: number, cls: string | undefined): ReactNode {
   if (value <= 0 || max <= 0) return null;
   return <span className={cls} style={{ width: `${Math.max(4, Math.round((value / max) * 100))}%` }} aria-hidden />;
-}
-
-/**
- * RPC / vCVR exclude days where Google hid the ad clicks (< 10 that day). When some days were left
- * out the value is shown as partial ("~"); when all were hidden, as "—" — both explained on hover.
- */
-export function maskedAware(value: number | null, maskedDays: number, format: (v: number | null) => string): ReactNode {
-  if (maskedDays === 0) return format(value);
-  const days = `${maskedDays} day${maskedDays === 1 ? '' : 's'}`;
-  if (value === null) {
-    return (
-      <Tooltip content={`Google hides ad clicks on days with fewer than 10 of them, so there's nothing to divide by yet (${days}).`}>
-        <span className={styles.masked}>hidden</span>
-      </Tooltip>
-    );
-  }
-  return (
-    <Tooltip content={`Partial: ${days} left out — Google hides ad clicks on days with fewer than 10, so those days are excluded from both sides of the ratio.`}>
-      <span className={styles.partial}>~{format(value)}</span>
-    </Tooltip>
-  );
 }
 
 export const COLUMNS: ColumnDef[] = [
@@ -236,18 +209,18 @@ export const COLUMNS: ColumnDef[] = [
     key: 'rpc',
     label: 'RPC',
     group: 'unit',
-    info: 'Revenue per paid ad click = revenue ÷ Google ad clicks. Same as ClickFlare RPC (revenue per conversion — a search-arbitrage conversion is the paid ad click). Days where Google hides clicks (fewer than 10) are left out.',
+    info: "Revenue per ad click = revenue ÷ ad clicks. Same as ClickFlare's Dynamic payout (revenue ÷ conversions). Today's RPC climbs through the day as Google's earnings catch up with the clicks.",
     sort: (r) => derive.rpc(r),
-    cell: (r) => maskedAware(derive.rpc(r), r.maskedDays, formatUnitUsd),
+    cell: (r) => formatUnitUsd(derive.rpc(r)),
     csv: (r) => csvNum(derive.rpc(r), 4),
   },
   {
     key: 'vcvr',
     label: 'vCVR',
     group: 'unit',
-    info: 'Paid ad clicks ÷ visits — the share of visitors who clicked an ad. Same as ClickFlare vCVR. Days where Google hides clicks (fewer than 10) are left out.',
+    info: 'Ad clicks ÷ visits — the share of visitors who clicked a Google ad. Same as ClickFlare vCVR.',
     sort: (r) => derive.vcvr(r),
-    cell: (r) => maskedAware(derive.vcvr(r), r.maskedDays, formatRate),
+    cell: (r) => formatRate(derive.vcvr(r)),
     csv: (r) => csvNum(derive.vcvr(r) === null ? null : derive.vcvr(r)! * 100, 2),
   },
   // ── Traffic ────────────────────────────────────────────────────────────────
@@ -264,9 +237,9 @@ export const COLUMNS: ColumnDef[] = [
     key: 'adClicks',
     label: 'Ad clicks',
     group: 'traffic',
-    info: 'Paid ad clicks on the search results page, as reported by Google (AdSense). Same as ClickFlare Conversions. Google hides the count on days with fewer than 10.',
+    info: "Visits that clicked a Google ad on the results page, counted live by our page — once per visit, the way ClickFlare counts Conversions. Google's own count runs higher (it counts every click, and a visitor can click more than one ad).",
     sort: (r) => r.adClicks,
-    cell: (r) => (r.adClicks === 0 && r.maskedDays > 0 ? maskedAware(null, r.maskedDays, () => '') : fmtCount(r.adClicks)),
+    cell: (r) => fmtCount(r.adClicks),
     csv: (r) => String(r.adClicks),
   },
   {
@@ -292,7 +265,7 @@ export const COLUMNS: ColumnDef[] = [
     key: 'conv',
     label: 'Conv (FB)',
     group: 'facebook',
-    info: "Facebook's count of ad clicks (the pixel 'Search' event) — what Facebook optimizes for. Usually lower than Google's Ad clicks (Facebook misses some).",
+    info: "Facebook's count of the same ad-click event (the pixel 'Search' event) — what Facebook optimizes for. Usually below Ad clicks: Facebook can't match every visitor.",
     sort: (r) => r.conversions,
     cell: (r) => fmtCount(r.conversions),
     csv: (r) => String(r.conversions),
@@ -310,7 +283,7 @@ export const COLUMNS: ColumnDef[] = [
     key: 'cvrFb',
     label: 'CVR (FB)',
     group: 'facebook',
-    info: 'Conv (FB) ÷ visits — the ad-click rate as Facebook sees it. Compare with vCVR (Google).',
+    info: 'Conv (FB) ÷ visits — the ad-click rate as Facebook sees it. Compare with vCVR.',
     sort: (r) => derive.cvrFb(r),
     cell: (r) => formatRate(derive.cvrFb(r)),
     csv: (r) => csvNum(derive.cvrFb(r) === null ? null : derive.cvrFb(r)! * 100, 2),

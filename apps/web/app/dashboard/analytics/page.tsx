@@ -318,10 +318,10 @@ export default function AnalyticsPage() {
     }
   };
 
-  // CSV always carries every metric (whatever the on-screen column pick) + the raw RPC/vCVR inputs.
+  // CSV always carries every metric, whatever the on-screen column pick.
   const exportCsv = (): void => {
     const metricCols = COLUMNS.filter((c) => c.key !== 'budget');
-    const head = ['Campaign', 'Status', 'Buyer', 'Company', 'Channel', 'Daily budget', ...metricCols.map((c) => c.label), 'Days with hidden ad clicks'];
+    const head = ['Campaign', 'Status', 'Buyer', 'Company', 'Channel', 'Daily budget', ...metricCols.map((c) => c.label)];
     const esc = (v: string | number): string => {
       const s = String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -337,7 +337,6 @@ export default function AnalyticsPage() {
           r.channelLabel ?? '',
           r.dailyBudgetCents != null ? (r.dailyBudgetCents / 100).toFixed(2) : '',
           ...metricCols.map((c) => c.csv(r)),
-          r.maskedDays,
         ]
           .map(esc)
           .join(','),
@@ -514,7 +513,7 @@ export default function AnalyticsPage() {
               <span className={styles.summaryLabel}>Results · {fmtCount(filtered.length)} {filtered.length === 1 ? 'campaign' : 'campaigns'}</span>
               <div className={styles.summaryStrip}>
                 <StatTile label="Spend" value={formatUsd(totals.spendUsd)} sub={`${fmtCount(totals.clicks)} visits`} info="Facebook ad spend across the campaigns shown." />
-                <StatTile label="Revenue" value={formatUsd(totals.revenueUsd)} sub={`${fmtCount(totals.adClicks)} paid ad clicks`} info="AdSense earnings attributed to the campaigns shown (after any platform cut). Lags spend by a few hours." />
+                <StatTile label="Revenue" value={formatUsd(totals.revenueUsd)} sub={`${fmtCount(totals.adClicks)} ad clicks`} info="AdSense earnings attributed to the campaigns shown (after any platform cut). Lags spend by a few hours." />
                 <StatTile
                   label="Profit"
                   value={formatUsd(tProfit)}
@@ -545,14 +544,14 @@ export default function AnalyticsPage() {
                 <StatTile
                   label="RPC"
                   value={formatUnitUsd(tRpc)}
-                  sub={totals.maskedDays ? `per ad click · ${totals.maskedDays}d hidden` : 'per paid ad click'}
-                  info="Revenue ÷ Google ad clicks (ClickFlare RPC = revenue per conversion). Days where Google hides a campaign's ad clicks (fewer than 10 that day) are left out — the “d hidden” count shows how many."
+                  sub="per ad click"
+                  info="Revenue ÷ ad clicks — ClickFlare's Dynamic payout. Ad clicks are counted live by our page, once per visit that clicked a Google ad."
                 />
                 <StatTile
                   label="vCVR"
                   value={formatRate(tVcvr)}
                   sub="visitors who clicked an ad"
-                  info="Paid ad clicks ÷ visits (ClickFlare vCVR). Days where Google hides clicks (fewer than 10) are left out."
+                  info="Ad clicks ÷ visits (ClickFlare vCVR)."
                 />
               </div>
             </div>
