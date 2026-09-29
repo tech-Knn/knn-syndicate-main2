@@ -443,3 +443,26 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
 - **Not covered:** out-of-band DB edits that free a channel (they bypass the pool code); re-issue on the
   NEXT day (oldest-first ordering still recycles freed channels quickly — revisit with LRU ordering if
   cross-day tail traffic matters); the article page's historical-channel fallback.
+
+### 2026-09-29 — D26: RSOC pages default to `adsafe: 'low'` and serve ONE related-search unit
+
+- **Benchmark:** the team's RSOC pages tracked in ClickFlare (`search.entertainmentheute.de`, the SAME
+  AdSense account `partner-pub-6567805284657549`) made 149–154% ROAS on India traffic Sep 17–29 2026 vs
+  42% for this app's pages. Page speed/first screen were comparable (ours faster). Config differences
+  read from their live page source: `adsafe: "low"` (ours `medium`), one `relatedsearch` block (ours two).
+- **`adsafe`:** the fallback when neither the domain (Domains admin) nor `NEXT_PUBLIC_AFS_ADSAFE` sets one
+  is now `'low'` (`apps/article/app/_afs/csa.ts#DEFAULT_ADSAFE`, used by `site-config.ts`, the article
+  unit and `/search`). Google: `high` = family-safe only; `medium` = no adult sexual content; **`low` =
+  "Returns all types of ads"** (adult included) — the widest advertiser pool. A domain's own `adsafe`
+  still wins, so any site can be set stricter.
+- **One unit:** the article page fires `_googCsa('relatedsearch', po, rsblock1)` into
+  `#relatedsearches1` only (the mid-article `#relatedsearches2` strip, added Aug 5, is removed) — to
+  match the profitable pages. This is a CRO choice, not policy: the account HAS Restricted Access
+  Features (RAF), so multiple units per page are allowed and a second unit can be restored if fill or
+  RPV drops. The Aug 5 "one block returns zero terms" note wasn't measured on this account (the same
+  day's blank units were traced to a long `resultsPageBaseUrl`).
+- **RAF is account-wide and shared with the ClickFlare business.** Partner terms, multiple units and
+  >500 channels all depend on it, and inaccurate `referrerAdCreative` counts toward RAF strikes — so
+  this app's rc practice (campaign-level short phrase, not the verbatim ad text) risks the shared RAF.
+- **Watch after deploy:** per-host unit fill (`unit:<host>` in `term_stat_daily`, ~91% before) and
+  chip CTR / revenue per visit per campaign vs the week before.

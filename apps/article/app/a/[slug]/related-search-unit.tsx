@@ -1,4 +1,4 @@
-import { afsConfigured, AFS_TRACKING_PARAMS, type SiteConfig } from '../../_afs/csa';
+import { afsConfigured, AFS_TRACKING_PARAMS, DEFAULT_ADSAFE, type SiteConfig } from '../../_afs/csa';
 import styles from './article.module.css';
 
 /**
@@ -22,9 +22,10 @@ import styles from './article.module.css';
  * no visual space until Google's ads.js injects real chip iframes into the container — an
  * uncrawled / empty unit stays zero-footprint.
  *
- * Container layout: `#relatedsearches1` is placed here (above the article body); `#relatedsearches2`
- * is placed in `page.tsx` AFTER the second H2 for a mid-article second strip. The single
- * `_googCsa('relatedsearch', po, rsblock1, rsblock2)` call targets both by id.
+ * ONE related-search unit per page (D26): `#relatedsearches1`, placed here above the article
+ * body — matching the team's profitable RSOC pages on the same AdSense account, which serve a
+ * single unit. (Our account has RAF, so a second unit is ALLOWED; this is a CRO choice, not a
+ * policy one. A second mid-article unit `#relatedsearches2` ran Aug 5 – Sep 2026.)
  */
 
 // Per-host RSOC unit-fill telemetry endpoint. Same telemetry sink /search uses.
@@ -73,7 +74,7 @@ export function RelatedSearchUnit({
     pubId: site.pubId,
     styleId: site.styleId,
     hl: 'en',
-    adsafe: site.adsafe || 'medium',
+    adsafe: site.adsafe || DEFAULT_ADSAFE,
     ivt: false,
     relatedSearchTargeting: 'content',
     resultsPageQueryParam: 'q',
@@ -128,19 +129,17 @@ export function RelatedSearchUnit({
     // 5. Per-host unit-fill telemetry — same beacon as the old client component.
     `var TT=${safeJson(TERM_TELEMETRY_URL)};` +
     `function ttUnit(f){if(!TT)return;try{var u=TT+(TT.indexOf('?')<0?'?':'&')+'term='+encodeURIComponent('unit:'+location.host)+'&event=render&filled='+(f?1:0);navigator.sendBeacon?navigator.sendBeacon(u):fetch(u,{method:'POST',keepalive:!0,mode:'no-cors'})}catch(e){}}` +
-    // 6. Two rsblocks (per Google's newer RSOC pattern; single block has been observed to
-    //    silently return zero terms). Both send legacy `relatedSearches` and newer `number`
-    //    so whichever ads.js reads is populated.
+    // 6. One rsblock (D26). Sends legacy `relatedSearches` and newer `number` so whichever
+    //    ads.js reads is populated.
     `var b1={container:'relatedsearches1',relatedSearches:5,number:5,adLoadedCallback:function(c,l){ttUnit(l)}};` +
-    `var b2={container:'relatedsearches2',relatedSearches:5,number:5,adLoadedCallback:function(c,l){}};` +
-    `_googCsa('relatedsearch',po,b1,b2);` +
+    `_googCsa('relatedsearch',po,b1);` +
     // 7. Load ads.js. Preloaded in resource-hints.tsx so the browser already has it in cache
     //    on modern browsers — this append is essentially free.
     `var s=document.createElement('script');s.async=!0;s.src='https://www.google.com/adsense/search/ads.js';document.head.appendChild(s);` +
     // 8. bfcache re-fire — user navigates chip → /search → hits Back → article restored from
-    //    bfcache. Without this the old CSA iframe is stale and chips are gone. We clear both
-    //    containers and re-fire the command so chips render again for a second click.
-    `window.addEventListener('pageshow',function(e){if(!e.persisted)return;var c1=document.getElementById('relatedsearches1'),c2=document.getElementById('relatedsearches2');if(c1)c1.innerHTML='';if(c2)c2.innerHTML='';_googCsa('relatedsearch',po,b1,b2);});`;
+    //    bfcache. Without this the old CSA iframe is stale and chips are gone. We clear the
+    //    container and re-fire the command so chips render again for a second click.
+    `window.addEventListener('pageshow',function(e){if(!e.persisted)return;var c1=document.getElementById('relatedsearches1');if(c1)c1.innerHTML='';_googCsa('relatedsearch',po,b1);});`;
 
   return (
     <aside className={styles.afs} aria-label="Related searches">

@@ -17,6 +17,15 @@ export const AFS_TRACKING_PARAMS =
   't,rc,terms,txid,clickid,utm_source,utm_content,utm_campaign,utm_medium,utm_term,fbclid,hl,styleId,placement,s1,ds,camp_id';
 
 /**
+ * `adsafe` used when neither the domain (Domains admin) nor `NEXT_PUBLIC_AFS_ADSAFE` sets one
+ * (D26). Google: 'high' = family-safe only · 'medium' = no adult sexual content · 'low' =
+ * "Returns all types of ads" (no filtering, adult included). 'low' is what the team's
+ * profitable RSOC pages on the same AdSense account run (149–154% India ROAS vs our 42% on
+ * 'medium', Sep 17–29 2026) — the widest advertiser pool. Override per domain to go stricter.
+ */
+export const DEFAULT_ADSAFE = 'low';
+
+/**
  * AFS monetization config for the CURRENT request's host (Phase D). Resolved
  * server-side from the registered Domain → its AFS account's pubId (+ the domain's
  * style/adsafe), so one article app serves many websites under their own accounts.

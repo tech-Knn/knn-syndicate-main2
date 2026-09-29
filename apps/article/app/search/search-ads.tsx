@@ -1,4 +1,4 @@
-import { afsConfigured, type SiteConfig } from '../_afs/csa';
+import { afsConfigured, DEFAULT_ADSAFE, type SiteConfig } from '../_afs/csa';
 import styles from './search.module.css';
 
 /**
@@ -75,7 +75,7 @@ export function SearchAds({
     styleId: site.styleId,
     query,
     hl: 'en',
-    adsafe: site.adsafe || 'medium',
+    adsafe: site.adsafe || DEFAULT_ADSAFE,
     ivt: false,
     // Open ads in a new tab so the results page stays put.
     linkTarget: '_blank',
