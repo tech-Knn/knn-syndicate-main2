@@ -232,7 +232,7 @@ export async function listCampaigns(auth: AuthContext): Promise<CampaignWithChil
   });
 }
 
-async function loadOwnedCampaign(
+export async function loadOwnedCampaign(
   tx: TxClient,
   auth: AuthContext,
   id: string,
@@ -257,7 +257,7 @@ export async function getCampaign(auth: AuthContext, id: string): Promise<Campai
 async function buildCloneSource(
   auth: AuthContext,
   id: string,
-): Promise<{ draft: CampaignDraft; offerInputs: OfferInput[] }> {
+): Promise<{ draft: CampaignDraft; offerInputs: OfferInput[]; termsOverride: string[] }> {
   return runScoped(auth, async (tx) => {
     const source = await loadOwnedCampaign(tx, auth, id);
     const offers = await tx.offer.findMany({
@@ -288,6 +288,9 @@ async function buildCloneSource(
       offerInputs: offers.map(
         (o): OfferInput => ({ domainId: o.domainId, weightPct: o.weightPct, kind: o.kind, articleId: o.articleId }),
       ),
+      // D27: the buyer's custom RSOC terms are campaign config (like keywords) → the clone keeps them.
+      // Per-ad Referrer Ad Creative is NOT copied: the draft editor recreates ads on save anyway.
+      termsOverride: source.termsOverride,
     };
   });
 }
@@ -297,8 +300,14 @@ async function materializeClone(
   auth: AuthContext,
   draft: CampaignDraft,
   offerInputs: OfferInput[],
+  termsOverride: string[] = [],
 ): Promise<CampaignWithChildren> {
-  const created = await createCampaign(auth, draft);
+  let created = await createCampaign(auth, draft);
+  if (termsOverride.length > 0) {
+    created = await runScoped(auth, (tx) =>
+      tx.campaign.update({ where: { id: created.id }, data: { termsOverride }, include: campaignInclude }),
+    );
+  }
   if (offerInputs.length === 0) return created;
   // setOffers re-validates each offer (a source domain may have changed status since).
   await setOffers(auth, created.id, offerInputs);
@@ -312,8 +321,8 @@ async function materializeClone(
  * channel state — it's a clean draft to tweak and submit. Owner-scoped like every campaign op.
  */
 export async function cloneCampaign(auth: AuthContext, id: string): Promise<CampaignWithChildren> {
-  const { draft, offerInputs } = await buildCloneSource(auth, id);
-  return materializeClone(auth, { ...draft, name: `${draft.name} (copy)` }, offerInputs);
+  const { draft, offerInputs, termsOverride } = await buildCloneSource(auth, id);
+  return materializeClone(auth, { ...draft, name: `${draft.name} (copy)` }, offerInputs, termsOverride);
 }
 
 /**
@@ -327,11 +336,11 @@ export async function bulkCloneCampaign(
   count: number,
 ): Promise<CampaignWithChildren[]> {
   const n = Math.min(Math.max(Math.trunc(count) || 0, 1), 20);
-  const { draft, offerInputs } = await buildCloneSource(auth, id);
+  const { draft, offerInputs, termsOverride } = await buildCloneSource(auth, id);
   const created: CampaignWithChildren[] = [];
   for (let i = 1; i <= n; i += 1) {
     // Sequential (not Promise.all): each clone claims fresh redirect ids; keep DB load bounded.
-    created.push(await materializeClone(auth, { ...draft, name: `${draft.name} (copy ${i})` }, offerInputs));
+    created.push(await materializeClone(auth, { ...draft, name: `${draft.name} (copy ${i})` }, offerInputs, termsOverride));
   }
   return created;
 }

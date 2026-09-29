@@ -466,3 +466,41 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   this app's rc practice (campaign-level short phrase, not the verbatim ad text) risks the shared RAF.
 - **Watch after deploy:** per-host unit fill (`unit:<host>` in `term_stat_daily`, ~91% before) and
   chip CTR / revenue per visit per campaign vs the week before.
+
+### 2026-09-29 — D27: Buyers see and edit what goes to Google — per-ad Referrer Ad Creative + custom RSOC terms, live, no approval
+
+- **Why:** buyers compare against other feeds where they control the `referrerAdCreative` (rc) and the
+  keyword list. Here both were invisible and fixed: one campaign-level rc for every ad (D5–D9), and terms
+  that always came from the AI article through `cleanTerms`. Google wants rc to be the verbatim text of the
+  ad that was clicked, which one shared value can't be when a campaign's ads differ.
+- **Model:** `ads.rac_value` is a nullable per-ad override; the effective rc is `effectiveRac(ad, campaign)`
+  (the ad's own text, else `campaigns.rac_value`, now "the default"). `campaigns.terms_override text[]` holds
+  the buyer's terms; empty means the AI terms. Migration `20260929163154_google_signals_overrides`.
+- **Path (no Worker change):** both redirect-config builders in `launch.service.ts` (the launch and
+  `syncCampaignRedirectConfigs`, which live edits, offers and pause/resume share) set each ad's
+  `adCreative` and add `terms=` to the money URLs (every PAID split + the single-channel article URL),
+  never to fallback / white / organic URLs. The `go.*` Worker already signs every destination param into
+  the cloak token (`resolve.test.ts` pins that `terms` survives). On the article page, one shared resolver,
+  `resolvePublisherTerms` (`packages/shared/src/google-signals.ts`), picks the terms:
+  - terms from the **signed** token go to Google **exactly as entered**;
+  - an unsigned plaintext `?terms=` (anyone can craft one) still goes through `cleanTerms`, as before;
+  - with no custom terms, the output is byte-identical to pre-D27.
+
+  The dashboard view uses the same resolver, so what a buyer sees is what is sent.
+- **Live, no approval:** `GET|PUT /api/campaigns/:id/google-signals` is owner-scoped (buyer: own campaigns;
+  admin: their org) and writes audit `campaign.google_signals.updated` (before/after). The campaign status
+  never changes. For a launched campaign (`fbCampaignId`), the edge configs re-sync inside the request, so
+  the next click carries the new values. Visitors already on a page keep their 30-min token. Facebook is
+  never touched.
+- **No content rules (Aman's call):** wording is the buyer's decision. Nothing is filtered, reworded,
+  ranked or warned about. Normalization is limited to trimming, collapsing whitespace, turning a comma into
+  a space (CSA `terms` is comma-delimited), and case-insensitive de-duplication. The only limits are
+  technical, because the values ride base64-encoded in the signed `?t=` URL: rc ≤ 500 chars, ≤ 20 terms,
+  each ≤ 100 chars. The draft wizard's rc cap was raised from 200 to the same 500, so a live-edited value
+  survives clone → draft edit. The wizard's submit-time `racValueIssues` check (≥2 words, ≠ campaign name)
+  is unchanged and applies to new drafts only.
+- **Edges:**
+  - Per-ad text on a DRAFT returns 409, because the draft editor recreates ads (new ids) on every save. For
+    the same reason, reopening a campaign and editing its ads drops its per-ad overrides.
+  - A clone keeps `terms_override` (campaign config, like keywords) but not per-ad rc.
+  - The dashboard panel shows for every non-draft campaign, on the campaign page.

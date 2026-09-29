@@ -1067,7 +1067,7 @@ function OfferStep({
               );
             })()}
           </div>
-          <span className={styles.hint}>Sent to Google AFS as the referrer ad creative (required for paid traffic). One value for the whole campaign — used by all its ads. <b>Should be a real search phrase</b> (like the ad headline itself), never the campaign name — Google returns zero related-search terms when it looks like a brand label.</span>
+          <span className={styles.hint}>Sent to Google AFS as the referrer ad creative (required for paid traffic). The default for all the campaign's ads — once submitted, you can give each ad its own text (and set the related-search keywords) live in <b>Sent to Google</b> on the campaign page. <b>Should be a real search phrase</b> (like the ad headline itself), never the campaign name — Google returns zero related-search terms when it looks like a brand label.</span>
         </div>
         <div className={`${styles.field} ${styles.full}`}>
           <label className={styles.label} htmlFor={fid('query')}>Landing-page query / angle</label>

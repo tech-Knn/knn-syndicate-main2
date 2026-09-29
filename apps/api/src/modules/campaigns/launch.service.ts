@@ -23,7 +23,7 @@ import {
   uploadFbAdImage,
   uploadFbAdVideo,
 } from '@knn/fb';
-import { CAMPAIGN_STATUS, type FunnelMode, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, effectiveFunnelMode, goalRequiresPixel, pxeToCustomEventType } from '@knn/shared';
+import { CAMPAIGN_STATUS, type FunnelMode, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, effectiveFunnelMode, effectiveRac, goalRequiresPixel, normalizeCustomTerms, pxeToCustomEventType } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { KvNotConfiguredError, type RedirectConfigPayload, writeRedirectConfigs } from '../../lib/kv-sync.js';
@@ -832,6 +832,19 @@ export interface LaunchResult {
 }
 
 /**
+ * D27: the buyer's custom RSOC terms ride on the MONEY-page URL as `terms=` — the go.* Worker signs
+ * every destination param into the cloak token, so they reach the article page (and are sent to
+ * Google as entered) with no Worker change. Never added to fallback/white URLs. No-op when empty.
+ */
+export function withCustomTerms(url: string, termsOverride: readonly string[] | null | undefined): string {
+  const custom = normalizeCustomTerms(termsOverride);
+  if (!custom.length) return url;
+  const u = new URL(url);
+  u.searchParams.set('terms', custom.join(','));
+  return u.toString();
+}
+
+/**
  * Rebuild + write each ad's redirect config to edge KV from the campaign's CURRENT
  * offers / channel / article variants — **without touching Facebook**. The FB creative
  * carries only the stable `/go/{redirectId}` link, so rewriting KV reroutes live traffic
@@ -881,7 +894,7 @@ export async function syncCampaignRedirectConfigs(
     const slugByArticle = new Map(variantRows.map((a) => [a.id, a.slug]));
     const slugFor = (articleId: string | null): string => (articleId ? slugByArticle.get(articleId) ?? slug! : slug!);
     splits = paidOffers.map((o) => ({
-      url: `https://${o.domain.host}/a/${slugFor(o.articleId)}`,
+      url: withCustomTerms(`https://${o.domain.host}/a/${slugFor(o.articleId)}`, campaign.termsOverride),
       weight: o.weightPct,
       channel: chById.get(o.channelRef!),
       offerId: o.id,
@@ -892,6 +905,7 @@ export async function syncCampaignRedirectConfigs(
   } else if (campaign.channelId) {
     const ch = await withSystem((tx) => tx.channel.findUnique({ where: { id: campaign.channelId! }, select: { channelId: true } }));
     channel = ch?.channelId;
+    articleUrl = withCustomTerms(articleUrl, campaign.termsOverride);
   }
 
   const entries = campaign.adSets.flatMap((set) =>
@@ -907,9 +921,8 @@ export async function syncCampaignRedirectConfigs(
           splits,
           // Cloak verification: the click must carry kaid={{ad.id}} matching this id (enforce mode).
           expectedAdId: ad.fbAdId ?? undefined,
-          // referrerAdCreative (the AFS `rc`) is the campaign-level Referrer Ad Creative — one
-          // value for all the campaign's ads (not derived from each ad's copy). Stored in racValue.
-          adCreative: campaign.racValue ?? undefined,
+          // referrerAdCreative (the AFS `rc`): the ad's own override, else the campaign default (D27).
+          adCreative: effectiveRac(ad.racValue, campaign.racValue) ?? undefined,
           // CLOAKER: white domain is the fallback (white page); else organic offer → ad → campaign.
           fallbackUrl: whiteFallbackUrl ?? organicFallbackUrl ?? ad.fallbackUrl ?? campaign.fallbackUrl ?? undefined,
         } satisfies RedirectConfigPayload,
@@ -996,7 +1009,7 @@ export async function launchCampaign(
     const slugByArticle = new Map(variantRows.map((a) => [a.id, a.slug]));
     const slugFor = (articleId: string | null): string => (articleId ? slugByArticle.get(articleId) ?? slug : slug);
     splits = paidOffers.map((o) => ({
-      url: `https://${o.domain.host}/a/${slugFor(o.articleId)}`,
+      url: withCustomTerms(`https://${o.domain.host}/a/${slugFor(o.articleId)}`, campaign.termsOverride),
       weight: o.weightPct,
       channel: chById.get(o.channelRef!),
       offerId: o.id,
@@ -1012,6 +1025,7 @@ export async function launchCampaign(
       tx.channel.findUnique({ where: { id: campaign.channelId! }, select: { channelId: true } }),
     );
     channel = channelRow?.channelId;
+    articleUrl = withCustomTerms(articleUrl, campaign.termsOverride);
   }
 
   // CLOAKER buyers: auto-assign a rotated white domain — the FB display link + the (white) fallback
@@ -1033,8 +1047,8 @@ export async function launchCampaign(
         channel,
         splits,
         expectedAdId: ad.fbAdId ?? undefined,
-        // referrerAdCreative (AFS `rc`) = the campaign-level Referrer Ad Creative (racValue).
-        adCreative: campaign.racValue ?? undefined,
+        // referrerAdCreative (AFS `rc`): the ad's own override, else the campaign default (D27).
+        adCreative: effectiveRac(ad.racValue, campaign.racValue) ?? undefined,
         // CLOAKER: white domain is the fallback (white page); else organic offer → ad → campaign.
         fallbackUrl: whiteFallbackUrl ?? organicFallbackUrl ?? ad.fallbackUrl ?? campaign.fallbackUrl ?? undefined,
       } satisfies RedirectConfigPayload,

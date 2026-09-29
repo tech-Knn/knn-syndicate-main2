@@ -327,9 +327,12 @@ model Campaign {
   /// article generation (Phase 5) + fallback.
   keywords    Json    @default("[]")
   /// Referrer Ad Creative — campaign-level text sent to Google AFS as `referrerAdCreative`
-  /// (the redirect's `rc`; required for paid traffic, shared by all the campaign's ads).
-  /// Column kept as `rac_value` (legacy name) to avoid a rename migration.
+  /// (the redirect's `rc`; required for paid traffic). The DEFAULT for the campaign's ads —
+  /// an ad's own `racValue` overrides it (D27). Column kept as `rac_value` (legacy name).
   racValue    String? @map("rac_value")
+  /// Buyer's custom related-search terms (D27), sent to Google as the RSOC `terms` exactly as
+  /// entered. Empty → the article's AI terms (cleaned) are sent. Buyer-editable live.
+  termsOverride String[] @default([]) @map("terms_override")
   query       String?
   fallbackUrl String? @map("fallback_url")
 
@@ -458,6 +461,9 @@ model Ad {
   displayLink  String?        @map("display_link")
   creativeType AdCreativeType @default(IMAGE) @map("creative_type")
   uploadId     String?        @map("upload_id") @db.Uuid
+  /// Per-ad Referrer Ad Creative override (D27) — sent to Google AFS as this ad's
+  /// `referrerAdCreative`. Null → the campaign's `racValue` is used. Buyer-editable live.
+  racValue     String?        @map("rac_value")
 
   /// Per-ad cloaked redirect (D9) — unique link FB targets; resolves ad -> campaign.
   /// (Pixel + conversion event are on the ad set, not here — D10 revised.)

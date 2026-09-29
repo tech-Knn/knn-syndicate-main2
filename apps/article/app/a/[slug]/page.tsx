@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
-import { articleBlocks, articleTeaser, classifyTerm, cleanTerms } from '@knn/shared';
+import { articleBlocks, articleTeaser, resolvePublisherTerms } from '@knn/shared';
 import { resolveCloakGate } from '../../_afs/cloak-gate';
 import { resolveSiteConfig } from '../../_afs/site-config';
 import { SiteFooter } from '../../_components/site-footer';
@@ -39,10 +39,6 @@ async function fetchArticle(slug: string): Promise<PublicArticle | null> {
   } catch {
     return null;
   }
-}
-
-function str(value: string | string[] | undefined): string {
-  return typeof value === 'string' ? value : '';
 }
 
 export async function generateMetadata({
@@ -119,22 +115,20 @@ export default async function ArticlePage({
   // returned 5 chips), unlike rc — so restoring channel-only fallback is safe.
   const isValidChannel = (v: string | undefined): v is string => Boolean(v) && v !== '1';
   const channel = isValidChannel(gate.params.ch) ? gate.params.ch : article.channel ?? undefined;
-  // Publisher-provided related-search terms. Preference: explicit `terms` from the redirect →
-  // the article's AI-generated high-CPC related searches → campaign keywords. The chosen source
-  // is run through the RSOC term-quality filter (rank-first, drop-rarely) so even legacy articles
-  // and keyword fallbacks serve clean, ranked, policy-safe terms — Google's new quality signal
-  // penalizes implausible/irrelevant terms, so we never forward junk. Only sent alongside
-  // referrerAdCreative, which Google requires.
-  const explicitTerms = str(sp.terms) ? str(sp.terms).split(',') : [];
-  const termSource = explicitTerms.length
-    ? explicitTerms
-    : article.relatedSearchTerms.length
-      ? article.relatedSearchTerms
-      : article.keywords;
-  const contextVertical =
-    [article.query, ...article.keywords].map((p) => (p ? classifyTerm(p).vertical : null)).find(Boolean) ?? null;
-  const cleaned = cleanTerms(termSource, { contextVertical, max: 6 });
-  const terms = cleaned.length ? cleaned.join(',') : undefined;
+  // Publisher-provided related-search terms (D27) — via the SAME resolver the dashboard's "Sent to
+  // Google" panel uses, so what buyers see is exactly what is sent:
+  //   · the buyer's custom terms from the SIGNED token (set live in the dashboard) → sent as entered;
+  //   · else an unsigned plaintext `?terms=` (anyone can craft a URL) → treated like AI terms: cleaned;
+  //   · else the article's AI related searches → campaign keywords, through the RSOC term cleaner.
+  const signedCustom = gate.params.termsSigned && gate.params.terms ? gate.params.terms.split(',') : [];
+  const unsignedTerms = !gate.params.termsSigned && gate.params.terms ? gate.params.terms.split(',') : [];
+  const { terms: termList } = resolvePublisherTerms({
+    custom: signedCustom,
+    articleTerms: unsignedTerms.length ? unsignedTerms : article.relatedSearchTerms,
+    keywords: article.keywords,
+    query: article.query,
+  });
+  const terms = termList.length ? termList.join(',') : undefined;
 
   return (
     <div className={styles.page}>

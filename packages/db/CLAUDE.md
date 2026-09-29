@@ -20,8 +20,10 @@ Single source of truth for the data model. Exposes one shared `PrismaClient` sin
   ivfflat cosine index. The `vector` extension is declared in the datasource `extensions`.
 - **Money**: store native amount + a USD-converted field; integer-cents internally. Never sum
   across currencies (D15).
-- **Campaign-level vs ad-level (D5–D9)**: keywords, RAC, article FK, and channel FK live on
-  `campaigns`; `redirect_id` (unique) lives on `ads`. Don't reintroduce per-ad keywords/RAC.
+- **Campaign-level vs ad-level (D5–D9, D27)**: keywords, the default RAC, article FK, channel FK and
+  the buyer's custom RSOC `terms_override` live on `campaigns`; `redirect_id` (unique) lives on `ads`.
+  The ONE per-ad exception is `ads.rac_value`, an optional Referrer Ad Creative override (D27; null → the
+  campaign's). Read it through `effectiveRac()` (`@knn/shared`). Don't add other per-ad offer fields.
 
 Phase 0 has only `platform_settings`. The full schema (orgs, users, campaigns, adsets, ads,
 channels, articles, revenue, …) is built phase by phase.

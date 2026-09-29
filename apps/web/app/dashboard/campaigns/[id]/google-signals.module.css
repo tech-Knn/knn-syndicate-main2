@@ -1,0 +1,213 @@
+/* "Sent to Google" panel (D27) — per-ad Referrer Ad Creative + RSOC terms, live-editable. */
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding-top: 1rem;
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.block:first-of-type {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
+}
+.blockHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.blockTitle {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.input {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--cream);
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  padding: 0.55rem 0.7rem;
+  width: 100%;
+  min-height: 2.6rem;
+  resize: vertical;
+}
+.input:focus {
+  outline: none;
+  border-color: var(--rust);
+}
+.input:disabled {
+  opacity: var(--disabled-opacity, 0.6);
+  cursor: not-allowed;
+}
+.termsInput {
+  /* used together with .input */
+  min-height: 9rem;
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.74rem;
+  color: var(--muted-2);
+}
+.count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.over {
+  color: var(--red-text);
+  font-weight: 600;
+}
+
+.linkBtn {
+  background: none;
+  border: none;
+  padding: 0.2rem 0;
+  min-height: 28px;
+  color: var(--rust);
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.linkBtn:hover {
+  text-decoration: underline;
+}
+.linkBtn:focus-visible {
+  outline: 2px solid var(--rust);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.linkBtn:disabled {
+  color: var(--muted-2);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+.helpers {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+/* One ad = meta on the left, its rc on the right; stacks on narrow screens. */
+.adRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.adRow:last-child {
+  border-bottom: none;
+}
+@media (max-width: 720px) {
+  .adRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.adMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.adName {
+  font-weight: 600;
+  color: var(--cream);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+.adSub {
+  color: var(--muted-2);
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+}
+.adEdit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.sent {
+  font-size: 0.76rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.sent b {
+  color: var(--cream);
+  font-weight: 600;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 0.18rem 0.6rem;
+  font-size: 0.78rem;
+  color: var(--cream);
+  overflow-wrap: anywhere;
+}
+.chipNew {
+  /* used together with .chip */
+  border-color: rgba(var(--rust-rgb), 0.45);
+  background: rgba(var(--rust-rgb), 0.07);
+}
+.articleRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+.articleHead {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.articleTitle {
+  color: var(--cream);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+.footerActions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}

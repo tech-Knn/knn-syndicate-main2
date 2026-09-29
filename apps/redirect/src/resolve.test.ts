@@ -116,6 +116,22 @@ describe('resolveRedirect', () => {
     expect(b.offerId).toBe('offer-b');
   });
 
+  it("D27: the buyer's custom terms already on the money URL survive (next to rc) — the Worker signs every param into the token", () => {
+    const withTerms = 'https://site-a.com/a/slug?terms=Hospital+Job%2CJob';
+    const cfg: RedirectConfig = {
+      ...base,
+      articleUrl: withTerms,
+      adCreative: 'हॉस्पिटल में नौकरियां',
+      splits: [{ url: withTerms, weight: 100, channel: 'ch-a', offerId: 'offer-a' }],
+    };
+    const u = new URL(resolveRedirect(cfg, { fbclid: 'x' }, { txid: 'tx-9', rand: 0.3 }).location);
+    expect(u.searchParams.get('terms')).toBe('Hospital Job,Job');
+    expect(u.searchParams.get('rc')).toBe('हॉस्पिटल में नौकरियां');
+    expect(u.searchParams.get('ch')).toBe('ch-a');
+    // Organic/white traffic never gets them (fallback has no terms).
+    expect(resolveRedirect(cfg, { utm_source: 'google' }, { txid: 'tx-10' }).location).toBe(base.fallbackUrl);
+  });
+
   it('sends organic traffic to the ORGANIC offer destination (fallbackUrl)', () => {
     const cfg: RedirectConfig = { ...base, fallbackUrl: 'https://organic-site.com/a/slug' };
     const d = resolveRedirect(cfg, { utm_source: 'google' }, { txid: 'tx-8' });
