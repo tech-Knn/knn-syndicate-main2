@@ -124,7 +124,7 @@ export function GoogleSignalsEditor({
       if (campaignRacChanged) onCampaignRacChange?.(next.racValue);
       toast.success(
         next.synced
-          ? 'Saved — live for new clicks in a few seconds. No ad republish, no review.'
+          ? 'Saved — new clicks pick it up within about a minute. No ad republish, no review.'
           : 'Saved — goes out with this campaign when it launches.',
       );
     } catch (err) {
@@ -142,7 +142,7 @@ export function GoogleSignalsEditor({
         <span className={adminStyles.sectionTitle}>Sent to Google</span>
         <span className={adminStyles.subtle}>
           {view.live
-            ? 'Exactly what each paid click sends Google. Edit and save — new clicks use it within seconds, no approval, no ad republish.'
+            ? 'Exactly what each paid click sends Google. Edit and save — new clicks use it within about a minute, no approval, no ad republish.'
             : 'Exactly what each paid click will send Google once this campaign is live. Edit any time — no approval.'}
         </span>
       </div>
@@ -200,7 +200,7 @@ export function GoogleSignalsEditor({
                       placeholder={defaultRac ? `Uses campaign default: ${defaultRac}` : 'Uses the campaign default (empty)'}
                     />
                     <div className={styles.meta}>
-                      <span className={styles.sent}>
+                      <span className={styles.sent} style={{ whiteSpace: 'pre-wrap' }}>
                         {willSend ? (
                           <>
                             Google gets: <b>{willSend}</b>
@@ -316,7 +316,7 @@ export function GoogleSignalsEditor({
       <div className={styles.footer}>
         <span className={adminStyles.subtle}>
           {view.live
-            ? 'Visitors already on the page keep what they arrived with; every new click gets the saved values.'
+            ? 'Updates reach every location within about a minute (edge cache). Visitors already on the page keep what they arrived with.'
             : 'Not live yet — saved values go out with the first click.'}
         </span>
         <div className={styles.footerActions}>

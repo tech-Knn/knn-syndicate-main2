@@ -9,7 +9,7 @@ import { AppError } from '../../lib/errors.js';
 import type { RedirectConfigPayload } from '../../lib/kv-sync.js';
 import { hashPassword } from '../../lib/password.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
-import { cloneCampaign } from './campaigns.service.js';
+import { cloneCampaign, getCampaign, toDraft, updateCampaign } from './campaigns.service.js';
 import { getGoogleSignals, updateGoogleSignals } from './google-signals.service.js';
 
 /**
@@ -304,15 +304,99 @@ describe('google signals routes', () => {
   });
 });
 
-describe('clone (D27)', () => {
-  it('a clone keeps the custom terms (campaign config) but not per-ad rc (the draft editor recreates ads)', async () => {
+describe('clone + draft edits (D27) — per-ad rc follows its creative', () => {
+  it('a clone keeps the custom terms and each identical creative keeps its own rc', async () => {
     const writeRedirectConfigs = vi.fn(async (_e: Entries): Promise<void> => undefined);
     await updateGoogleSignals(buyer(), liveId, { terms: ['Hospital Job', 'Job'], ads: [{ adId: adA, racValue: 'Ad A own text' }] }, { writeRedirectConfigs });
     const clone = await cloneCampaign(buyer(), liveId);
     const row = await withSystem((tx) =>
-      tx.campaign.findUnique({ where: { id: clone.id }, select: { status: true, termsOverride: true, racValue: true, adSets: { select: { ads: { select: { racValue: true } } } } } }),
+      tx.campaign.findUnique({
+        where: { id: clone.id },
+        select: { status: true, termsOverride: true, racValue: true, adSets: { select: { ads: { select: { name: true, racValue: true, redirectId: true } } } } },
+      }),
     );
     expect(row).toMatchObject({ status: 'DRAFT', termsOverride: ['Hospital Job', 'Job'], racValue: 'Hospital jobs near you' });
-    expect(row!.adSets.flatMap((s) => s.ads.map((a) => a.racValue))).toEqual([null, null]);
+    const ads = row!.adSets.flatMap((s) => s.ads);
+    expect(ads.find((a) => a.name === 'Ad A')!.racValue).toBe('Ad A own text');
+    expect(ads.find((a) => a.name === 'Ad B')!.racValue).toBeNull();
+    expect(ads.every((a) => !a.redirectId.startsWith('gs-'))).toBe(true); // fresh redirect ids
+  });
+
+  it('a draft save keeps the rc of every unchanged creative and drops it for a changed one', async () => {
+    const d = await withSystem((tx) =>
+      tx.campaign.create({
+        data: {
+          orgId,
+          buyerId,
+          name: 'Draft edit',
+          status: 'DRAFT',
+          keywords: [],
+          adSets: {
+            create: [{
+              orgId,
+              name: 's',
+              ads: { create: [
+                { orgId, name: 'Keep', headline: 'Same text', primaryText: 'p', racValue: 'Keep me', redirectId: `gs-k-${suffix}` },
+                { orgId, name: 'Change', headline: 'Old text', primaryText: 'p', racValue: 'Old rc', redirectId: `gs-c-${suffix}` },
+              ] },
+            }],
+          },
+        },
+      }),
+    );
+    const draft = toDraft(await getCampaign(buyer(), d.id));
+    // Re-save unchanged → both keep their rc (the ads are recreated with new ids).
+    const same = await updateCampaign(buyer(), d.id, draft);
+    expect(same.adSets.flatMap((s) => s.ads).map((a) => [a.name, a.racValue]).sort()).toEqual([['Change', 'Old rc'], ['Keep', 'Keep me']]);
+    // Edit one ad's creative text → its rc (verbatim to the OLD creative) is dropped; the other stays.
+    const edited = {
+      ...draft,
+      adSets: draft.adSets.map((set) => ({ ...set, ads: set.ads.map((ad) => (ad.name === 'Change' ? { ...ad, headline: 'New text' } : ad)) })),
+    };
+    const after = await updateCampaign(buyer(), d.id, edited);
+    expect(after.adSets.flatMap((s) => s.ads).map((a) => [a.name, a.racValue]).sort()).toEqual([['Change', null], ['Keep', 'Keep me']]);
+  });
+});
+
+describe('edge failures + URL budget (D27)', () => {
+  it('a failed edge push says "Saved, but…" (502) — the DB change is kept and a retry re-pushes', async () => {
+    const failing = vi.fn(async (_e: Entries): Promise<void> => {
+      throw new Error('Cloudflare API 500');
+    });
+    await expect(updateGoogleSignals(buyer(), liveId, { terms: ['retry me'] }, { writeRedirectConfigs: failing })).rejects.toMatchObject({
+      statusCode: 502,
+      message: expect.stringContaining('Saved, but the live redirect could not be updated yet (Cloudflare API 500)'),
+    });
+    const row = await withSystem((tx) => tx.campaign.findUnique({ where: { id: liveId }, select: { termsOverride: true } }));
+    expect(row?.termsOverride).toEqual(['retry me']);
+    // Same PUT again (what "Save" re-sends) → succeeds and pushes.
+    const ok = vi.fn(async (_e: Entries): Promise<void> => undefined);
+    const v = await updateGoogleSignals(buyer(), liveId, { terms: ['retry me'] }, { writeRedirectConfigs: ok });
+    expect(v.synced).toBe(true);
+    expect(ok).toHaveBeenCalledTimes(1);
+  });
+
+  it('at the caps, the worst-case (all-Devanagari) money-page URL stays far under the 16 KB request limit', async () => {
+    const dev = (n: number) => 'क'.repeat(n);
+    const writeRedirectConfigs = vi.fn(async (_e: Entries): Promise<void> => undefined);
+    await updateGoogleSignals(
+      buyer(),
+      liveId,
+      {
+        ads: [{ adId: adA, racValue: dev(GOOGLE_SIGNAL_LIMITS.racMaxChars) }],
+        terms: Array.from({ length: GOOGLE_SIGNAL_LIMITS.termsMaxCount }, (_, i) => `${i}${dev(GOOGLE_SIGNAL_LIMITS.termMaxChars - String(i).length)}`),
+      },
+      { writeRedirectConfigs },
+    );
+    const cfg = writeRedirectConfigs.mock.calls[0]![0].find((e) => e.redirectId === `gs-a-${suffix}`)!.config;
+    // Rebuild the 302 exactly as the go.* Worker does (resolve.ts params → cloak-token format:
+    // base64url(JSON{p,exp}) + '.' + 43-char HMAC).
+    const u = new URL(cfg.articleUrl);
+    const p: Record<string, string> = Object.fromEntries(u.searchParams);
+    Object.assign(p, { rc: cfg.adCreative!, ch: cfg.channel ?? '00000', styleId: '7465600436', txid: '3f2b9c1e-8d7a-4b6c-9e5f-1a2b3c4d5e6f', offerId: '9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d' });
+    const token = `${Buffer.from(JSON.stringify({ p, exp: Date.now() + 1_800_000 })).toString('base64url')}.${'x'.repeat(43)}`;
+    const location = `https://the-longest-money-domain.example.com/a/${articleSlug}?t=${token}&cid=${p.ch}`;
+    expect(location.length).toBeLessThan(6000); // ~4.8 KB measured; Node rejects URL+headers > 16 KB
+    await updateGoogleSignals(buyer(), liveId, { terms: [], ads: [{ adId: adA, racValue: null }] }, { writeRedirectConfigs });
   });
 });

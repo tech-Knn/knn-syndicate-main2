@@ -113,7 +113,7 @@ export async function updateGoogleSignals(
     // Technical, not content: the draft editor deletes + recreates ads on every save, which would
     // silently drop a per-ad override. The campaign default + terms are fine on a draft.
     if (c.status === CAMPAIGN_STATUS.DRAFT && (input.ads?.length ?? 0) > 0) {
-      throw new AppError(409, 'Per-ad Referrer Ad Creative is available once the campaign is submitted (the draft editor recreates ads on save). Set the campaign default in the editor for now.');
+      throw new AppError(409, 'Per-ad Referrer Ad Creative is set once the campaign is submitted — its ads are still being edited in the draft editor. Set the campaign default in the editor for now.');
     }
 
     const before = {
@@ -150,11 +150,18 @@ export async function updateGoogleSignals(
     return isLive(c);
   });
 
-  // Push the new values to the edge so the next paid click carries them (tolerates an unconfigured
-  // edge, like every other resync). A real KV failure surfaces — the save is committed, and a retry
-  // of the same PUT is idempotent.
+  // Push the new values to the edge; new paid clicks carry them once the Worker's KV read cache
+  // (Cloudflare default, 60 s) turns over (tolerates an unconfigured
+  // edge, like every other resync). The DB save is already committed, so a failure here must NOT
+  // read as "not saved": say exactly what happened. The dashboard keeps the edits on an error, so
+  // pressing Save again re-sends the same (idempotent) PUT and retries the push.
   if (live) {
-    await syncCampaignRedirectConfigs(campaignId, deps ?? undefined);
+    try {
+      await syncCampaignRedirectConfigs(campaignId, deps ?? undefined);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new AppError(502, `Saved, but the live redirect could not be updated yet (${reason}). Press Save again to retry.`);
+    }
   }
   const view = await getGoogleSignals(auth, campaignId);
   return { ...view, synced: live };

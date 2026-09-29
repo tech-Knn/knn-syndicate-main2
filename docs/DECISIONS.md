@@ -489,18 +489,42 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   The dashboard view uses the same resolver, so what a buyer sees is what is sent.
 - **Live, no approval:** `GET|PUT /api/campaigns/:id/google-signals` is owner-scoped (buyer: own campaigns;
   admin: their org) and writes audit `campaign.google_signals.updated` (before/after). The campaign status
-  never changes. For a launched campaign (`fbCampaignId`), the edge configs re-sync inside the request, so
-  the next click carries the new values. Visitors already on a page keep their 30-min token. Facebook is
-  never touched.
+  never changes. For a launched campaign (`fbCampaignId`), the edge configs re-sync inside the request. New
+  clicks carry the new values within about a minute: the Worker's KV read uses Cloudflare's default 60 s
+  edge cache. Visitors already on a page keep their 30-min token. Facebook is never touched. If the edge
+  push fails after the DB save, the API returns 502 "Saved, but the live redirect could not be updated
+  yet…". The dashboard keeps the edits, so Save retries the same idempotent PUT.
 - **No content rules (Aman's call):** wording is the buyer's decision. Nothing is filtered, reworded,
   ranked or warned about. Normalization is limited to trimming, collapsing whitespace, turning a comma into
   a space (CSA `terms` is comma-delimited), and case-insensitive de-duplication. The only limits are
-  technical, because the values ride base64-encoded in the signed `?t=` URL: rc ≤ 500 chars, ≤ 20 terms,
-  each ≤ 100 chars. The draft wizard's rc cap was raised from 200 to the same 500, so a live-edited value
-  survives clone → draft edit. The wizard's submit-time `racValueIssues` check (≥2 words, ≠ campaign name)
-  is unchanged and applies to new drafts only.
+  technical: rc ≤ 500 chars, ≤ 10 terms, each ≤ 60 chars. Measured 2026-09-29:
+  - rc and terms ride base64-encoded in the signed `?t=` token.
+  - The browser repeats the page URL as the `Referer` of every same-origin asset request. Next/Node
+    rejects anything over 16 KB of URL + headers with 431, which would silently kill the JS chunks and
+    the conversion beacon.
+  - At the first draft caps (20 × 100 terms) an all-Devanagari worst case gave a 10.4 KB page URL.
+    Add a ~4 KB rc cookie and a 12 KB referer, and Node returns 431. At 10 × 60 the worst case is
+    4.8 KB (`google-signals.test.ts` pins < 6 KB).
+  - Google's side isn't the constraint: `syndicatedsearch.goog` accepts ≥ 64 KB URLs. (The request
+    carries rc as `kw`, `terms`, `rpbu` with the rc fragment, and `rurl` = the page URL incl. the token.)
+  - Real creatives fit: across 127 ads the longest headline + primary text + description is 193 chars.
+
+  The draft wizard's rc cap was raised from 200 to the same 500, so a live-edited value survives
+  clone → draft edit. The wizard's submit-time `racValueIssues` check (≥2 words, ≠ campaign name) is
+  unchanged and applies to new drafts only.
+- **Per-ad rc follows its creative:** the draft editor (a reopened campaign) and clone recreate ads with
+  new ids. Each override moves to the new ad showing the identical creative (type, media, headline,
+  primary text, description, CTA). If the creative changed, the override is dropped, because rc must be
+  that creative's verbatim text. A clone also keeps `terms_override`.
 - **Edges:**
-  - Per-ad text on a DRAFT returns 409, because the draft editor recreates ads (new ids) on every save. For
-    the same reason, reopening a campaign and editing its ads drops its per-ad overrides.
-  - A clone keeps `terms_override` (campaign config, like keywords) but not per-ad rc.
+  - Per-ad text on a DRAFT returns 409; set it after submitting.
+  - A long Devanagari rc (over ~450 chars) makes the `_rsoc_rc` cookie exceed 4 KB, so the browser
+    drops it. `/search` still gets rc from the `#r=` fragment.
+  - `/search`'s last-resort Referer lookup returns the campaign default, not a per-ad rc. That only
+    matters when both the cookie and the fragment are missing, and rc applies to RSOC requests, not
+    `/search` ads.
+  - Two saves on one campaign within milliseconds can race their edge pushes. This is the same class as
+    offers and pause edits: the next save or resync fixes it.
+  - If the Worker ever falls back to a plaintext Location (no token secret), custom terms degrade to the
+    cleaned path. rc is unaffected.
   - The dashboard panel shows for every non-draft campaign, on the campaign page.

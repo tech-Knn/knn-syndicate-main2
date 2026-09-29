@@ -10,17 +10,21 @@ import { classifyTerm, cleanTerms } from './terms.js';
  */
 
 /**
- * Technical caps — the values ride base64-encoded inside the redirect's signed `?t=` token, so they
- * bound the 302 URL length (worst case, all-Devanagari at 3 bytes/char, stays ~10 KB — under the
- * 16 KB request-line limits of Cloudflare / Node). Also the draft wizard's rc cap (one constant).
+ * Technical caps — never content rules. rc + terms ride base64-encoded inside the signed `?t=` token,
+ * so they size the money-page URL, and the browser then repeats that URL as the `Referer` of every
+ * same-origin asset request. Next (Node) rejects requests over 16 KB of URL + headers with 431 —
+ * a failed JS chunk would silently kill the page's conversion beacon. Measured worst case (all
+ * Devanagari, 3 bytes/char) at these caps: a ~4.8 KB page URL (vs ~10.4 KB at 20 × 100), leaving
+ * ample room for cookies. Google's own request is not the constraint (its front end accepts ≥ 64 KB).
+ * The rc cap is also the draft wizard's (one constant).
  */
 export const GOOGLE_SIGNAL_LIMITS = {
   /** Max characters of one Referrer Ad Creative (fits a full FB primary text). */
   racMaxChars: 500,
-  /** Max number of custom terms. */
-  termsMaxCount: 20,
+  /** Max number of custom terms (the unit shows 5 chips). */
+  termsMaxCount: 10,
   /** Max characters of one custom term. */
-  termMaxChars: 100,
+  termMaxChars: 60,
 } as const;
 
 /**

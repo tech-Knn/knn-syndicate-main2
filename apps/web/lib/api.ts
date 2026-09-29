@@ -429,7 +429,7 @@ export const campaigns = {
   // D27 — what paid clicks send Google (per-ad Referrer Ad Creative + RSOC terms), editable live.
   googleSignals: async (id: string): Promise<GoogleSignalsView> =>
     (await parse<{ signals: GoogleSignalsView }>(await authedFetch(`/api/campaigns/${id}/google-signals`))).signals,
-  // Live edit, no approval: a launched campaign's edge redirects re-sync, so the next click carries it.
+  // Live edit, no approval: a launched campaign's edge redirects re-sync; new clicks carry it within ~1 min.
   updateGoogleSignals: async (id: string, body: GoogleSignalsUpdate): Promise<GoogleSignalsView> =>
     (
       await parse<{ signals: GoogleSignalsView }>(
