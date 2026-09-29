@@ -124,6 +124,12 @@
   font-weight: 600;
   color: var(--muted);
 }
+/* A blocking problem with the field right above (e.g. a D28 blocked rc word). */
+.hintError {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--red-text);
+}
 .hint {
   font-size: 0.74rem;
   color: var(--muted-2);

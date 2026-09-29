@@ -159,3 +159,23 @@ export async function syncAllFbConnections(deps: RunFbLaunchDeps = defaultRunFbL
     throw new Error(`internal connection sync failed (${res.status}): ${text}`);
   }
 }
+
+/**
+ * D28: the daily rc-word learning run — words in the Referrer Ad Creative that make Google hide the
+ * keyword block are learned from the last 30 days of traffic and added to the block list. The
+ * learner lives on the API; this POSTs its token-guarded internal endpoint. Returns the run summary.
+ */
+export async function learnRcTermsNow(
+  deps: RunFbLaunchDeps = defaultRunFbLaunchDeps,
+): Promise<{ added: { term: string }[]; eligibleCampaigns: number }> {
+  if (!deps.token) throw new Error('INTERNAL_API_TOKEN is not configured — cannot run rc-word learning');
+  const res = await deps.fetch(`${deps.baseUrl}/api/internal/learn-rc-terms`, {
+    method: 'POST',
+    headers: { 'x-internal-token': deps.token },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`internal rc-word learning failed (${res.status}): ${text}`);
+  }
+  return (await res.json()) as { added: { term: string }[]; eligibleCampaigns: number };
+}

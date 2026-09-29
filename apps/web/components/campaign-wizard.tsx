@@ -32,8 +32,10 @@ import {
   type SpecialAdCategory,
   countryName,
   goalRequiresPixel,
+  findBlockedRcTerms,
   isValidPerformanceGoal,
   racValueIssues,
+  rcBlockedMessage,
 } from '@knn/shared';
 import { ApiError, auth, campaigns as campaignsApi, facebook, getStoredUser, uploads as uploadsApi } from '@/lib/api';
 import { type Campaign, type FbAccount, type FbPage, type FbPixel, type OfferDomainOption } from '@/lib/types';
@@ -446,6 +448,12 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
   }, []);
   const [step, setStep] = useState(0);
   const [savedId, setSavedId] = useState<string | null>(campaign?.id ?? null);
+  // D28: rc words that make Google hide the keyword block — flagged inline + block submit (the API
+  // enforces the same list on submit).
+  const [rcBlockedTerms, setRcBlockedTerms] = useState<string[]>([]);
+  useEffect(() => {
+    void campaignsApi.rcBlockedTerms().then(setRcBlockedTerms).catch(() => setRcBlockedTerms([]));
+  }, []);
 
   const [accounts, setAccounts] = useState<FbAccount[]>([]);
   const [pages, setPages] = useState<FbPage[]>([]);
@@ -526,7 +534,10 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
     [],
   );
 
-  const issues = useMemo(() => [...formIssues(form), ...offerIssues(offers)], [form, offers]);
+  const issues = useMemo(() => {
+    const rcHits = findBlockedRcTerms(form.racValue, rcBlockedTerms);
+    return [...formIssues(form), ...offerIssues(offers), ...(rcHits.length ? [rcBlockedMessage(rcHits)] : [])];
+  }, [form, offers, rcBlockedTerms]);
 
   async function uploadCreative(setKey: string, ad: AdForm, file: File) {
     setUploadingKey(ad.key);
@@ -684,6 +695,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
             offerDomains={offerDomains}
             readOnly={readOnly}
             isCloaker={isCloaker}
+            rcBlockedTerms={rcBlockedTerms}
           />
         ) : step === 1 ? (
           <AdSetsStep form={form} pixels={pixels} patchAdSet={patchAdSet} patchAd={patchAd} setForm={setForm} uploadingKey={uploadingKey} uploadCreative={uploadCreative} isCloaker={isCloaker} adAccountTz={accounts.find((a) => a.id === form.adAccountId)?.timezone ?? ''} />
@@ -870,6 +882,7 @@ function OfferStep({
   offerDomains,
   readOnly,
   isCloaker,
+  rcBlockedTerms,
 }: {
   form: CampaignForm;
   patch: (p: Partial<CampaignForm>) => void;
@@ -881,7 +894,10 @@ function OfferStep({
   offerDomains: OfferDomainOption[];
   readOnly: boolean;
   isCloaker: boolean;
+  /** D28: rc words that make Google hide the keyword block. */
+  rcBlockedTerms: readonly string[];
 }) {
+  const rcHits = findBlockedRcTerms(form.racValue, rcBlockedTerms);
   const [keywordDraft, setKeywordDraft] = useState('');
   const [keywordNote, setKeywordNote] = useState('');
   const uid = useId();
@@ -1067,7 +1083,12 @@ function OfferStep({
               );
             })()}
           </div>
-          <span className={styles.hint}>Sent to Google AFS as the referrer ad creative (required for paid traffic). One value for the whole campaign — used by all its ads. <b>Should be a real search phrase</b> (like the ad headline itself), never the campaign name — Google returns zero related-search terms when it looks like a brand label.</span>
+          {rcHits.length > 0 && (
+            <span className={styles.hintError} role="alert">
+              {rcBlockedMessage(rcHits)}
+            </span>
+          )}
+          <span className={styles.hint}>Sent to Google AFS as the referrer ad creative (required for paid traffic). The default for all the campaign's ads — once submitted, you can give each ad its own text (and set the related-search keywords) live in <b>Sent to Google</b> on the campaign page. <b>Should be a real search phrase</b> (like the ad headline itself), never the campaign name — Google returns zero related-search terms when it looks like a brand label.</span>
         </div>
         <div className={`${styles.field} ${styles.full}`}>
           <label className={styles.label} htmlFor={fid('query')}>Landing-page query / angle</label>

@@ -105,7 +105,11 @@ export function RelatedSearchUnit({
     // 2. Assemble pageOptions from the server-embedded base + client-only bits.
     `var po=${safeJson(basePo)};` +
     `po.resultsPageBaseUrl=window.location.origin+'/search'+${safeJson(resultsHash)};` +
-    // 3. Diagnostic URL param overrides (super-admin tools, unused by real traffic). Match
+    // 3. Diagnostic URL param overrides (super-admin tools, unused by real traffic).
+    //    ⚠️ Measured 2026-09-30 (D28): ANY page-URL param not in `ignoredPageParams` (e.g. `?testRc=`,
+    //    `?adtest=1`, `?x=1`) makes Google return NO related-search unit by itself, so these switches
+    //    can't show whether an rc works. To test an rc, pass it as `?rc=` (ignored by Google, read by
+    //    the cloak gate exactly like a paid click's). Match
     //    the historical set from the old useEffect path so pre-existing debug links keep
     //    working: ?withchannel=<v>, ?testChannel=<v>, ?withterms=<v>, ?nostyle=1,
     //    ?testStyle=<v>, ?adtest=1, ?minimal=1, ?testRc=<v>, ?plainurl=1,

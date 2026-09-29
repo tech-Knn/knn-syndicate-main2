@@ -19,12 +19,25 @@ import {
 import { launchCampaign, setCampaignActive, testLaunchCampaign, updateAdSetBudget, updateCampaignBudget } from './launch.service.js';
 import { bulkApprove, bulkDelete, bulkReject, bulkSetActive } from './bulk.service.js';
 import { listArticleVariants, listOfferDomains, listOffers, setOffers, updateLiveOffers } from './offers.service.js';
+import { getGoogleSignals, updateGoogleSignals } from './google-signals.service.js';
+import { listBlockedRcTerms } from './rc-terms.service.js';
 import { applyPreset, deletePreset, listPresets, savePreset } from './presets.service.js';
 import { liveOfferSetSchema, offerSetSchema } from './offers.schemas.js';
 
 const adminOnly = [authenticate, requireRole(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)];
 
 export async function campaignRoutes(app: FastifyInstance): Promise<void> {
+  // D28: rc words that make Google hide the keyword block — read by the wizard + Sent to Google panel
+  // to flag them inline (the API enforces the same list on save/submit).
+  app.get('/rc-blocked-terms', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ terms: await listBlockedRcTerms() });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
   app.get('/', { preHandler: [authenticate] }, async (req, reply) => {
     if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
     return reply.send({ campaigns: await listCampaigns(req.auth) });
@@ -349,6 +362,25 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
     try {
       const { offers } = liveOfferSetSchema.parse(req.body);
       return reply.send(await updateLiveOffers(req.auth, req.params.id, offers));
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // Buyer-editable Google signals (D27): what Google receives (per-ad Referrer Ad Creative + RSOC
+  // terms) — viewable and editable LIVE, no approval. Owner/admin scoped in the service.
+  app.get<{ Params: { id: string } }>('/:id/google-signals', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ signals: await getGoogleSignals(req.auth, req.params.id) });
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+  app.put<{ Params: { id: string } }>('/:id/google-signals', { preHandler: [authenticate] }, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ signals: await updateGoogleSignals(req.auth, req.params.id, req.body) });
     } catch (err) {
       return handleRouteError(err, reply);
     }

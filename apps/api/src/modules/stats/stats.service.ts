@@ -1,6 +1,7 @@
 import { type TxClient } from '@knn/db';
 import {
-  AFS_CLICK_SUPPRESSION_THRESHOLD,
+  FUNNEL_EVENT_NAME,
+  type FunnelCounts,
   type AdPerf,
   type AdSetPerf,
   type BuyerRollup,
@@ -19,14 +20,17 @@ import {
   SYNC_STATE_KEYS,
   addBusinessDays,
   allocateByWeights,
+  businessDayBoundsUtc,
   businessDaysInRange,
   centsToDollars,
   currentBusinessDay,
+  rpcPerAdClick,
 } from '@knn/shared';
 import { QUEUES, getQueue } from '@knn/queue';
 import { AppError } from '../../lib/errors.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
+import { type EventSource, creditToOffers } from './offer-funnel.js';
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_RANGE_DAYS = 92;
@@ -68,6 +72,41 @@ function dayWhere(range: DateRange, campaignIds: string[] | null) {
     day: { gte: range.from, lte: range.to },
     ...(campaignIds ? { campaignId: { in: campaignIds } } : {}),
   };
+}
+
+/**
+ * The range as UTC instants [start, end) — for raw events (not daily rollups), bucketed by the IST
+ * business day like everything else. `conversion_events.created_at` is the moment the beacon landed,
+ * i.e. the ad click (and it's the indexed column).
+ */
+function rangeBoundsUtc(range: DateRange): { start: Date; end: Date } {
+  return { start: businessDayBoundsUtc(range.from).start, end: businessDayBoundsUtc(range.to).end };
+}
+
+/** Our funnel events (D30) → the FunnelCounts field each one counts toward. */
+const FUNNEL_FIELD: Readonly<Record<string, keyof FunnelCounts>> = {
+  [FUNNEL_EVENT_NAME.lander]: 'visits',
+  [FUNNEL_EVENT_NAME.search]: 'keywordClicks',
+  [FUNNEL_EVENT_NAME.adclick]: 'adClicks',
+};
+const FUNNEL_EVENTS = Object.keys(FUNNEL_FIELD);
+const NO_FUNNEL: FunnelCounts = { visits: 0, keywordClicks: 0, adClicks: 0 };
+
+/** Fold grouped (key, event) counts into FunnelCounts per key. */
+function foldFunnel(rows: readonly { key: string; eventName: string; count: number }[]): Map<string, FunnelCounts> {
+  const out = new Map<string, FunnelCounts>();
+  for (const r of rows) {
+    const field = FUNNEL_FIELD[r.eventName];
+    if (!field) continue;
+    const f = out.get(r.key) ?? { ...NO_FUNNEL };
+    f[field] += r.count;
+    out.set(r.key, f);
+  }
+  return out;
+}
+
+function sumFunnel(items: readonly FunnelCounts[]): FunnelCounts {
+  return items.reduce((t, f) => ({ visits: t.visits + f.visits, keywordClicks: t.keywordClicks + f.keywordClicks, adClicks: t.adClicks + f.adClicks }), { ...NO_FUNNEL });
 }
 
 /** KPI totals + a per-day series (gaps zero-filled) for the actor's scope. */
@@ -155,7 +194,8 @@ export async function getCampaignPerformance(
     const buyerIds = [...new Set(campaigns.map((c) => c.buyerId))];
     const orgIds = [...new Set(campaigns.map((c) => c.orgId))];
 
-    const [statsByCamp, revByCamp, adSets, channels, buyers, orgs] = await Promise.all([
+    const { start, end } = rangeBoundsUtc(range);
+    const [statsByCamp, revByCamp, adSets, channels, buyers, orgs, funnelRows] = await Promise.all([
       tx.adStatsDaily.groupBy({
         by: ['campaignId'],
         where,
@@ -174,9 +214,16 @@ export async function getCampaignPerformance(
       })(),
       tx.user.findMany({ where: { id: { in: buyerIds } }, select: { id: true, name: true } }),
       tx.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } }),
+      // Our own funnel tracking (D30) — visits, keyword clicks, ad clicks; live, never hidden.
+      tx.conversionEvent.groupBy({
+        by: ['campaignId', 'eventName'],
+        where: { campaignId: { in: ids }, eventName: { in: FUNNEL_EVENTS }, createdAt: { gte: start, lt: end } },
+        _count: { _all: true },
+      }),
     ]);
 
     const statsMap = new Map(statsByCamp.map((r) => [r.campaignId, r._sum]));
+    const funnelByCamp = foldFunnel(funnelRows.map((r) => ({ key: r.campaignId, eventName: r.eventName, count: r._count._all })));
     const revMap = new Map(revByCamp.map((r) => [r.campaignId, r._sum.visibleUsdMinor ?? 0]));
     const buyerName = new Map(buyers.map((b) => [b.id, b.name]));
     const orgName = new Map(orgs.map((o) => [o.id, o.name]));
@@ -214,6 +261,7 @@ export async function getCampaignPerformance(
         adCount: adCount.get(c.id) ?? 0,
         budgetMode: c.budgetMode,
         dailyBudgetCents: c.budgetMode === 'CAMPAIGN' ? c.dailyBudgetCents : (adSetBudget.get(c.id) ?? null),
+        ...(funnelByCamp.get(c.id) ?? NO_FUNNEL),
       };
     });
   });
@@ -292,23 +340,33 @@ export async function getCampaignBreakdown(
 
     const adIds = campaign.adSets.flatMap((s) => s.ads.map((a) => a.id));
     const where = { day: { gte: range.from, lte: range.to }, adId: { in: adIds } };
+    const { start, end } = rangeBoundsUtc(range);
 
-    const [statsByAd, revRows] = adIds.length
-      ? await Promise.all([
-          tx.adStatsDaily.groupBy({
+    const [statsByAd, revRows, funnelRows] = await Promise.all([
+      adIds.length
+        ? tx.adStatsDaily.groupBy({
             by: ['adId'],
             where,
             _sum: { spendUsdMinor: true, impressions: true, clicks: true, conversions: true },
-          }),
-          tx.adRevenueDaily.findMany({
+          })
+        : Promise.resolve([]),
+      adIds.length
+        ? tx.adRevenueDaily.findMany({
             where,
             orderBy: { day: 'asc' },
             select: { adId: true, visibleUsdMinor: true, basis: true },
-          }),
-        ])
-      : [[], []];
+          })
+        : Promise.resolve([]),
+      // Per ad — exact, since each tracked event carries the ad its click came from (D30).
+      tx.conversionEvent.groupBy({
+        by: ['adId', 'eventName'],
+        where: { campaignId, eventName: { in: FUNNEL_EVENTS }, createdAt: { gte: start, lt: end } },
+        _count: { _all: true },
+      }),
+    ]);
 
     const statsMap = new Map(statsByAd.map((r) => [r.adId, r._sum]));
+    const funnelByAd = foldFunnel(funnelRows.map((r) => ({ key: r.adId, eventName: r.eventName, count: r._count._all })));
     const revByAd = new Map<string, number>();
     const basisByAd = new Map<string, string>();
     for (const r of revRows) {
@@ -344,6 +402,7 @@ export async function getCampaignBreakdown(
           clicks: s?.clicks ?? 0,
           conversions: s?.conversions ?? 0,
           basis: basisByAd.get(ad.id) ?? null,
+          ...(funnelByAd.get(ad.id) ?? NO_FUNNEL),
         };
       });
       // Roll the ads up to the ad-set level so the tree has numbers at every level.
@@ -360,6 +419,7 @@ export async function getCampaignBreakdown(
         impressions: ads.reduce((a, x) => a + x.impressions, 0),
         clicks: ads.reduce((a, x) => a + x.clicks, 0),
         conversions: ads.reduce((a, x) => a + x.conversions, 0),
+        ...sumFunnel(ads),
         dailyBudgetCents: set.dailyBudgetCents,
         // Editable only for a live ABO campaign whose ad set is on Facebook (mirrors updateAdSetBudget).
         editableBudget:
@@ -368,7 +428,7 @@ export async function getCampaignBreakdown(
       };
     });
 
-    const totals: MetricTotals = {
+    const totals: MetricTotals & FunnelCounts = {
       spendUsd: round2(tSpend),
       revenueUsd: round2(tRevenue),
       profitUsd: round2(tRevenue - tSpend),
@@ -377,6 +437,9 @@ export async function getCampaignBreakdown(
       clicks: tClicks,
       conversions: tConv,
       marginUsd: 0,
+      // Every tracked event of the campaign — so the total matches the Analytics row even if an
+      // event's ad is no longer in the tree.
+      ...sumFunnel([...funnelByAd.values()]),
     };
 
     return {
@@ -455,10 +518,10 @@ async function offerCutPct(tx: TxClient, orgId: string, buyerId: string): Promis
 }
 
 /**
- * Per-offer revenue for one campaign over the range (Phase F). Each offer's gross AFS
- * channel revenue (offer_revenue_daily) summed, then the platform cut applied → the
- * buyer-visible amount; suppressed (hidden) when AFS clicks are below the threshold.
- * Lets the buyer see WHICH website/offer monetizes best (cost stays campaign-level).
+ * Per-offer (website) results for one campaign over the range (Phase F): each offer's AdSense channel
+ * revenue (offer_revenue_daily) with the platform cut applied — always shown, Google never hides
+ * earnings — plus our funnel counts on that website (visits, keyword clicks, ad clicks) and the RPC
+ * they give (D30). Lets the buyer see WHICH website monetizes best (cost stays campaign-level).
  * Owner/admin scoped (RLS + a buyer can only see their own campaign).
  */
 export async function getCampaignOfferStats(
@@ -478,36 +541,89 @@ export async function getCampaignOfferStats(
     });
     if (offers.length === 0) return [];
 
-    const rev = await tx.offerRevenueDaily.groupBy({
-      by: ['offerId'],
-      where: { offerId: { in: offers.map((o) => o.id) }, day: { gte: range.from, lte: range.to } },
-      _sum: { revenueUsdMinor: true, afsClicks: true },
-    });
-    const byOffer = new Map(rev.map((r) => [r.offerId, r]));
-    const cut = await offerCutPct(tx, campaign.orgId, campaign.buyerId);
+    const { start, end } = rangeBoundsUtc(range);
+    const [rev, cut, sources] = await Promise.all([
+      // By channel too: a shared-host tie-break needs every channel an offer rolled over through.
+      tx.offerRevenueDaily.groupBy({
+        by: ['offerId', 'channelRef'],
+        where: { offerId: { in: offers.map((o) => o.id) }, day: { gte: range.from, lte: range.to } },
+        _sum: { revenueUsdMinor: true },
+      }),
+      offerCutPct(tx, campaign.orgId, campaign.buyerId),
+      // Each tracked funnel event's website host + AFS channel (the `#c=` results-page URLs carry).
+      tx.$queryRaw<(EventSource & { eventName: string })[]>`
+        SELECT lower(substring(event_source_url from '^https?://([^/:?#]+)')) AS host,
+               substring(event_source_url from '#(?:.*&)?c=([^&]*)') AS channel,
+               event_name AS "eventName",
+               count(*)::int AS count
+        FROM conversion_events
+        WHERE campaign_id = ${campaignId}::uuid
+          AND event_name = ANY(${FUNNEL_EVENTS}::text[])
+          AND created_at >= (${start.toISOString()}::timestamptz AT TIME ZONE 'UTC')
+          AND created_at < (${end.toISOString()}::timestamptz AT TIME ZONE 'UTC')
+        GROUP BY 1, 2, 3`,
+    ]);
+
+    const grossByOffer = new Map<string, number>();
+    const channelRefsByOffer = new Map(offers.map((o) => [o.id, new Set(o.channelRef ? [o.channelRef] : [])]));
+    for (const r of rev) {
+      grossByOffer.set(r.offerId, (grossByOffer.get(r.offerId) ?? 0) + (r._sum.revenueUsdMinor ?? 0));
+      channelRefsByOffer.get(r.offerId)?.add(r.channelRef);
+    }
+    // Channel ids only matter when two offers share a host — look them up only then.
+    const hosts = offers.map((o) => o.domain.host.toLowerCase());
+    const sharedHost = new Set(hosts).size < hosts.length;
+    const channelIdByRef = new Map<string, string>();
+    if (sharedHost) {
+      const refs = [...new Set([...channelRefsByOffer.values()].flatMap((s) => [...s]))];
+      for (const c of await tx.channel.findMany({ where: { id: { in: refs } }, select: { id: true, channelId: true } })) {
+        channelIdByRef.set(c.id, c.channelId);
+      }
+    }
+    const offersForCredit = offers.map((o) => ({
+      id: o.id,
+      host: o.domain.host,
+      weightPct: o.weightPct,
+      channelIds: [...(channelRefsByOffer.get(o.id) ?? [])].map((ref) => channelIdByRef.get(ref)).filter((x): x is string => Boolean(x)),
+    }));
+    const sourcesByField: Record<keyof FunnelCounts, EventSource[]> = { visits: [], keywordClicks: [], adClicks: [] };
+    for (const s of sources) {
+      const field = FUNNEL_FIELD[s.eventName];
+      if (field) sourcesByField[field].push({ host: s.host, channel: s.channel === null ? null : safeDecode(s.channel), count: s.count });
+    }
+    const credited = {
+      visits: creditToOffers(sourcesByField.visits, offersForCredit),
+      keywordClicks: creditToOffers(sourcesByField.keywordClicks, offersForCredit),
+      adClicks: creditToOffers(sourcesByField.adClicks, offersForCredit),
+    };
 
     return offers.map((o): OfferStat => {
-      const r = byOffer.get(o.id);
-      const grossMinor = r?._sum.revenueUsdMinor ?? 0;
-      const afsClicks = r?._sum.afsClicks ?? 0;
-      // Google's AFS rule (support.google.com/adsense/answer/10078316): below 10 clicks/day it masks
-      // CLICK-DERIVED metrics (clicks, CTR, CPC) to 0 — but NOT estimated earnings. So we ALWAYS show
-      // the revenue (even $0.01 if the channel earned it); `suppressed` now flags only that the
-      // click-derived columns are hidden, never the earnings.
-      const suppressed = afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD;
-      const visibleMinor = Math.round(grossMinor * (1 - cut));
+      const revenueUsd = round2(centsToDollars(Math.round((grossByOffer.get(o.id) ?? 0) * (1 - cut))));
+      const adClicks = credited.adClicks.get(o.id) ?? 0;
+      const rpc = rpcPerAdClick(revenueUsd, adClicks);
       return {
         offerId: o.id,
         host: o.domain.host,
         afsLabel: o.domain.afsAccount.label,
         kind: o.kind,
         weightPct: o.weightPct,
-        revenueUsd: round2(centsToDollars(visibleMinor)), // earnings always shown (Google doesn't mask earnings)
-        afsClicks,
-        suppressed, // click-derived metrics (clicks / CPC) hidden below 10 clicks/day — revenue is NOT
+        revenueUsd,
+        visits: credited.visits.get(o.id) ?? 0,
+        keywordClicks: credited.keywordClicks.get(o.id) ?? 0,
+        adClicks,
+        rpcUsd: rpc === null ? null : Math.round(rpc * 10000) / 10000,
       };
     });
   });
+}
+
+/** URL-decode a query value, keeping it as-is if it isn't valid encoding. */
+function safeDecode(v: string): string {
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return v;
+  }
 }
 
 /**

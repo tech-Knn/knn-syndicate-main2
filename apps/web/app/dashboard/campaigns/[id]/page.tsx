@@ -5,6 +5,7 @@ import { CampaignWizard } from '@/components/campaign-wizard';
 import { ApiError, campaigns } from '@/lib/api';
 import { Banner, Button, Card, Spinner, useConfirm, useToast } from '@/components/ui';
 import { type Campaign, type CampaignAdSet } from '@/lib/types';
+import { GoogleSignalsEditor } from './google-signals-editor';
 import { OffersEditor } from './offers-editor';
 
 /** The campaign's effective daily budget (cents) + whether it's live-editable here. CBO → the
@@ -398,6 +399,16 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
                 ? { ...prev, dailyBudgetCents: next.cents }
                 : { ...prev, adSets: prev.adSets.map((s, i) => (i === 0 ? { ...s, dailyBudgetCents: next.cents } : s)) };
             })
+          }
+        />
+      )}
+      {/* D27 — what paid clicks send Google (per-ad rc + keywords), editable live without approval.
+          Drafts set the campaign rc in the wizard below; per-ad text needs submitted (stable) ads. */}
+      {c.status !== 'DRAFT' && (
+        <GoogleSignalsEditor
+          campaignId={c.id}
+          onCampaignRacChange={(racValue) =>
+            setCampaign((prev) => (prev && prev !== 'error' ? { ...prev, racValue } : prev))
           }
         />
       )}

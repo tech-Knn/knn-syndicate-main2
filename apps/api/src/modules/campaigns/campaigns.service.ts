@@ -15,6 +15,7 @@ import {
   type SpecialAdCategory,
   campaignSubmitIssues,
   canTransitionCampaign,
+  rcBlockedMessage,
 } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { enqueueChannelAssign } from '../../lib/channel-queue.js';
@@ -23,11 +24,55 @@ import { generateRedirectId } from '../../lib/ids.js';
 import { notify } from '../../lib/notify.js';
 import { runScoped } from '../../lib/scope.js';
 import { type OfferInput, setOffers } from './offers.service.js';
+import { blockedRcHits } from './rc-terms.service.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 
 export const campaignInclude = {
   adSets: { orderBy: { createdAt: 'asc' }, include: { ads: { orderBy: { createdAt: 'asc' } } } },
 } satisfies Prisma.CampaignInclude;
+
+/** The creative an ad shows: media + every text field (Google's rc = that text, verbatim). */
+interface AdCreativeFields {
+  creativeType: string;
+  uploadId: string | null;
+  headline: string;
+  primaryText: string;
+  description: string | null;
+  cta: string;
+}
+export type AdRacSource = AdCreativeFields & { racValue: string | null };
+
+function creativeKey(a: AdCreativeFields): string {
+  return JSON.stringify([a.creativeType, a.uploadId ?? '', a.headline, a.primaryText, a.description ?? '', a.cta]);
+}
+
+/**
+ * D27: a per-ad Referrer Ad Creative follows its CREATIVE. The draft editor and clone recreate ads
+ * (new ids), so each override moves to the new ad showing the identical creative. A changed
+ * creative drops it: rc must be that creative's verbatim text, so a stale one is worse than the
+ * campaign default. Identical creatives are matched in order. Returns how many were carried.
+ */
+async function carryAdRacValues(
+  tx: TxClient,
+  from: readonly AdRacSource[],
+  to: readonly (AdCreativeFields & { id: string })[],
+): Promise<number> {
+  const pool = new Map<string, string[]>();
+  for (const a of from) {
+    if (!a.racValue) continue;
+    const k = creativeKey(a);
+    pool.set(k, [...(pool.get(k) ?? []), a.racValue]);
+  }
+  if (pool.size === 0) return 0;
+  let carried = 0;
+  for (const a of to) {
+    const racValue = pool.get(creativeKey(a))?.shift();
+    if (!racValue) continue;
+    await tx.ad.update({ where: { id: a.id }, data: { racValue } });
+    carried += 1;
+  }
+  return carried;
+}
 
 /**
  * Resolved labels for a campaign's selected FB assets. Ad account / page live on
@@ -232,7 +277,7 @@ export async function listCampaigns(auth: AuthContext): Promise<CampaignWithChil
   });
 }
 
-async function loadOwnedCampaign(
+export async function loadOwnedCampaign(
   tx: TxClient,
   auth: AuthContext,
   id: string,
@@ -257,7 +302,7 @@ export async function getCampaign(auth: AuthContext, id: string): Promise<Campai
 async function buildCloneSource(
   auth: AuthContext,
   id: string,
-): Promise<{ draft: CampaignDraft; offerInputs: OfferInput[] }> {
+): Promise<{ draft: CampaignDraft; offerInputs: OfferInput[]; termsOverride: string[]; sourceAds: AdRacSource[] }> {
   return runScoped(auth, async (tx) => {
     const source = await loadOwnedCampaign(tx, auth, id);
     const offers = await tx.offer.findMany({
@@ -288,6 +333,10 @@ async function buildCloneSource(
       offerInputs: offers.map(
         (o): OfferInput => ({ domainId: o.domainId, weightPct: o.weightPct, kind: o.kind, articleId: o.articleId }),
       ),
+      // D27: the buyer's custom RSOC terms are campaign config (like keywords) → the clone keeps
+      // them; per-ad rc follows each (identical) creative onto the clone's ads.
+      termsOverride: source.termsOverride,
+      sourceAds: source.adSets.flatMap((s) => s.ads),
     };
   });
 }
@@ -297,8 +346,17 @@ async function materializeClone(
   auth: AuthContext,
   draft: CampaignDraft,
   offerInputs: OfferInput[],
+  termsOverride: string[] = [],
+  sourceAds: readonly AdRacSource[] = [],
 ): Promise<CampaignWithChildren> {
-  const created = await createCampaign(auth, draft);
+  let created = await createCampaign(auth, draft);
+  if (termsOverride.length > 0 || sourceAds.some((a) => a.racValue)) {
+    created = await runScoped(auth, async (tx) => {
+      if (termsOverride.length > 0) await tx.campaign.update({ where: { id: created.id }, data: { termsOverride } });
+      await carryAdRacValues(tx, sourceAds, created.adSets.flatMap((s) => s.ads));
+      return tx.campaign.findUniqueOrThrow({ where: { id: created.id }, include: campaignInclude });
+    });
+  }
   if (offerInputs.length === 0) return created;
   // setOffers re-validates each offer (a source domain may have changed status since).
   await setOffers(auth, created.id, offerInputs);
@@ -312,8 +370,8 @@ async function materializeClone(
  * channel state — it's a clean draft to tweak and submit. Owner-scoped like every campaign op.
  */
 export async function cloneCampaign(auth: AuthContext, id: string): Promise<CampaignWithChildren> {
-  const { draft, offerInputs } = await buildCloneSource(auth, id);
-  return materializeClone(auth, { ...draft, name: `${draft.name} (copy)` }, offerInputs);
+  const { draft, offerInputs, termsOverride, sourceAds } = await buildCloneSource(auth, id);
+  return materializeClone(auth, { ...draft, name: `${draft.name} (copy)` }, offerInputs, termsOverride, sourceAds);
 }
 
 /**
@@ -327,11 +385,11 @@ export async function bulkCloneCampaign(
   count: number,
 ): Promise<CampaignWithChildren[]> {
   const n = Math.min(Math.max(Math.trunc(count) || 0, 1), 20);
-  const { draft, offerInputs } = await buildCloneSource(auth, id);
+  const { draft, offerInputs, termsOverride, sourceAds } = await buildCloneSource(auth, id);
   const created: CampaignWithChildren[] = [];
   for (let i = 1; i <= n; i += 1) {
     // Sequential (not Promise.all): each clone claims fresh redirect ids; keep DB load bounded.
-    created.push(await materializeClone(auth, { ...draft, name: `${draft.name} (copy ${i})` }, offerInputs));
+    created.push(await materializeClone(auth, { ...draft, name: `${draft.name} (copy ${i})` }, offerInputs, termsOverride, sourceAds));
   }
   return created;
 }
@@ -348,8 +406,9 @@ export async function updateCampaign(
     }
     await assertAssetsOwned(tx, auth.userId, input);
     // Wholesale-replace the ad sets/ads (the wizard submits the full current state).
+    const previousAds = existing.adSets.flatMap((s) => s.ads);
     await tx.adSet.deleteMany({ where: { campaignId: id } });
-    return tx.campaign.update({
+    const updated = await tx.campaign.update({
       where: { id },
       data: {
         ...campaignScalars(auth.orgId, input),
@@ -357,6 +416,9 @@ export async function updateCampaign(
       },
       include: campaignInclude,
     });
+    // Per-ad rc overrides survive a draft save for every ad whose creative is unchanged (D27).
+    const carried = await carryAdRacValues(tx, previousAds, updated.adSets.flatMap((s) => s.ads));
+    return carried ? tx.campaign.findUniqueOrThrow({ where: { id }, include: campaignInclude }) : updated;
   });
 }
 
@@ -444,6 +506,9 @@ export async function submitCampaign(
     if (paidOffers === 0) {
       issues.push('Add at least one paid offer (a website to send traffic to) before submitting');
     }
+    // D28: an rc with a word that makes Google hide the keyword block can't go live.
+    const rcHits = await blockedRcHits([existing.racValue, ...existing.adSets.flatMap((s) => s.ads.map((a) => a.racValue))]);
+    if (rcHits.length > 0) issues.push(rcBlockedMessage(rcHits));
     if (issues.length > 0) {
       throw new AppError(422, 'Campaign is not ready to submit', issues);
     }

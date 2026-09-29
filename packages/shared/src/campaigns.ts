@@ -6,6 +6,7 @@ import {
   MOBILE_OS,
   SPECIAL_AD_CATEGORIES,
 } from './facebook-options.js';
+import { GOOGLE_SIGNAL_LIMITS } from './google-signals.js';
 
 /**
  * Campaign / ad-set / ad validation, shared by the API (source of truth) and the
@@ -207,8 +208,9 @@ export const campaignDraftSchema = z.object({
   keywords: z.array(z.string().trim().min(1)).max(50).default([]),
   // Referrer ad creative — campaign-level text sent to Google AFS as `referrerAdCreative`
   // (required for paid traffic; used for all the campaign's ads). Stored in the legacy
-  // `racValue` field/column.
-  racValue: z.string().trim().max(200).optional(),
+  // `racValue` field/column. Same cap as the live "Sent to Google" editor (D27) so a value set
+  // there survives clone → draft edit.
+  racValue: z.string().trim().max(GOOGLE_SIGNAL_LIMITS.racMaxChars).optional(),
   // Landing-page angle that drives article generation (Phase 5).
   query: z.string().trim().max(300).optional(),
   fallbackUrl: optionalUrl,

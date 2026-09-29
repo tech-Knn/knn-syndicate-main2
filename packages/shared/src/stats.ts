@@ -118,7 +118,22 @@ export interface StatsSummary {
   series: DailyPoint[]; // one point per day in range (gaps filled with zeros)
 }
 
-export interface CampaignPerf {
+/**
+ * Our own funnel tracking (D30), each stage counted at most once per visit — live, never hidden, and
+ * the same units ClickFlare counts (see unit-economics.ts for the metrics built on them).
+ */
+export interface FunnelCounts {
+  /** Landed on the page (ClickFlare Visits). */
+  visits: number;
+  /** Clicked a keyword on it and reached the results page (ClickFlare Clicks). */
+  keywordClicks: number;
+  /** Clicked a Google ad (ClickFlare Conversions). */
+  adClicks: number;
+}
+
+/** Performance row for one campaign. `clicks` / `conversions` are Facebook's own counts; the
+ *  FunnelCounts are ours. */
+export interface CampaignPerf extends FunnelCounts {
   id: string;
   name: string;
   status: string;
@@ -144,7 +159,7 @@ export interface CampaignPerf {
   dailyBudgetCents: number | null;
 }
 
-export interface AdPerf {
+export interface AdPerf extends FunnelCounts {
   id: string;
   name: string;
   /** Live Facebook delivery state (effective_status), mirrored by the worker reconcile job.
@@ -160,7 +175,7 @@ export interface AdPerf {
   basis: string | null; // allocation basis of the latest day (conversions|clicks|impressions|unallocated)
 }
 
-export interface AdSetPerf {
+export interface AdSetPerf extends FunnelCounts {
   id: string;
   name: string;
   /** Live Facebook delivery state (effective_status), mirrored by the worker reconcile job.
@@ -184,7 +199,7 @@ export interface AdSetPerf {
 export interface CampaignBreakdown {
   range: DateRange;
   campaign: { id: string; name: string; status: string };
-  totals: MetricTotals;
+  totals: MetricTotals & FunnelCounts;
   adSets: AdSetPerf[];
 }
 
@@ -200,11 +215,6 @@ export interface BuyerRollup {
   campaignCount: number;
 }
 
-/** Per-offer revenue for a campaign (Phase F). Cost is campaign-level FB spend; revenue
- *  is per offer (its AFS channel). `revenueUsd` is buyer-visible (the platform cut applied) and is
- *  ALWAYS shown — even $0.01 — because Google's AFS rule masks only CLICK-DERIVED metrics below 10
- *  clicks/day, not earnings (answer/10078316). `suppressed` flags that the click-derived columns
- *  (afsClicks / CPC) are hidden below that threshold; it does NOT hide the revenue. */
 /** A breakdown dimension for the campaign drill-down. */
 export type StatDim = 'country' | 'hour';
 
@@ -220,15 +230,18 @@ export interface DimStat {
   conversions: number;
 }
 
-export interface OfferStat {
+/** Per-offer (website) results for a campaign (Phase F). Cost is campaign-level FB spend; revenue is
+ *  per offer (its AFS channel), buyer-visible (the platform cut applied) and always shown — Google
+ *  never hides earnings. The funnel counts are ours, credited to the website each event happened on. */
+export interface OfferStat extends FunnelCounts {
   offerId: string;
   host: string;
   afsLabel: string | null;
   kind: 'PAID' | 'ORGANIC';
   weightPct: number;
   revenueUsd: number;
-  afsClicks: number;
-  suppressed: boolean;
+  /** Revenue ÷ ad clicks (ClickFlare Dynamic payout); null with no ad clicks. */
+  rpcUsd: number | null;
 }
 
 /** Per-company rollup (super-admin only). */

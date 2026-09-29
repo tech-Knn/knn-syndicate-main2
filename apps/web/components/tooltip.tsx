@@ -18,6 +18,7 @@ export function Tooltip({
   srLabel,
   maxWidth = 280,
   className,
+  wrapsControl = false,
 }: {
   content: ReactNode;
   children: ReactNode;
@@ -25,6 +26,12 @@ export function Tooltip({
   srLabel?: string;
   maxWidth?: number;
   className?: string;
+  /**
+   * The trigger wraps its own focusable control (e.g. a sort button): the wrapper is then not a tab
+   * stop and adds no accessible name — the control keeps its own, and the bubble still opens on
+   * hover and when the control receives focus (focus events bubble to the wrapper).
+   */
+  wrapsControl?: boolean;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [coords, setCoords] = useState<Coords | null>(null);
@@ -62,8 +69,8 @@ export function Tooltip({
     <span
       ref={ref}
       className={`${styles.trigger} ${className ?? ''}`}
-      tabIndex={0}
-      aria-label={accessibleName}
+      tabIndex={wrapsControl ? undefined : 0}
+      aria-label={wrapsControl ? undefined : accessibleName}
       onMouseEnter={open}
       onMouseLeave={close}
       onFocus={open}

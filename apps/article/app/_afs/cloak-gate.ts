@@ -31,6 +31,11 @@ export interface CloakParams {
   styleId?: string;
   /** Redirect click id — threads conversion attribution through to /search. */
   txid?: string;
+  /** The buyer's custom RSOC terms (D27), comma-joined. Only trusted (sent as entered) when it came
+   *  from the signed token — see `termsSigned`. */
+  terms?: string;
+  /** True when `terms` came from the signed token (the buyer's own edit), not a plaintext URL param. */
+  termsSigned?: boolean;
   /** The raw signed token, forwarded article → /search so the results page gets the same params. */
   token?: string;
 }
@@ -73,6 +78,8 @@ export async function resolveCloakGate(
           rac: p.rac || undefined,
           styleId: p.styleId || undefined,
           txid: p.txid || undefined,
+          terms: p.terms || undefined,
+          termsSigned: Boolean(p.terms),
           token, // forward the same token on to /search
         },
       };
@@ -93,6 +100,8 @@ export async function resolveCloakGate(
       rac: str(sp.rac) || undefined,
       styleId: str(sp.styleId) || undefined,
       txid: str(sp.txid) || undefined,
+      terms: str(sp.terms) || undefined,
+      termsSigned: false,
       token: undefined,
     },
   };

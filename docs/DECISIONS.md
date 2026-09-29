@@ -466,3 +466,273 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   this app's rc practice (campaign-level short phrase, not the verbatim ad text) risks the shared RAF.
 - **Watch after deploy:** per-host unit fill (`unit:<host>` in `term_stat_daily`, ~91% before) and
   chip CTR / revenue per visit per campaign vs the week before.
+
+### 2026-09-29 — D27: Buyers see and edit what goes to Google — per-ad Referrer Ad Creative + custom RSOC terms, live, no approval
+
+- **Why:** buyers compare against other feeds where they control the `referrerAdCreative` (rc) and the
+  keyword list. Here both were invisible and fixed: one campaign-level rc for every ad (D5–D9), and terms
+  that always came from the AI article through `cleanTerms`. Google wants rc to be the verbatim text of the
+  ad that was clicked, which one shared value can't be when a campaign's ads differ.
+- **Model:** `ads.rac_value` is a nullable per-ad override; the effective rc is `effectiveRac(ad, campaign)`
+  (the ad's own text, else `campaigns.rac_value`, now "the default"). `campaigns.terms_override text[]` holds
+  the buyer's terms; empty means the AI terms. Migration `20260929163154_google_signals_overrides`.
+- **Path (no Worker change):** both redirect-config builders in `launch.service.ts` (the launch and
+  `syncCampaignRedirectConfigs`, which live edits, offers and pause/resume share) set each ad's
+  `adCreative` and add `terms=` to the money URLs (every PAID split + the single-channel article URL),
+  never to fallback / white / organic URLs. The `go.*` Worker already signs every destination param into
+  the cloak token (`resolve.test.ts` pins that `terms` survives). On the article page, one shared resolver,
+  `resolvePublisherTerms` (`packages/shared/src/google-signals.ts`), picks the terms:
+  - terms from the **signed** token go to Google **exactly as entered**;
+  - an unsigned plaintext `?terms=` (anyone can craft one) still goes through `cleanTerms`, as before;
+  - with no custom terms, the output is byte-identical to pre-D27.
+
+  The dashboard view uses the same resolver, so what a buyer sees is what is sent.
+- **Live, no approval:** `GET|PUT /api/campaigns/:id/google-signals` is owner-scoped (buyer: own campaigns;
+  admin: their org) and writes audit `campaign.google_signals.updated` (before/after). The campaign status
+  never changes. For a launched campaign (`fbCampaignId`), the edge configs re-sync inside the request. New
+  clicks carry the new values within about a minute: the Worker's KV read uses Cloudflare's default 60 s
+  edge cache. Visitors already on a page keep their 30-min token. Facebook is never touched. If the edge
+  push fails after the DB save, the API returns 502 "Saved, but the live redirect could not be updated
+  yet…". The dashboard keeps the edits, so Save retries the same idempotent PUT.
+- **No content rules (Aman's call):** wording is the buyer's decision. *(Superseded for rc words by
+  D28: a new rc can't contain a word that makes Google hide the keyword block. Keywords stay free.)* Nothing is filtered, reworded,
+  ranked or warned about. Normalization is limited to trimming, collapsing whitespace, turning a comma into
+  a space (CSA `terms` is comma-delimited), and case-insensitive de-duplication. The only limits are
+  technical: rc ≤ 500 chars, ≤ 10 terms, each ≤ 60 chars. Measured 2026-09-29:
+  - rc and terms ride base64-encoded in the signed `?t=` token.
+  - The browser repeats the page URL as the `Referer` of every same-origin asset request. Next/Node
+    rejects anything over 16 KB of URL + headers with 431, which would silently kill the JS chunks and
+    the conversion beacon.
+  - At the first draft caps (20 × 100 terms) an all-Devanagari worst case gave a 10.4 KB page URL.
+    Add a ~4 KB rc cookie and a 12 KB referer, and Node returns 431. At 10 × 60 the worst case is
+    4.8 KB (`google-signals.test.ts` pins < 6 KB).
+  - Google's side isn't the constraint: `syndicatedsearch.goog` accepts ≥ 64 KB URLs. (The request
+    carries rc as `kw`, `terms`, `rpbu` with the rc fragment, and `rurl` = the page URL incl. the token.)
+  - Real creatives fit: across 127 ads the longest headline + primary text + description is 193 chars.
+
+  One informational line, never a block (Aman, 2026-09-30): Google only uses publisher `terms` when
+  a `referrerAdCreative` is sent with them. So when keywords (custom or AI) would go out and an ad
+  has no rc, the panel names those ads ("…Ward boy video has none."). Save stays enabled.
+
+  The draft wizard's rc cap was raised from 200 to the same 500, so a live-edited value survives
+  clone → draft edit. The wizard's submit-time `racValueIssues` check (≥2 words, ≠ campaign name) is
+  unchanged and applies to new drafts only.
+- **Per-ad rc follows its creative:** the draft editor (a reopened campaign) and clone recreate ads with
+  new ids. Each override moves to the new ad showing the identical creative (type, media, headline,
+  primary text, description, CTA). If the creative changed, the override is dropped, because rc must be
+  that creative's verbatim text. A clone also keeps `terms_override`.
+- **Edges:**
+  - Per-ad text on a DRAFT returns 409; set it after submitting.
+  - A long Devanagari rc (over ~450 chars) makes the `_rsoc_rc` cookie exceed 4 KB, so the browser
+    drops it. `/search` still gets rc from the `#r=` fragment.
+  - `/search`'s last-resort Referer lookup returns the campaign default, not a per-ad rc. That only
+    matters when both the cookie and the fragment are missing, and rc applies to RSOC requests, not
+    `/search` ads.
+  - Two saves on one campaign within milliseconds can race their edge pushes. This is the same class as
+    offers and pause edits: the next save or resync fixes it.
+  - If the Worker ever falls back to a plaintext Location (no token secret), custom terms degrade to the
+    cleaned path. rc is unaffected.
+  - The dashboard panel shows for every non-draft campaign, on the campaign page.
+
+### 2026-09-30 — D28: Block rc words that make Google hide the keyword block — seeded from live tests, learned daily
+
+- **Finding (live test, 2026-09-30):** on real landing pages, rc passed as `?rc=` exactly like a paid click.
+
+  | rc | Hospital job page | Packing job page | Flat-rent page (control) |
+  |---|---|---|---|
+  | none | shows | shows | shows |
+  | "Hospital Job" / "packing Job" / "Job" | **hidden** | **hidden** | — |
+  | "Hospital Careers", "Hospitals are hiring", "Hospital Vacancy 2026" | **hidden** | — | — |
+  | "Packing work from home" | — | **hidden** | — |
+  | "Free nursing course in India" / "Free flat on rent" / "Flat on rent free listing" | **hidden** | — | **hidden** |
+  | "Nursing course fees in India", "Patient care assistant course fees" | shows | — | — |
+  | "Packing company near me", "Packing ki naukri" | — | shows | — |
+  | "Flat on rent", "Flat on rent Job" | — | — | shows |
+
+  - Job-seeking wording hides the block on job pages. "Free" hides it on any page.
+  - When the block does show, Google fills it with its own job chips, so job keywords themselves aren't
+    banned; it reacts to the rc.
+  - Hindi was mixed ("हॉस्पिटल में नौकरी" showed 2/2, "पैकिंग की नौकरी" hid 1/1), so it's not seeded.
+  - Real traffic agrees: Sept 2026 campaigns whose rc reads like job-seeking got **17 keyword clicks per
+    100 visits vs 60** for the rest (ROAS 18% vs 57%). "Carpenter Job" got 0 and "Hospital Job" 0.9.
+  - **Test-method trap:** any page-URL param Google isn't told to ignore (`?x=1`, the old `?testRc=`,
+    `?adtest=1`) hides the block by itself. Always pass rc as `?rc=`, which is in `ignoredPageParams`.
+    This is why earlier `adtest`/`testRc` browser tests were "inconclusive".
+- **Second round (2026-09-30):** tested on the two live job pages, 2 loads per winner.
+
+  | Result | rc words |
+  |---|---|
+  | **Hid the block** | Jobs, Vacancies, Opportunity/Opportunities, Recruitment, Employment, Openings, Staff Required, Salary |
+  | **Showed it** (both pages) | Naukri, Bharti, Duty, Kaam |
+  | **Showed it** (hospital page only) | Work |
+
+  - "patient care assistant" hid the block 3/3, while "Patient care assistant course fees" showed it.
+  - Added in migration `20260929220000_rc_blocked_terms_job_words`: opportunity, recruitment,
+    employment, opening, salary, staff required. That makes 12 seeds.
+  - "patient care assistant" is not added, because it would also block the working "…course fees" rc.
+  - Tested on job pages only: Allow a word (e.g. salary, opening, opportunity) if another vertical
+    needs it.
+- **Decision (Aman):** keep a list of such words and stop buyers from putting them in a new rc.
+  - **Storage:** `rc_blocked_terms` is global (no org_id / RLS, like `term_stat_daily`). Terms are
+    normalized: lowercase, whole words, plurals folded.
+  - **Three sources:**
+    - SEED — tested words, shipped in migration `20260929210517_rc_blocked_terms`: job, career, hiring,
+      vacancy, free, work from home.
+    - LEARNED — added by the daily learner.
+    - MANUAL — added by a super-admin.
+  - **ALLOWED** is a super-admin override: the word is never blocked and never re-learned.
+- **Learner** (`learnRcBlockedTerms` in `packages/shared/src/rc-blocked-terms.ts`, run by
+  `learnRcTerms` via the worker cron, daily at 03:40 IST, or "Learn now"):
+  - It uses the last 30 IST days.
+  - A campaign's keyword-click rate is AFS requests ÷ FB link clicks, since /search is only reached
+    from a chip.
+  - A campaign is **suppressed** when its rate is below 35% of the median (campaigns with ≥ 100 visits
+    only).
+  - It greedily picks the word that explains the most suppressed campaigns not already explained by a
+    known blocked word. That word needs:
+    - ≥ 3 suppressed campaigns;
+    - ≥ 3 different wordings;
+    - ≥ 75% of all campaigns using it suppressed.
+
+    Topic words that ride along ("hospital" in "Hospital Job") are therefore never learned.
+  - Replayed on the Aug–Sep data (48 campaigns), it learns exactly **job** and **career**, and nothing
+    beyond the seeds (pinned in `rc-blocked-terms.test.ts` with a fixture).
+  - Known false positive: "Driving Career: Executive Chauffeur" performs well, so a super-admin can Allow
+    "career" if needed.
+  - New learned words ping the alert webhook.
+- **Enforcement:** only on **new** rc text.
+  - The Sent to Google PUT returns 400 for a changed campaign-default or per-ad rc that contains a
+    blocked word. Existing saved values stay untouched and show an amber warning.
+  - Submit adds the explanation to the 422 issues list.
+  - The wizard and panel flag the word inline and disable Save/Submit.
+  - Launching already-approved campaigns is not blocked.
+  - The message tells buyers to change the **ad's wording**, because rc must stay the ad's real text.
+    Putting a different rc than the ad says would misreport the ad to Google and risk the shared
+    account's RAF.
+- **UI:** super-admin page Platform → **RC words** (evidence per word, Block a word, Allow/Block, Learn
+  now). `GET /api/campaigns/rc-blocked-terms` (any signed-in user);
+  `GET|POST /api/admin/rc-terms`, `PATCH /api/admin/rc-terms/:id`, `POST /api/admin/rc-terms/learn`
+  (super-admin); `POST /api/internal/learn-rc-terms` (worker).
+
+### 2026-09-30 — D29: Analytics speaks ClickFlare — EPV / RPC / vCVR, exact under Google's click masking; table redesign
+
+- **Problem:** the Analytics "RPC" meant revenue ÷ **Facebook clicks**, which is ClickFlare's **EPV**. The
+  campaign dropdown's "RPC" meant revenue ÷ **Google ad clicks**, and ClickFlare's RPC is revenue ÷
+  conversions (in search arbitrage, the paid ad click). One label carried two meanings. A buyer comparing
+  our $0.011 "RPC" with ClickFlare's $0.112 saw a 10× gap that was mostly definitional.
+- **Definitions** (`packages/shared/src/unit-economics.ts`, named exactly like ClickFlare). *(Superseded by
+  D30: every count now comes from our own funnel. Visits are landings, CPC became CPV, and CTR/CVR follow
+  ClickFlare.)*
+
+  | Metric | Formula | ClickFlare name |
+  |---|---|---|
+  | EPV | revenue ÷ visits (FB link clicks) | EPV |
+  | CPC | spend ÷ visits | CPV |
+  | RPC | revenue ÷ Google ad clicks | RPC (revenue per conversion) |
+  | vCVR | Google ad clicks ÷ visits | vCVR |
+  | Conv (FB) | Facebook's pixel `Search` count | (Facebook-side) |
+  | CPA (FB) | spend ÷ Conv (FB) | (Facebook-side) |
+  | CVR (FB) | Conv (FB) ÷ visits | (Facebook-side) |
+
+  Sub-dollar unit prices show 3 decimals (`formatUnitUsd`), so $0.011 and $0.014 don't both read "$0.01".
+- **Google click masking:** *(Superseded by D30: RPC and vCVR now use our own funnel tracking, so
+  nothing is masked or hidden.)* AdSense reports a channel-day with fewer than 10 ad clicks as 0 clicks, but
+  still reports the earnings. In Aug–Sep that was 14% of revenue and 36% of earning campaign-days. A naive
+  RPC would divide that revenue by nothing and inflate. So `isMaskedAfsDay` flags a masked day (earned,
+  < 10 clicks), and RPC and vCVR leave it out on **both** sides (revenue and clicks; visits and clicks).
+  - An offers campaign's day is masked if **any** of its channels was masked. Visits can't be split per
+    channel, and the campaign rollup's summed clicks would hide it (`forceMasked` from
+    `offer_revenue_daily`).
+  - `CampaignPerf` gains `adClicks`, `adClickRevenueUsd`, `adClickVisits` and `maskedDays` (after the
+    buyer's cut).
+  - The per-offer tab gets `rpcUsd` and `maskedDays` with the same rule. It previously divided masked
+    revenue by the reported clicks.
+  - The UI shows "~value" (partial) or "hidden", with the reason on hover.
+- **Table redesign** (`apps/web/app/dashboard/analytics/*`):
+  - **One column registry** (`columns.tsx`) drives the headers, cells, totals, picker and CSV, so they
+    can't drift.
+  - **Two-row header:** Results · Per visit & per click · Traffic · Facebook, with group dividers.
+  - **Column picker:** presets Essentials / Funnel / Facebook / All plus custom checkboxes, remembered per
+    browser. Essentials: Spend, Revenue, Profit, ROI, EPV, CPC, RPC, vCVR, Budget. That fits a 1512px
+    screen with no sideways scroll.
+  - **Pinned while scrolling:** header, campaign column and totals row. The expanded breakdown pins to the
+    table's visible width.
+  - **Campaign cell:** buyer, company and channel sit under the name (the Buyer/Company columns are gone;
+    their filters stay). On phones, status moves there too.
+  - **Header definitions:** each label explains itself on hover or focus (dotted underline), and screen
+    readers get the definition.
+  - **Rows:** clicking the row toggles the breakdown; actions are icon buttons (Pause/Resume, Open
+    campaign).
+  - **Breakdown tabs** are renamed Ads / Websites / Countries / Hours, all with the same columns (incl.
+    visits, EPV, CVR (FB)). Revenue-based columns are marked estimated (`*` plus a note), since Google
+    reports revenue per campaign and the split is by Facebook conversions. Each ad notes when its split fell
+    back to visits or impressions. Every tab has a total row.
+  - **Summary:** Results (Spend, Revenue, Profit, ROI) plus unit economics (EPV vs CPC, CPC, RPC, vCVR).
+  - **CSV** carries every metric plus the hidden-day count.
+
+### 2026-09-30 — D30: Analytics counts our own funnel, exactly like ClickFlare — Visits → Clicks → Conversions, never hidden
+
+- **Problem:**
+  - **Hidden values.** D29 divided by Google's AdSense click count, and Google reports 0 clicks on any
+    channel-day with fewer than 10. On staging most campaigns are that small, so RPC and vCVR read
+    "hidden" on nearly every row. ClickFlare never hides them.
+  - **Visits weren't landings.** "Visits" were Facebook link clicks. About 11% of those never load the
+    page (staging, 7 days: 12,382 clicks → 10,969 landings), so vCVR wasn't a landing-page → conversion
+    rate.
+- **What ClickFlare actually computes** (checked against its API, 2026-09-30):
+  - **RPC = Dynamic payout** = revenue ÷ conversions, to the cent.
+  - **vCVR = visitCvr** = conversions ÷ visits.
+  - **At most one conversion per visit:** in its two largest campaigns, no visit or click id had more
+    than one.
+  - **Small rows still show values:** 76 of 77 rows with 1–9 conversions had one.
+  - **No landing-page clicks in your setup:** Clicks, and so CTR and CVR, are 0 on every campaign.
+- **Change: every count is our own funnel event**, recorded once per visit in `conversion_events` — the
+  same events Facebook CAPI receives. Live, never hidden.
+
+  | Our count | Event | ClickFlare |
+  |---|---|---|
+  | Visits (landed) | `lander` → `ViewContent` | Visits |
+  | Keyword clicks | `search` → `AddToCart` | Clicks |
+  | Ad clicks | `adclick` → `Search` | Conversions |
+
+  | Metric | Formula | ClickFlare |
+  |---|---|---|
+  | EPV | revenue ÷ visits | EPV |
+  | CPV (was "CPC") | spend ÷ visits | CPV |
+  | RPC | revenue ÷ ad clicks | Dynamic payout |
+  | vCVR | ad clicks ÷ visits | vCVR — landing page → conversion |
+  | CTR | keyword clicks ÷ visits | CTR |
+  | CVR | ad clicks ÷ keyword clicks | CVR (vCVR = CTR × CVR) |
+
+  - **Facebook's own numbers keep their "(FB)" suffix:** FB clicks, CTR (FB), CPC (FB), Conv (FB),
+    CPA (FB), CVR (FB). Land rate = visits ÷ FB clicks shows the clicks lost before the page loads.
+    Profitability is unchanged: EPV vs CPV compares revenue with spend over the same denominator.
+  - **Presets:**
+    - Essentials: Spend, Revenue, Profit, ROI, EPV, CPV, RPC, vCVR, Budget (still fits 1512px).
+    - Funnel: adds Visits, Keyword clicks, CTR, Ad clicks, CVR.
+    - Facebook: Facebook-side columns plus Land rate.
+    - Saved column picks moved to `knn.analytics.columns.v3`, because keys changed meaning.
+  - **Ads tab:** the same metrics per ad. The funnel is exact per ad, since each event carries its ad;
+    revenue-based columns stay "estimated".
+  - **Websites tab:** visits, vCVR, ad clicks, revenue, EPV and RPC per website, plus a total row. Events
+    are credited by page host (`creditToOffers`); when a host is shared, the results-page `#c=` channel
+    picks the offer, then traffic share splits the rest. Host is the key because channels roll over: only
+    44% of clicks still carry the offer's current channel, while 100% match an offer host.
+  - **Countries / Hours tabs:** Facebook-only columns, labeled so. Our events carry no country, and
+    Facebook's hours are in the ad account's time zone.
+  - **Bucketing:** clicks count by IST business day on `created_at`, the moment the beacon landed.
+  - **Removed:** the masked-day machinery (`isMaskedAfsDay`, `adClickEconomics`, `maskedDays`,
+    "~"/"hidden", the CSV hidden-day column).
+  - **Migration:** `20260929224916_conversion_events_ad_click_index` adds `(campaign_id, event_name,
+    created_at)`; it's additive. Locally the whole analytics call takes ~100 ms over 193k events.
+- **Accuracy vs Google** (staging, 14 days):
+  - **Detection is complete.** Every ad click our pages detect comes to 101–117% of Google's reported
+    clicks.
+  - **Per visit reads lower than per click.** Counting once per visit gives ~72% of Google's clicks,
+    because a visitor who clicks averages ~1.4 ads.
+  - **So RPC reads ~1.4× revenue-per-Google-click**, just as ClickFlare's Dynamic payout does.
+- **Kept as is:**
+  - Revenue still comes from AdSense, and the platform cut still applies.
+  - The rc-word learner (D28) still measures keyword clicks per 100 **FB clicks**, because its
+    thresholds were calibrated on that.
+  - Today's RPC climbs through the day, because AdSense earnings lag the clicks by a few hours.

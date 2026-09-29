@@ -24,6 +24,8 @@ import {
   type OfferRow,
   type OrgRow,
   type PublicUser,
+  type RcLearningRunResult,
+  type RcTermRow,
   type SessionUser,
   type SyncResult,
   type UploadResult,
@@ -45,6 +47,8 @@ import {
   type PlatformSettings,
   type StatsSummary,
   type CloakStats,
+  type GoogleSignalsUpdate,
+  type GoogleSignalsView,
   type TermPerf,
 } from '@knn/shared';
 
@@ -424,6 +428,19 @@ export const campaigns = {
     (await parse<{ domains: OfferDomainOption[] }>(await authedFetch('/api/campaigns/offer-domains'))).domains,
   articleVariants: async (): Promise<ArticleVariantOption[]> =>
     (await parse<{ articles: ArticleVariantOption[] }>(await authedFetch('/api/campaigns/article-variants'))).articles,
+  // D28 — rc words that make Google hide the keyword block (flagged inline; the API enforces them).
+  rcBlockedTerms: async (): Promise<string[]> =>
+    (await parse<{ terms: string[] }>(await authedFetch('/api/campaigns/rc-blocked-terms'))).terms,
+  // D27 — what paid clicks send Google (per-ad Referrer Ad Creative + RSOC terms), editable live.
+  googleSignals: async (id: string): Promise<GoogleSignalsView> =>
+    (await parse<{ signals: GoogleSignalsView }>(await authedFetch(`/api/campaigns/${id}/google-signals`))).signals,
+  // Live edit, no approval: a launched campaign's edge redirects re-sync; new clicks carry it within ~1 min.
+  updateGoogleSignals: async (id: string, body: GoogleSignalsUpdate): Promise<GoogleSignalsView> =>
+    (
+      await parse<{ signals: GoogleSignalsView }>(
+        await authedFetch(`/api/campaigns/${id}/google-signals`, { method: 'PUT', headers: jsonHeaders(), body: JSON.stringify(body) }),
+      )
+    ).signals,
 };
 
 export const admin = {
@@ -481,6 +498,23 @@ export const admin = {
   channels: async (): Promise<ChannelRow[]> =>
     (await parse<{ channels: ChannelRow[] }>(await authedFetch('/api/admin/channels'))).channels,
   channelSummary: async (): Promise<ChannelSummary> => parse(await authedFetch('/api/admin/channel-summary')),
+  // D28 — rc words that hide the keyword block: evidence, add, allow/block, learn now.
+  rcTerms: async (): Promise<RcTermRow[]> =>
+    (await parse<{ terms: RcTermRow[] }>(await authedFetch('/api/admin/rc-terms'))).terms,
+  addRcTerm: async (term: string, note?: string): Promise<RcTermRow> =>
+    (
+      await parse<{ term: RcTermRow }>(
+        await authedFetch('/api/admin/rc-terms', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ term, note }) }),
+      )
+    ).term,
+  setRcTermStatus: async (id: string, status: RcTermRow['status']): Promise<RcTermRow> =>
+    (
+      await parse<{ term: RcTermRow }>(
+        await authedFetch(`/api/admin/rc-terms/${id}`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify({ status }) }),
+      )
+    ).term,
+  learnRcTerms: async (): Promise<RcLearningRunResult> =>
+    parse(await authedFetch('/api/admin/rc-terms/learn', { method: 'POST' })),
   termPerformance: async (): Promise<{ range: { from: string; to: string }; terms: TermPerf[] }> =>
     parse(await authedFetch('/api/admin/term-performance')),
   cloakStats: async (range?: RangeArg): Promise<CloakStats> => parse(await authedFetch(`/api/admin/cloak-stats${rangeQs(range)}`)),

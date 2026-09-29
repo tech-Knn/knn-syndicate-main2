@@ -656,6 +656,51 @@ describe('launchCampaign (Phase 8)', () => {
     expect(byHost[domBHost]).toBe(`https://${domBHost}/a/health-2026`); // offer B → campaign default
   });
 
+  it('D27: each ad launches with its OWN rc (else the campaign default) + the custom terms on the money URL only', async () => {
+    const campaignId = await makeCampaign();
+    await withSystem(async (tx) => {
+      const set = await tx.adSet.findFirstOrThrow({ where: { campaign: { id: campaignId } } });
+      await tx.ad.create({
+        data: { orgId, adSetId: set.id, name: 'Ad B', headline: 'h', primaryText: 'p', uploadId, racValue: 'Nurse Job — Apply Now', redirectId: `r-${suffix}-d27b` },
+      });
+      await tx.campaign.update({ where: { id: campaignId }, data: { termsOverride: ['Hospital Job', 'Job'], fallbackUrl: 'https://fb.example.com/' } });
+    });
+    const writeRedirectConfigs = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => { });
+    const result = await launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 'health-2026' })), writeRedirectConfigs });
+    expect(result.status).toBe('ACTIVE');
+
+    const byRedirect = Object.fromEntries(writeRedirectConfigs.mock.calls[0]![0].map((e) => [e.redirectId, e.config]));
+    expect(byRedirect[`r-${suffix}-d27b`]!.adCreative).toBe('Nurse Job — Apply Now'); // its own
+    const other = Object.entries(byRedirect).find(([k]) => k !== `r-${suffix}-d27b`)![1];
+    expect(other.adCreative).toBe('health insurance'); // campaign default
+    for (const cfg of Object.values(byRedirect)) {
+      const u = new URL(cfg.articleUrl);
+      expect(`${u.origin}${u.pathname}`).toBe(`${env.ARTICLE_DOMAIN}/a/health-2026`);
+      expect(u.searchParams.get('terms')).toBe('Hospital Job,Job'); // as typed
+      expect(cfg.fallbackUrl).toBe('https://fb.example.com/'); // the fallback never carries terms
+    }
+  });
+
+  it('D27: an offers campaign carries the custom terms on every PAID split, never on the organic fallback', async () => {
+    const campaignId = await makeCampaign();
+    await withSystem(async (tx) => {
+      await tx.campaign.update({ where: { id: campaignId }, data: { channelId: null, termsOverride: ['used cars'] } });
+      const chA = await tx.channel.create({ data: { channelId: `oc-ta-${suffix}`, domainId: domA, status: 'ASSIGNED', currentCampaignId: campaignId } });
+      const chB = await tx.channel.create({ data: { channelId: `oc-tb-${suffix}`, domainId: domB, status: 'ASSIGNED', currentCampaignId: campaignId } });
+      await tx.offer.create({ data: { orgId, campaignId, domainId: domA, weightPct: 50, kind: 'PAID', channelRef: chA.id } });
+      await tx.offer.create({ data: { orgId, campaignId, domainId: domB, weightPct: 50, kind: 'PAID', channelRef: chB.id } });
+      await tx.offer.create({ data: { orgId, campaignId, domainId: domA, weightPct: 0, kind: 'ORGANIC' } });
+    });
+    const writeRedirectConfigs = vi.fn(async (_e: { redirectId: string; config: RedirectConfigPayload }[]): Promise<void> => { });
+    await launchCampaign(auth(), campaignId, { generateArticle: vi.fn(async () => ({ slug: 'health-2026' })), writeRedirectConfigs });
+
+    const cfg = writeRedirectConfigs.mock.calls[0]![0][0]!.config;
+    expect(cfg.splits).toHaveLength(2);
+    for (const s of cfg.splits ?? []) expect(new URL(s.url).searchParams.get('terms')).toBe('used cars');
+    expect(new URL(cfg.articleUrl).searchParams.get('terms')).toBe('used cars');
+    expect(cfg.fallbackUrl).toBe(`https://${domAHost}/a/health-2026`); // organic: no terms
+  });
+
   it('refuses to launch a campaign with no channel (409)', async () => {
     const c = await withSystem((tx) => tx.campaign.create({ data: { orgId, buyerId, name: 'No chan', status: 'APPROVED', keywords: ['x'] } }));
     await expect(
