@@ -17,11 +17,14 @@ import {
   type StatsSummary,
   SYNC_INTERVALS_SEC,
   SYNC_STATE_KEYS,
+  adClickEconomics,
   addBusinessDays,
   allocateByWeights,
   businessDaysInRange,
   centsToDollars,
   currentBusinessDay,
+  isMaskedAfsDay,
+  rpcPerAdClick,
 } from '@knn/shared';
 import { QUEUES, getQueue } from '@knn/queue';
 import { AppError } from '../../lib/errors.js';
@@ -155,7 +158,7 @@ export async function getCampaignPerformance(
     const buyerIds = [...new Set(campaigns.map((c) => c.buyerId))];
     const orgIds = [...new Set(campaigns.map((c) => c.orgId))];
 
-    const [statsByCamp, revByCamp, adSets, channels, buyers, orgs] = await Promise.all([
+    const [statsByCamp, revByCamp, adSets, channels, buyers, orgs, visitsByCampDay, campaignAfsDays, offerAfsDays] = await Promise.all([
       tx.adStatsDaily.groupBy({
         by: ['campaignId'],
         where,
@@ -172,11 +175,33 @@ export async function getCampaignPerformance(
           ? tx.channel.findMany({ where: { id: { in: refs } }, select: { id: true, label: true, channelId: true } })
           : Promise.resolve([] as { id: string; label: string | null; channelId: string }[]);
       })(),
-      tx.user.findMany({ where: { id: { in: buyerIds } }, select: { id: true, name: true } }),
-      tx.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } }),
+      tx.user.findMany({ where: { id: { in: buyerIds } }, select: { id: true, name: true, revenueCutPct: true } }),
+      tx.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true, defaultRevenueCutPct: true } }),
+      // RPC / vCVR inputs: per-day visits, the campaign AdSense rollup (complete totals), and the
+      // per-channel offer rows (reveal a masked channel the summed rollup can't).
+      tx.adStatsDaily.groupBy({ by: ['campaignId', 'day'], where, _sum: { clicks: true } }),
+      tx.campaignRevenueDaily.findMany({ where, select: { campaignId: true, day: true, afsClicks: true, revenueUsdMinor: true } }),
+      tx.offerRevenueDaily.findMany({ where, select: { campaignId: true, day: true, afsClicks: true, revenueUsdMinor: true } }),
     ]);
 
     const statsMap = new Map(statsByCamp.map((r) => [r.campaignId, r._sum]));
+    const cutByBuyer = new Map(buyers.map((b) => [b.id, b.revenueCutPct === null ? null : Number(b.revenueCutPct)]));
+    const cutByOrg = new Map(orgs.map((o) => [o.id, Number(o.defaultRevenueCutPct)]));
+    const visitsByCamp = new Map<string, Map<string, number>>();
+    for (const v of visitsByCampDay) {
+      const m = visitsByCamp.get(v.campaignId) ?? new Map<string, number>();
+      m.set(v.day, (m.get(v.day) ?? 0) + (v._sum.clicks ?? 0));
+      visitsByCamp.set(v.campaignId, m);
+    }
+    const maskedOfferDays = new Set(
+      offerAfsDays.filter((o) => isMaskedAfsDay(o.afsClicks, o.revenueUsdMinor)).map((o) => `${o.campaignId}|${o.day}`),
+    );
+    const afsDaysByCamp = new Map<string, { day: string; afsClicks: number; revenueUsdMinor: number; forceMasked: boolean }[]>();
+    for (const r of campaignAfsDays) {
+      const list = afsDaysByCamp.get(r.campaignId) ?? [];
+      list.push({ day: r.day, afsClicks: r.afsClicks, revenueUsdMinor: r.revenueUsdMinor, forceMasked: maskedOfferDays.has(`${r.campaignId}|${r.day}`) });
+      afsDaysByCamp.set(r.campaignId, list);
+    }
     const revMap = new Map(revByCamp.map((r) => [r.campaignId, r._sum.visibleUsdMinor ?? 0]));
     const buyerName = new Map(buyers.map((b) => [b.id, b.name]));
     const orgName = new Map(orgs.map((o) => [o.id, o.name]));
@@ -214,6 +239,11 @@ export async function getCampaignPerformance(
         adCount: adCount.get(c.id) ?? 0,
         budgetMode: c.budgetMode,
         dailyBudgetCents: c.budgetMode === 'CAMPAIGN' ? c.dailyBudgetCents : (adSetBudget.get(c.id) ?? null),
+        ...adClickEconomics({
+          channelDays: afsDaysByCamp.get(c.id) ?? [],
+          visitsByDay: visitsByCamp.get(c.id) ?? new Map(),
+          cutPct: cutByBuyer.get(c.buyerId) ?? cutByOrg.get(c.orgId) ?? 0,
+        }),
       };
     });
   });
@@ -485,6 +515,22 @@ export async function getCampaignOfferStats(
     });
     const byOffer = new Map(rev.map((r) => [r.offerId, r]));
     const cut = await offerCutPct(tx, campaign.orgId, campaign.buyerId);
+    // RPC per offer over the days Google shows its clicks (a masked day — earned, < 10 clicks —
+    // would otherwise count its revenue over zero clicks and inflate RPC).
+    const days = await tx.offerRevenueDaily.findMany({
+      where: { offerId: { in: offers.map((o) => o.id) }, day: { gte: range.from, lte: range.to } },
+      select: { offerId: true, afsClicks: true, revenueUsdMinor: true },
+    });
+    const rpcInputs = new Map<string, { clicks: number; visibleMinor: number; masked: number }>();
+    for (const d of days) {
+      const acc = rpcInputs.get(d.offerId) ?? { clicks: 0, visibleMinor: 0, masked: 0 };
+      if (isMaskedAfsDay(d.afsClicks, d.revenueUsdMinor)) acc.masked += 1;
+      else {
+        acc.clicks += d.afsClicks;
+        acc.visibleMinor += Math.round(d.revenueUsdMinor * (1 - cut));
+      }
+      rpcInputs.set(d.offerId, acc);
+    }
 
     return offers.map((o): OfferStat => {
       const r = byOffer.get(o.id);
@@ -505,6 +551,12 @@ export async function getCampaignOfferStats(
         revenueUsd: round2(centsToDollars(visibleMinor)), // earnings always shown (Google doesn't mask earnings)
         afsClicks,
         suppressed, // click-derived metrics (clicks / CPC) hidden below 10 clicks/day — revenue is NOT
+        rpcUsd: (() => {
+          const i = rpcInputs.get(o.id);
+          const v = i ? rpcPerAdClick(centsToDollars(i.visibleMinor), i.clicks) : null;
+          return v === null ? null : Math.round(v * 10000) / 10000;
+        })(),
+        maskedDays: rpcInputs.get(o.id)?.masked ?? 0,
       };
     });
   });

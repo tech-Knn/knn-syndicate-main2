@@ -6,7 +6,7 @@ import { ROLES, USER_STATUS, addBusinessDays, currentBusinessDay } from '@knn/sh
 import type { CampaignBreakdown, CampaignPerf, StatsSummary } from '@knn/shared';
 import { hashPassword } from '../../lib/password.js';
 import { buildApp } from '../../app.js';
-import { getCampaignDimBreakdown, getCampaignOfferStats } from './stats.service.js';
+import { getCampaignDimBreakdown, getCampaignOfferStats, getCampaignPerformance } from './stats.service.js';
 
 const suffix = Date.now().toString(36);
 const PW = 'stats-pw-123456';
@@ -317,6 +317,10 @@ describe('getCampaignOfferStats (Phase F per-offer revenue)', () => {
       // (Google doesn't mask earnings); `suppressed:true` only flags that the click-derived columns
       // (clicks / CPC) are hidden.
       expect(byOffer.get(offerLo)).toMatchObject({ revenueUsd: 35, suppressed: true });
+      // RPC is revenue ÷ Google ad clicks over the days Google shows the clicks: Hi $70 / 50 = $1.40.
+      // Lo's only day is masked (earned, < 10 clicks) → no RPC rather than $35 / 3 = $11.67.
+      expect(byOffer.get(offerHi)).toMatchObject({ rpcUsd: 1.4, maskedDays: 0 });
+      expect(byOffer.get(offerLo)).toMatchObject({ rpcUsd: null, maskedDays: 1 });
     } finally {
       await withSystem(async (tx) => {
         await tx.offerRevenueDaily.deleteMany({ where: { orgId } });
@@ -363,6 +367,35 @@ describe('getCampaignDimBreakdown (country/hour)', () => {
         await tx.campaign.deleteMany({ where: { orgId } });
         await tx.organization.deleteMany({ where: { id: orgId } });
       });
+    }
+  });
+});
+
+describe('getCampaignPerformance — EPV / RPC / vCVR inputs (ClickFlare-named unit economics)', () => {
+  it('excludes days Google masked (< 10 ad clicks) from RPC and vCVR, applies the cut, keeps visits exact', async () => {
+    const CH = '22222222-2222-2222-2222-222222222222';
+    await withSystem(async (tx) => {
+      // Camp A1 (org A, default 10% cut): today 40 Google ad clicks on $75 gross; yesterday earned
+      // $36 but Google hid the clicks (reported 0) → a masked day.
+      await tx.campaignRevenueDaily.create({ data: { orgId: orgAId, campaignId: ids.cA1, channelRef: CH, day: today, afsClicks: 40, revenueMinor: 7500, revenueUsdMinor: 7500, currency: 'USD' } });
+      await tx.campaignRevenueDaily.create({ data: { orgId: orgAId, campaignId: ids.cA1, channelRef: CH, day: yesterday, afsClicks: 0, revenueMinor: 3600, revenueUsdMinor: 3600, currency: 'USD', suppressed: true } });
+    });
+    try {
+      // Company admin → sees both of org A's campaigns (A1 with AdSense rows, A2 without).
+      const u = await withSystem((tx) => tx.user.findUniqueOrThrow({ where: { email: adminA } }));
+      const auth = { userId: u.id, orgId: orgAId, role: ROLES.COMPANY_ADMIN, status: USER_STATUS.ACTIVE };
+      const rows = await getCampaignPerformance(auth, { from: yesterday, to: today });
+      const a1 = rows.find((r) => r.id === ids.cA1)!;
+      // Visits (FB link clicks): today 50 + 20, yesterday 30 → 100 in total; only today's 70 are
+      // comparable with today's ad clicks.
+      expect(a1.clicks).toBe(100);
+      expect(a1).toMatchObject({ adClicks: 40, adClickRevenueUsd: 67.5, adClickVisits: 70, maskedDays: 1 });
+      // → RPC $67.50 / 40 = $1.6875 (not ($67.50 + $32.40) / 40); vCVR 40 / 70 = 57%.
+      const a2 = rows.find((r) => r.id === ids.cA2)!;
+      expect(a2).toMatchObject({ adClicks: 0, adClickRevenueUsd: 0, maskedDays: 0 }); // no AdSense rows
+      expect(a2.adClickVisits).toBe(100); // its visits still count (0 ad clicks → vCVR 0%)
+    } finally {
+      await withSystem((tx) => tx.campaignRevenueDaily.deleteMany({ where: { campaignId: ids.cA1 } }));
     }
   });
 });

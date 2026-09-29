@@ -123,3 +123,24 @@ export const IconChevron = (p: IconProps) => (
     <polyline points="9 18 15 12 9 6" />
   </Svg>
 );
+
+export const IconPause = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="6" y="5" width="4" height="14" rx="1" />
+    <rect x="14" y="5" width="4" height="14" rx="1" />
+  </Svg>
+);
+
+export const IconPlay = (p: IconProps) => (
+  <Svg {...p}>
+    <polygon points="7 4 19 12 7 20 7 4" />
+  </Svg>
+);
+
+export const IconExternal = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M14 4h6v6" />
+    <path d="M10 14 20 4" />
+    <path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" />
+  </Svg>
+);

@@ -142,6 +142,16 @@ export interface CampaignPerf {
    *  Inline-editable only when live (ACTIVE/PAUSED) and CBO or a single ad set (see updateCampaignBudget). */
   budgetMode: 'AD_SET' | 'CAMPAIGN';
   dailyBudgetCents: number | null;
+  /**
+   * RPC / vCVR inputs (see unit-economics.ts). Google hides a channel's ad clicks on a day with
+   * < 10 of them; those "masked" days are excluded from all three sums so the ratios stay exact.
+   *   RPC  = adClickRevenueUsd ÷ adClicks      vCVR = adClicks ÷ adClickVisits
+   */
+  adClicks: number;
+  adClickRevenueUsd: number;
+  adClickVisits: number;
+  /** Days in range that earned but whose ad clicks Google hid (0 = RPC/vCVR cover every day). */
+  maskedDays: number;
 }
 
 export interface AdPerf {
@@ -229,6 +239,10 @@ export interface OfferStat {
   revenueUsd: number;
   afsClicks: number;
   suppressed: boolean;
+  /** Revenue ÷ Google ad clicks over the days Google shows the clicks (null when it hid them all). */
+  rpcUsd: number | null;
+  /** Days that earned but whose ad clicks Google hid (< 10/day) — left out of `rpcUsd`. */
+  maskedDays: number;
 }
 
 /** Per-company rollup (super-admin only). */

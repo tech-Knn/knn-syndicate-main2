@@ -613,3 +613,56 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   now). `GET /api/campaigns/rc-blocked-terms` (any signed-in user);
   `GET|POST /api/admin/rc-terms`, `PATCH /api/admin/rc-terms/:id`, `POST /api/admin/rc-terms/learn`
   (super-admin); `POST /api/internal/learn-rc-terms` (worker).
+
+### 2026-09-30 — D29: Analytics speaks ClickFlare — EPV / RPC / vCVR, exact under Google's click masking; table redesign
+
+- **Problem:** the Analytics "RPC" meant revenue ÷ **Facebook clicks**, which is ClickFlare's **EPV**. The
+  campaign dropdown's "RPC" meant revenue ÷ **Google ad clicks**, and ClickFlare's RPC is revenue ÷
+  conversions (in search arbitrage, the paid ad click). One label carried two meanings. A buyer comparing
+  our $0.011 "RPC" with ClickFlare's $0.112 saw a 10× gap that was mostly definitional.
+- **Definitions** (`packages/shared/src/unit-economics.ts`, named exactly like ClickFlare):
+
+  | Metric | Formula | ClickFlare name |
+  |---|---|---|
+  | EPV | revenue ÷ visits (FB link clicks) | EPV |
+  | CPC | spend ÷ visits | CPV |
+  | RPC | revenue ÷ Google ad clicks | RPC (revenue per conversion) |
+  | vCVR | Google ad clicks ÷ visits | vCVR |
+  | Conv (FB) | Facebook's pixel `Search` count | (Facebook-side) |
+  | CPA (FB) | spend ÷ Conv (FB) | (Facebook-side) |
+  | CVR (FB) | Conv (FB) ÷ visits | (Facebook-side) |
+
+  Sub-dollar unit prices show 3 decimals (`formatUnitUsd`), so $0.011 and $0.014 don't both read "$0.01".
+- **Google click masking:** AdSense reports a channel-day with fewer than 10 ad clicks as 0 clicks, but
+  still reports the earnings. In Aug–Sep that was 14% of revenue and 36% of earning campaign-days. A naive
+  RPC would divide that revenue by nothing and inflate. So `isMaskedAfsDay` flags a masked day (earned,
+  < 10 clicks), and RPC and vCVR leave it out on **both** sides (revenue and clicks; visits and clicks).
+  - An offers campaign's day is masked if **any** of its channels was masked. Visits can't be split per
+    channel, and the campaign rollup's summed clicks would hide it (`forceMasked` from
+    `offer_revenue_daily`).
+  - `CampaignPerf` gains `adClicks`, `adClickRevenueUsd`, `adClickVisits` and `maskedDays` (after the
+    buyer's cut).
+  - The per-offer tab gets `rpcUsd` and `maskedDays` with the same rule. It previously divided masked
+    revenue by the reported clicks.
+  - The UI shows "~value" (partial) or "hidden", with the reason on hover.
+- **Table redesign** (`apps/web/app/dashboard/analytics/*`):
+  - **One column registry** (`columns.tsx`) drives the headers, cells, totals, picker and CSV, so they
+    can't drift.
+  - **Two-row header:** Results · Per visit & per click · Traffic · Facebook, with group dividers.
+  - **Column picker:** presets Essentials / Funnel / Facebook / All plus custom checkboxes, remembered per
+    browser. Essentials: Spend, Revenue, Profit, ROI, EPV, CPC, RPC, vCVR, Budget. That fits a 1512px
+    screen with no sideways scroll.
+  - **Pinned while scrolling:** header, campaign column and totals row. The expanded breakdown pins to the
+    table's visible width.
+  - **Campaign cell:** buyer, company and channel sit under the name (the Buyer/Company columns are gone;
+    their filters stay). On phones, status moves there too.
+  - **Header definitions:** each label explains itself on hover or focus (dotted underline), and screen
+    readers get the definition.
+  - **Rows:** clicking the row toggles the breakdown; actions are icon buttons (Pause/Resume, Open
+    campaign).
+  - **Breakdown tabs** are renamed Ads / Websites / Countries / Hours, all with the same columns (incl.
+    visits, EPV, CVR (FB)). Revenue-based columns are marked estimated (`*` plus a note), since Google
+    reports revenue per campaign and the split is by Facebook conversions. Each ad notes when its split fell
+    back to visits or impressions. Every tab has a total row.
+  - **Summary:** Results (Spend, Revenue, Profit, ROI) plus unit economics (EPV vs CPC, CPC, RPC, vCVR).
+  - **CSV** carries every metric plus the hidden-day count.

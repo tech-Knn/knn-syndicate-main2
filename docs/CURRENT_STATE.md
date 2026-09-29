@@ -2,6 +2,8 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
+_Last updated: 2026-09-30 — **D29: Analytics uses ClickFlare's metric names + a redesigned table.** EPV (revenue ÷ visits), RPC (revenue ÷ Google ad clicks), vCVR (ad clicks ÷ visits) and CPC replace the ambiguous "RPC" (which had meant EPV on the main table and per-ad-click in the dropdown). RPC/vCVR exclude days where Google masks < 10 ad clicks (14% of revenue): numerator and denominator are excluded together, and an offers campaign is masked per channel. The offer tab's RPC had the same bug and is fixed. Table: column registry, grouped header, presets + picker, pinned header/name/totals, estimated-value marking in the breakdown, icon actions, fits 1512px. Tests: shared unit-economics 8, api stats +2 assertions groups. Not deployed yet. See `docs/DECISIONS.md` D29._
+
 _Last updated: 2026-09-30 — **D28: rc words that make Google hide the keyword block are blocked, seeded from live tests and learned daily.**
 - **Follow-up:** 6 more words from a second live round (opportunity, recruitment, employment, opening, salary, staff required) → 12 seeds (migration `20260929220000_rc_blocked_terms_job_words`). Words that SHOW the block on job pages: Naukri, Bharti, Duty, Kaam.
 - **Live test:** job-seeking rc wording (job, career, hiring, vacancy, work from home) hid the related-search block on job pages, and "free" hid it on any page. Real Sept traffic agreed: 17 vs 60 keyword clicks per 100 visits, ROAS 18% vs 57%.
