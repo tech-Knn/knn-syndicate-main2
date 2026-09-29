@@ -25,6 +25,33 @@ describe('rcTokens / normalizeRcTerm', () => {
   });
 });
 
+/** The full seeded list after the 2026-09-30 live test rounds (both migrations). */
+const ALL_SEEDS = [...SEEDS, 'opportunity', 'recruitment', 'employment', 'opening', 'salary', 'staff required'];
+
+describe('the 2026-09-30 live test round (job pages, rc passed like a paid click)', () => {
+  it('flags every rc that hid the keyword block', () => {
+    for (const rc of [
+      'Hospital Job', 'Hospital Jobs', 'packing Job', 'Hospital Vacancies', 'Packing Vacancy', 'Hospital Opportunity',
+      'Hospital Opportunities', 'packing Opportunity', 'Hospital Recruitment', 'Hospital Employment', 'Hospital Openings',
+      'Hospital Staff Required', 'Hospital Salary', 'Hospital Careers', 'Hospitals are hiring', 'Packing work from home',
+      'Free flat on rent',
+    ]) {
+      expect(findBlockedRcTerms(rc, ALL_SEEDS), rc).not.toEqual([]);
+    }
+  });
+
+  it('lets through every rc that showed it', () => {
+    for (const rc of [
+      'Hospital Naukri', 'Packing Naukri', 'Hospital Bharti', 'Packing Bharti', 'Hospital Duty', 'Packing Duty',
+      'Hospital Kaam', 'Packing Kaam', 'Hospital Work', 'Packing ki naukri', 'Packing company near me',
+      'Nursing course fees in India', 'Patient care assistant course fees', 'Learn More about Warehouse Management',
+      'हॉस्पिटल में नौकरी',
+    ]) {
+      expect(findBlockedRcTerms(rc, ALL_SEEDS), rc).toEqual([]);
+    }
+  });
+});
+
 describe('findBlockedRcTerms', () => {
   it('matches whole words, plural- and case-insensitively', () => {
     expect(findBlockedRcTerms('Hospital Jobs near you', SEEDS)).toEqual(['job']);

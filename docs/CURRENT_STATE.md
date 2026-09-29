@@ -3,6 +3,7 @@
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
 _Last updated: 2026-09-30 — **D28: rc words that make Google hide the keyword block are blocked, seeded from live tests and learned daily.**
+- **Follow-up:** 6 more words from a second live round (opportunity, recruitment, employment, opening, salary, staff required) → 12 seeds (migration `20260929220000_rc_blocked_terms_job_words`). Words that SHOW the block on job pages: Naukri, Bharti, Duty, Kaam.
 - **Live test:** job-seeking rc wording (job, career, hiring, vacancy, work from home) hid the related-search block on job pages, and "free" hid it on any page. Real Sept traffic agreed: 17 vs 60 keyword clicks per 100 visits, ROAS 18% vs 57%.
 - **List:** `rc_blocked_terms` (migration `20260929210517_rc_blocked_terms`, 6 seeds). A daily learner (worker cron 03:40 IST → `POST /api/internal/learn-rc-terms`) adds words from 30 days of traffic; replayed on Aug–Sep it learns exactly job + career.
 - **Management:** super-admins manage the list at Platform → RC words.

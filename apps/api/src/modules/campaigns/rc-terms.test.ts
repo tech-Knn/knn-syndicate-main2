@@ -86,7 +86,12 @@ afterAll(async () => {
 describe('the block list (D28)', () => {
   it('ships with the words verified on live pages', async () => {
     const terms = await listBlockedRcTerms();
-    expect(terms).toEqual(expect.arrayContaining(['job', 'career', 'hiring', 'vacancy', 'free', 'work from home']));
+    expect(terms).toEqual(
+      expect.arrayContaining([
+        'job', 'career', 'hiring', 'vacancy', 'free', 'work from home',
+        'opportunity', 'recruitment', 'employment', 'opening', 'salary', 'staff required',
+      ]),
+    );
   });
 
   it('any signed-in user can read it; anonymous cannot', async () => {

@@ -558,6 +558,20 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   - **Test-method trap:** any page-URL param Google isn't told to ignore (`?x=1`, the old `?testRc=`,
     `?adtest=1`) hides the block by itself. Always pass rc as `?rc=`, which is in `ignoredPageParams`.
     This is why earlier `adtest`/`testRc` browser tests were "inconclusive".
+- **Second round (2026-09-30):** tested on the two live job pages, 2 loads per winner.
+
+  | Result | rc words |
+  |---|---|
+  | **Hid the block** | Jobs, Vacancies, Opportunity/Opportunities, Recruitment, Employment, Openings, Staff Required, Salary |
+  | **Showed it** (both pages) | Naukri, Bharti, Duty, Kaam |
+  | **Showed it** (hospital page only) | Work |
+
+  - "patient care assistant" hid the block 3/3, while "Patient care assistant course fees" showed it.
+  - Added in migration `20260929220000_rc_blocked_terms_job_words`: opportunity, recruitment,
+    employment, opening, salary, staff required. That makes 12 seeds.
+  - "patient care assistant" is not added, because it would also block the working "…course fees" rc.
+  - Tested on job pages only: Allow a word (e.g. salary, opening, opportunity) if another vertical
+    needs it.
 - **Decision (Aman):** keep a list of such words and stop buyers from putting them in a new rc.
   - **Storage:** `rc_blocked_terms` is global (no org_id / RLS, like `term_stat_daily`). Terms are
     normalized: lowercase, whole words, plurals folded.
