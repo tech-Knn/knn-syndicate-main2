@@ -135,6 +135,22 @@ export function GoogleSignalsEditor({
   };
 
   const defaultRac = clean(campaignRac);
+  // Google only uses publisher `terms` when a Referrer Ad Creative is sent with them. Informational
+  // only (never blocks): name the ads that, as currently typed, would send keywords with no rc.
+  const keywordsSent = customTerms.length > 0 || view.articles.some((a) => a.aiTerms.length > 0);
+  const adsWithoutRac = keywordsSent
+    ? view.ads.map((a, i) => ({ a, label: a.name || `Ad ${i + 1}` })).filter(({ a }) => !(clean(adRac[a.id] ?? '') ?? defaultRac))
+    : [];
+  const noRacNote =
+    adsWithoutRac.length === 0
+      ? null
+      : adsWithoutRac.length === view.ads.length
+        ? 'Google only uses these keywords when a Referrer Ad Creative is sent — no ad has one right now.'
+        : `Google only uses these keywords when a Referrer Ad Creative is sent — ${
+            adsWithoutRac.length <= 3
+              ? adsWithoutRac.map((x) => x.label).join(', ')
+              : `${adsWithoutRac.slice(0, 3).map((x) => x.label).join(', ')} and ${adsWithoutRac.length - 3} more`
+          } ${adsWithoutRac.length === 1 ? 'has' : 'have'} none.`;
 
   return (
     <Card className={adminStyles.section}>
@@ -290,6 +306,7 @@ export function GoogleSignalsEditor({
             {customTerms.length}/{GOOGLE_SIGNAL_LIMITS.termsMaxCount} keywords
           </span>
         </div>
+        {noRacNote && <p className={adminStyles.fieldHint}>{noRacNote}</p>}
         {longTerm && (
           <p className={`${adminStyles.fieldHint} ${styles.over}`}>
             A keyword is over {GOOGLE_SIGNAL_LIMITS.termMaxChars} characters: “{longTerm.slice(0, 40)}…”

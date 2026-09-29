@@ -509,6 +509,10 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
     carries rc as `kw`, `terms`, `rpbu` with the rc fragment, and `rurl` = the page URL incl. the token.)
   - Real creatives fit: across 127 ads the longest headline + primary text + description is 193 chars.
 
+  One informational line, never a block (Aman, 2026-09-30): Google only uses publisher `terms` when
+  a `referrerAdCreative` is sent with them. So when keywords (custom or AI) would go out and an ad
+  has no rc, the panel names those ads ("…Ward boy video has none."). Save stays enabled.
+
   The draft wizard's rc cap was raised from 200 to the same 500, so a live-edited value survives
   clone → draft edit. The wizard's submit-time `racValueIssues` check (≥2 words, ≠ campaign name) is
   unchanged and applies to new drafts only.
