@@ -185,20 +185,33 @@ export default async function ArticlePage({
                 channel={channel}
                 site={site}
               />
-              {/* Tap/click an h2/h3 in the article body → smooth-scroll to the first chip strip.
-                  Reduces dead clicks flagged by Clarity (users tap headings expecting an interaction;
-                  without this it's a no-op → they bounce). Only fires when a chip strip is present
-                  (gate.monetize) and only when the strip isn't already fully in the viewport. */}
+              {/* Tap/click the article title (h1) or any h2/h3 in the body → smooth-scroll to the
+                  NEAREST chip strip that sits at or below the tapped heading. Falls back to the
+                  nearest strip above only when the user is already past the last strip. This avoids
+                  the disorienting back-jump that a naïve "always scroll to #relatedsearches1" would
+                  cause when the user is reading deeper in the article. Reduces dead clicks flagged
+                  by Clarity — the h1 title in particular concentrates the most dead clicks (users
+                  tap the headline expecting interaction). Scoped to `<article>` so headings
+                  elsewhere on the page (footer etc.) don't trigger it. */}
               <script
                 dangerouslySetInnerHTML={{
                   __html:
                     "(function(){document.addEventListener('click',function(e){" +
                     "var el=e.target;if(!(el instanceof HTMLElement))return;" +
-                    "var h=el.closest('h2, h3');if(!h||!h.closest('article'))return;" +
-                    "var t=document.getElementById('relatedsearches1');if(!t)return;" +
-                    "var r=t.getBoundingClientRect();" +
-                    "if(r.top>=0&&r.bottom<=window.innerHeight)return;" +
-                    "t.scrollIntoView({behavior:'smooth',block:'start'});" +
+                    "var h=el.closest('h1, h2, h3');if(!h||!h.closest('article'))return;" +
+                    "var hy=h.getBoundingClientRect().top;" +
+                    "var t1=document.getElementById('relatedsearches1');" +
+                    "var t2=document.getElementById('relatedsearches2');" +
+                    "var arr=[];if(t1)arr.push(t1);if(t2)arr.push(t2);" +
+                    "if(!arr.length)return;" +
+                    "var target=null,bestTop=Infinity,i,ty;" +
+                    "for(i=0;i<arr.length;i++){ty=arr[i].getBoundingClientRect().top;" +
+                    "if(ty>=hy&&ty<bestTop){target=arr[i];bestTop=ty;}}" +
+                    "if(!target){var bestAbove=-Infinity;" +
+                    "for(i=0;i<arr.length;i++){ty=arr[i].getBoundingClientRect().top;" +
+                    "if(ty>bestAbove){target=arr[i];bestAbove=ty;}}}" +
+                    "if(!target)return;" +
+                    "target.scrollIntoView({behavior:'smooth',block:'start'});" +
                     "},{passive:true});})();",
                 }}
               />
