@@ -118,7 +118,22 @@ export interface StatsSummary {
   series: DailyPoint[]; // one point per day in range (gaps filled with zeros)
 }
 
-export interface CampaignPerf {
+/**
+ * Our own funnel tracking (D30), each stage counted at most once per visit — live, never hidden, and
+ * the same units ClickFlare counts (see unit-economics.ts for the metrics built on them).
+ */
+export interface FunnelCounts {
+  /** Landed on the page (ClickFlare Visits). */
+  visits: number;
+  /** Clicked a keyword on it and reached the results page (ClickFlare Clicks). */
+  keywordClicks: number;
+  /** Clicked a Google ad (ClickFlare Conversions). */
+  adClicks: number;
+}
+
+/** Performance row for one campaign. `clicks` / `conversions` are Facebook's own counts; the
+ *  FunnelCounts are ours. */
+export interface CampaignPerf extends FunnelCounts {
   id: string;
   name: string;
   status: string;
@@ -142,15 +157,9 @@ export interface CampaignPerf {
    *  Inline-editable only when live (ACTIVE/PAUSED) and CBO or a single ad set (see updateCampaignBudget). */
   budgetMode: 'AD_SET' | 'CAMPAIGN';
   dailyBudgetCents: number | null;
-  /**
-   * Visits that clicked a Google ad, from our own tracking (the funnel's `adclick` stage, at most once
-   * per visit — how ClickFlare counts a conversion). Live and never hidden (D30; see unit-economics.ts).
-   *   RPC = revenueUsd ÷ adClicks      vCVR = adClicks ÷ clicks (visits)
-   */
-  adClicks: number;
 }
 
-export interface AdPerf {
+export interface AdPerf extends FunnelCounts {
   id: string;
   name: string;
   /** Live Facebook delivery state (effective_status), mirrored by the worker reconcile job.
@@ -166,7 +175,7 @@ export interface AdPerf {
   basis: string | null; // allocation basis of the latest day (conversions|clicks|impressions|unallocated)
 }
 
-export interface AdSetPerf {
+export interface AdSetPerf extends FunnelCounts {
   id: string;
   name: string;
   /** Live Facebook delivery state (effective_status), mirrored by the worker reconcile job.
@@ -190,7 +199,7 @@ export interface AdSetPerf {
 export interface CampaignBreakdown {
   range: DateRange;
   campaign: { id: string; name: string; status: string };
-  totals: MetricTotals;
+  totals: MetricTotals & FunnelCounts;
   adSets: AdSetPerf[];
 }
 
@@ -223,16 +232,14 @@ export interface DimStat {
 
 /** Per-offer (website) results for a campaign (Phase F). Cost is campaign-level FB spend; revenue is
  *  per offer (its AFS channel), buyer-visible (the platform cut applied) and always shown — Google
- *  never hides earnings. */
-export interface OfferStat {
+ *  never hides earnings. The funnel counts are ours, credited to the website each event happened on. */
+export interface OfferStat extends FunnelCounts {
   offerId: string;
   host: string;
   afsLabel: string | null;
   kind: 'PAID' | 'ORGANIC';
   weightPct: number;
   revenueUsd: number;
-  /** Visits on this website that clicked a Google ad — our own tracking, like CampaignPerf.adClicks. */
-  adClicks: number;
   /** Revenue ÷ ad clicks (ClickFlare Dynamic payout); null with no ad clicks. */
   rpcUsd: number | null;
 }

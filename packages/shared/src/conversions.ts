@@ -35,10 +35,18 @@ export function pxeToFbEvent(pxe: string | null | undefined): string {
 }
 
 /**
- * The `conversion_events.event_name` recorded when a visitor clicks a Google ad (the `adclick`
- * stage, at most once per visit). Analytics counts these as "ad clicks" for RPC and vCVR (D30).
+ * The `conversion_events.event_name` of each funnel stage — each recorded at most once per visit.
+ * Analytics counts them the way ClickFlare does (D30): landed = Visits, keyword click = Clicks,
+ * ad click = Conversions.
  */
-export const AD_CLICK_EVENT_NAME = pxeToFbEvent('adclick');
+export const FUNNEL_EVENT_NAME: Readonly<Record<FunnelStage, string>> = {
+  lander: pxeToFbEvent('lander'),
+  search: pxeToFbEvent('search'),
+  adclick: pxeToFbEvent('adclick'),
+};
+
+/** The event recorded when a visitor clicks a Google ad (the money event). */
+export const AD_CLICK_EVENT_NAME = FUNNEL_EVENT_NAME.adclick;
 
 /** Map a funnel stage / pxe to the Facebook ad-set `custom_event_type` enum value. */
 const PXE_TO_CUSTOM_EVENT_TYPE: Record<string, string> = {

@@ -98,7 +98,8 @@ type IdKey = 'name' | 'status';
 type SortKey = IdKey | ColKey;
 
 const PAGE_SIZE = 50;
-const COLUMNS_STORAGE_KEY = 'knn.analytics.columns.v2';
+// v3: D30 changed what some keys mean (visits = landed; CTR/CVR = ClickFlare's), so v2 picks reset.
+const COLUMNS_STORAGE_KEY = 'knn.analytics.columns.v3';
 
 function sortValue(r: CampaignPerf, key: SortKey): number | string | null {
   switch (key) {
@@ -399,9 +400,9 @@ export default function AnalyticsPage() {
     void toggleExpand(id);
   };
 
-  // Unit economics for the summary + the EPV-vs-CPC verdict.
+  // Unit economics for the summary + the EPV-vs-CPV verdict.
   const tEpv = derive.epv(totals);
-  const tCpc = derive.cpc(totals);
+  const tCpv = derive.cpv(totals);
   const tRpc = derive.rpc(totals);
   const tVcvr = derive.vcvr(totals);
   const tProfit = derive.profit(totals);
@@ -512,7 +513,7 @@ export default function AnalyticsPage() {
             <div className={styles.summaryGroup}>
               <span className={styles.summaryLabel}>Results · {fmtCount(filtered.length)} {filtered.length === 1 ? 'campaign' : 'campaigns'}</span>
               <div className={styles.summaryStrip}>
-                <StatTile label="Spend" value={formatUsd(totals.spendUsd)} sub={`${fmtCount(totals.clicks)} visits`} info="Facebook ad spend across the campaigns shown." />
+                <StatTile label="Spend" value={formatUsd(totals.spendUsd)} sub={`${fmtCount(totals.visits)} visits`} info="Facebook ad spend across the campaigns shown. Visits = people who landed on the page." />
                 <StatTile label="Revenue" value={formatUsd(totals.revenueUsd)} sub={`${fmtCount(totals.adClicks)} ad clicks`} info="AdSense earnings attributed to the campaigns shown (after any platform cut). Lags spend by a few hours." />
                 <StatTile
                   label="Profit"
@@ -536,11 +537,11 @@ export default function AnalyticsPage() {
                 <StatTile
                   label="EPV"
                   value={formatUnitUsd(tEpv)}
-                  tone={tEpv === null || tCpc === null ? 'neutral' : tEpv > tCpc ? 'pos' : tEpv < tCpc ? 'neg' : 'neutral'}
-                  sub={tCpc === null ? 'earned per visit' : `vs ${formatUnitUsd(tCpc)} CPC`}
-                  info="Earnings per visit = revenue ÷ visits (ClickFlare EPV). You make money when EPV beats CPC."
+                  tone={tEpv === null || tCpv === null ? 'neutral' : tEpv > tCpv ? 'pos' : tEpv < tCpv ? 'neg' : 'neutral'}
+                  sub={tCpv === null ? 'earned per visit' : `vs ${formatUnitUsd(tCpv)} CPV`}
+                  info="Earnings per visit = revenue ÷ visits (ClickFlare EPV). You make money when EPV beats CPV."
                 />
-                <StatTile label="CPC" value={formatUnitUsd(tCpc)} sub="paid per visit" info="Spend ÷ visits (Facebook link clicks). ClickFlare CPV." />
+                <StatTile label="CPV" value={formatUnitUsd(tCpv)} sub="paid per visit" info="Spend ÷ visits (people who landed on the page). ClickFlare CPV." />
                 <StatTile
                   label="RPC"
                   value={formatUnitUsd(tRpc)}
@@ -551,7 +552,7 @@ export default function AnalyticsPage() {
                   label="vCVR"
                   value={formatRate(tVcvr)}
                   sub="visitors who clicked an ad"
-                  info="Ad clicks ÷ visits (ClickFlare vCVR)."
+                  info="Ad clicks ÷ visits — the landing page → conversion rate (ClickFlare vCVR)."
                 />
               </div>
             </div>

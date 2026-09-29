@@ -620,7 +620,9 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   campaign dropdown's "RPC" meant revenue ÷ **Google ad clicks**, and ClickFlare's RPC is revenue ÷
   conversions (in search arbitrage, the paid ad click). One label carried two meanings. A buyer comparing
   our $0.011 "RPC" with ClickFlare's $0.112 saw a 10× gap that was mostly definitional.
-- **Definitions** (`packages/shared/src/unit-economics.ts`, named exactly like ClickFlare):
+- **Definitions** (`packages/shared/src/unit-economics.ts`, named exactly like ClickFlare). *(Superseded by
+  D30: every count now comes from our own funnel. Visits are landings, CPC became CPV, and CTR/CVR follow
+  ClickFlare.)*
 
   | Metric | Formula | ClickFlare name |
   |---|---|---|
@@ -633,7 +635,7 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   | CVR (FB) | Conv (FB) ÷ visits | (Facebook-side) |
 
   Sub-dollar unit prices show 3 decimals (`formatUnitUsd`), so $0.011 and $0.014 don't both read "$0.01".
-- **Google click masking:** *(Superseded by D30: RPC and vCVR now use our own ad-click tracking, so
+- **Google click masking:** *(Superseded by D30: RPC and vCVR now use our own funnel tracking, so
   nothing is masked or hidden.)* AdSense reports a channel-day with fewer than 10 ad clicks as 0 clicks, but
   still reports the earnings. In Aug–Sep that was 14% of revenue and 36% of earning campaign-days. A naive
   RPC would divide that revenue by nothing and inflate. So `isMaskedAfsDay` flags a masked day (earned,
@@ -668,40 +670,69 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   - **Summary:** Results (Spend, Revenue, Profit, ROI) plus unit economics (EPV vs CPC, CPC, RPC, vCVR).
   - **CSV** carries every metric plus the hidden-day count.
 
-### 2026-09-30 — D30: RPC and vCVR count our own ad clicks — ClickFlare's Dynamic payout, never hidden
+### 2026-09-30 — D30: Analytics counts our own funnel, exactly like ClickFlare — Visits → Clicks → Conversions, never hidden
 
-- **Problem:** D29 divided by Google's AdSense click count, and Google reports 0 clicks on any channel-day
-  with fewer than 10. On staging most campaigns are that small, so RPC and vCVR read "hidden" on nearly
-  every row. ClickFlare never hides them.
-- **What ClickFlare actually shows** (checked against its API, 2026-09-30):
-  - Its RPC is the **Dynamic payout** column: `dynamicPayout` = revenue ÷ conversions, to the cent.
-  - Conversions are counted **at most once per visit**: in its two largest campaigns, no visit or click id
-    had more than one.
-  - It shows the value on small rows too: 76 of 77 rows with 1–9 conversions had one.
-- **Change:** "ad clicks" = our own `adclick` funnel events (`conversion_events`, event `Search`, at most
-  one per visit). That is the same signal Facebook's CAPI gets, and the same unit ClickFlare counts.
-  - RPC = revenue ÷ ad clicks; vCVR = ad clicks ÷ visits. The values are live, and a campaign with 0 ad
-    clicks shows RPC "—".
-  - Clicks are bucketed by IST business day on `created_at`, the moment the beacon landed.
-  - The Websites tab credits each click to the website it happened on, by the page URL's host. When one
-    host serves several offers, the click's `#c=` channel picks the offer, then traffic share splits the
-    rest (`creditAdClicksToOffers`). Host is the key because channels roll over: only 44% of clicks still
-    carry the offer's current channel, while 100% match an offer host.
-  - The masked-day machinery is gone: `isMaskedAfsDay`, `adClickEconomics`, `maskedDays`, "~"/"hidden",
-    and the CSV hidden-day column.
-  - Migration `20260929224916_conversion_events_ad_click_index` adds `(campaign_id, event_name,
-    created_at)`, so the count is index-only at production volume. It's additive.
-- **Accuracy vs Google** (staging, 14 days, days where Google shows clicks):
-  - **Detection is complete.** Every click our page detects comes to 101–117% of Google's reported clicks;
-    Google's number leaves out the days it hides.
-  - **Per visit reads lower than per click.** The once-per-visit count is 72% of Google's clicks, because a
-    visitor who clicks averages ~1.4 ads.
-  - **So RPC reads ~1.4× revenue-per-Google-click.** For example, $0.047 instead of $0.034 — exactly how
-    ClickFlare's Dynamic payout reads. vCVR is "share of visits with an ad click" (20.5% vs Google's
-    clicks-per-visit 28.2%).
+- **Problem:**
+  - **Hidden values.** D29 divided by Google's AdSense click count, and Google reports 0 clicks on any
+    channel-day with fewer than 10. On staging most campaigns are that small, so RPC and vCVR read
+    "hidden" on nearly every row. ClickFlare never hides them.
+  - **Visits weren't landings.** "Visits" were Facebook link clicks. About 11% of those never load the
+    page (staging, 7 days: 12,382 clicks → 10,969 landings), so vCVR wasn't a landing-page → conversion
+    rate.
+- **What ClickFlare actually computes** (checked against its API, 2026-09-30):
+  - **RPC = Dynamic payout** = revenue ÷ conversions, to the cent.
+  - **vCVR = visitCvr** = conversions ÷ visits.
+  - **At most one conversion per visit:** in its two largest campaigns, no visit or click id had more
+    than one.
+  - **Small rows still show values:** 76 of 77 rows with 1–9 conversions had one.
+  - **No landing-page clicks in your setup:** Clicks, and so CTR and CVR, are 0 on every campaign.
+- **Change: every count is our own funnel event**, recorded once per visit in `conversion_events` — the
+  same events Facebook CAPI receives. Live, never hidden.
+
+  | Our count | Event | ClickFlare |
+  |---|---|---|
+  | Visits (landed) | `lander` → `ViewContent` | Visits |
+  | Keyword clicks | `search` → `AddToCart` | Clicks |
+  | Ad clicks | `adclick` → `Search` | Conversions |
+
+  | Metric | Formula | ClickFlare |
+  |---|---|---|
+  | EPV | revenue ÷ visits | EPV |
+  | CPV (was "CPC") | spend ÷ visits | CPV |
+  | RPC | revenue ÷ ad clicks | Dynamic payout |
+  | vCVR | ad clicks ÷ visits | vCVR — landing page → conversion |
+  | CTR | keyword clicks ÷ visits | CTR |
+  | CVR | ad clicks ÷ keyword clicks | CVR (vCVR = CTR × CVR) |
+
+  - **Facebook's own numbers keep their "(FB)" suffix:** FB clicks, CTR (FB), CPC (FB), Conv (FB),
+    CPA (FB), CVR (FB). Land rate = visits ÷ FB clicks shows the clicks lost before the page loads.
+    Profitability is unchanged: EPV vs CPV compares revenue with spend over the same denominator.
+  - **Presets:**
+    - Essentials: Spend, Revenue, Profit, ROI, EPV, CPV, RPC, vCVR, Budget (still fits 1512px).
+    - Funnel: adds Visits, Keyword clicks, CTR, Ad clicks, CVR.
+    - Facebook: Facebook-side columns plus Land rate.
+    - Saved column picks moved to `knn.analytics.columns.v3`, because keys changed meaning.
+  - **Ads tab:** the same metrics per ad. The funnel is exact per ad, since each event carries its ad;
+    revenue-based columns stay "estimated".
+  - **Websites tab:** visits, vCVR, ad clicks, revenue, EPV and RPC per website, plus a total row. Events
+    are credited by page host (`creditToOffers`); when a host is shared, the results-page `#c=` channel
+    picks the offer, then traffic share splits the rest. Host is the key because channels roll over: only
+    44% of clicks still carry the offer's current channel, while 100% match an offer host.
+  - **Countries / Hours tabs:** Facebook-only columns, labeled so. Our events carry no country, and
+    Facebook's hours are in the ad account's time zone.
+  - **Bucketing:** clicks count by IST business day on `created_at`, the moment the beacon landed.
+  - **Removed:** the masked-day machinery (`isMaskedAfsDay`, `adClickEconomics`, `maskedDays`,
+    "~"/"hidden", the CSV hidden-day column).
+  - **Migration:** `20260929224916_conversion_events_ad_click_index` adds `(campaign_id, event_name,
+    created_at)`; it's additive. Locally the whole analytics call takes ~100 ms over 193k events.
+- **Accuracy vs Google** (staging, 14 days):
+  - **Detection is complete.** Every ad click our pages detect comes to 101–117% of Google's reported
+    clicks.
+  - **Per visit reads lower than per click.** Counting once per visit gives ~72% of Google's clicks,
+    because a visitor who clicks averages ~1.4 ads.
+  - **So RPC reads ~1.4× revenue-per-Google-click**, just as ClickFlare's Dynamic payout does.
 - **Kept as is:**
   - Revenue still comes from AdSense, and the platform cut still applies.
-  - Visits are still Facebook link clicks.
-  - Conv / CPA / CVR (FB) are still Facebook's own count. It is usually below Ad clicks, because Facebook
-    can't match every visitor.
+  - The rc-word learner (D28) still measures keyword clicks per 100 **FB clicks**, because its
+    thresholds were calibrated on that.
   - Today's RPC climbs through the day, because AdSense earnings lag the clicks by a few hours.

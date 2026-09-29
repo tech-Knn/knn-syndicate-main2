@@ -1,20 +1,28 @@
 /**
- * Unit economics for the Analytics workbench — named and defined exactly like ClickFlare so a buyer
- * comparing the two compares like with like:
+ * Unit economics for the Analytics workbench — computed exactly like ClickFlare (D30) so a buyer
+ * comparing the two compares like with like. Every count is OUR OWN funnel tracking, each stage at
+ * most once per visit, live and never hidden:
  *
- *   EPV  = revenue ÷ visits          ClickFlare EPV. Our "visits" = Facebook link clicks.
- *   RPC  = revenue ÷ ad clicks       ClickFlare "Dynamic payout" (its RPC) = revenue ÷ conversions.
- *   vCVR = ad clicks ÷ visits        ClickFlare vCVR (visitCvr).
- *   CPC  = spend ÷ visits            ClickFlare CPV.
+ *   Visits          landed on the page            ClickFlare Visits
+ *   Keyword clicks  clicked a keyword on it       ClickFlare Clicks
+ *   Ad clicks       clicked a Google ad           ClickFlare Conversions
  *
- * "Ad clicks" are OUR OWN tracking (D30): the results page records a visit's Google ad click (the
- * funnel's `adclick` stage), at most once per visit — exactly how ClickFlare counts a conversion
- * (checked against its API 2026-09-30: dynamicPayout = revenue ÷ conversions, and no visit carries
- * more than one). So the count is live and never hidden. Google's own AdSense click count is not
- * used: it reports 0 on any channel-day with fewer than 10 clicks, which blanked RPC/vCVR on small
- * campaigns. Every click our page detects matches Google's count (101–117% of it on staging); the
- * once-per-visit count is ~72% of Google's, because a visitor who clicks averages ~1.4 ads — so RPC
- * reads ~1.4× Google's revenue-per-click, just as ClickFlare's does.
+ *   EPV  = revenue ÷ visits              ClickFlare EPV
+ *   CPV  = spend ÷ visits                ClickFlare CPV
+ *   RPC  = revenue ÷ ad clicks           ClickFlare Dynamic payout (its RPC)
+ *   vCVR = ad clicks ÷ visits            ClickFlare vCVR — landing page → conversion
+ *   CTR  = keyword clicks ÷ visits       ClickFlare CTR
+ *   CVR  = ad clicks ÷ keyword clicks    ClickFlare CVR       (vCVR = CTR × CVR)
+ *
+ * Checked against ClickFlare's API (2026-09-30): dynamicPayout = revenue ÷ conversions and visitCvr =
+ * conversions ÷ visits, to the cent; no visit carries more than one conversion.
+ *
+ * Why not Google's or Facebook's counts: Google reports 0 ad clicks on any channel-day with fewer
+ * than 10, which blanked RPC/vCVR on small campaigns; and ~11% of Facebook link clicks never load
+ * the page, so a Facebook-click "visit" isn't a landing. Our detection is complete — every ad click
+ * the page sees comes to 101–117% of Google's reported clicks — but it counts once per visit, and a
+ * visitor who clicks averages ~1.4 ads, so RPC reads ~1.4× Google's revenue-per-click, exactly as
+ * ClickFlare's Dynamic payout does.
  */
 
 /** Revenue per visit (ClickFlare EPV), or null with no visits. */
@@ -32,12 +40,22 @@ export function vcvr(adClicks: number, visits: number): number | null {
   return visits > 0 ? adClicks / visits : null;
 }
 
+/** Keyword clicks per visit as a fraction (ClickFlare CTR), or null with no visits. */
+export function lpCtr(keywordClicks: number, visits: number): number | null {
+  return visits > 0 ? keywordClicks / visits : null;
+}
+
+/** Ad clicks per keyword click as a fraction (ClickFlare CVR), or null with no keyword clicks. */
+export function cvr(adClicks: number, keywordClicks: number): number | null {
+  return keywordClicks > 0 ? adClicks / keywordClicks : null;
+}
+
 /** A count per visit (e.g. Facebook-reported conversions ÷ visits), or null with no visits. */
 export function perVisit(count: number, visits: number): number | null {
   return visits > 0 ? count / visits : null;
 }
 
-/** Cost per unit (CPC = spend ÷ visits, CPA = spend ÷ conversions), or null when the unit count is 0. */
+/** Cost per unit (CPV = spend ÷ visits, CPA = spend ÷ conversions), or null when the unit count is 0. */
 export function costPer(spendUsd: number, units: number): number | null {
   return units > 0 ? spendUsd / units : null;
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AD_CLICK_EVENT_NAME } from './conversions.js';
-import { costPer, epv, formatRate, formatUnitUsd, perVisit, rpcPerAdClick, vcvr } from './unit-economics.js';
+import { AD_CLICK_EVENT_NAME, FUNNEL_EVENT_NAME } from './conversions.js';
+import { costPer, cvr, epv, formatRate, formatUnitUsd, lpCtr, perVisit, rpcPerAdClick, vcvr } from './unit-economics.js';
 
 describe('ClickFlare-named unit metrics', () => {
   it('EPV / RPC / vCVR / CPC match their definitions and are null without a denominator', () => {
@@ -12,13 +12,23 @@ describe('ClickFlare-named unit metrics', () => {
     expect([epv(1, 0), rpcPerAdClick(1, 0), vcvr(1, 0), costPer(1, 0), perVisit(1, 0)]).toEqual([null, null, null, null, null]);
   });
 
-  it('RPC matches ClickFlare Dynamic payout on a real row (revenue ÷ conversions)', () => {
-    // ClickFlare 2026-09-29, "Second hand mobile": $218.85 (rounded to cents) over 7,656 conversions →
-    // dynamicPayout 0.02858506.
+  it('RPC and vCVR match ClickFlare on a real row (Dynamic payout = revenue ÷ conversions; visitCvr = conversions ÷ visits)', () => {
+    // ClickFlare 2026-09-29, "Second hand mobile": $218.85 (rounded to cents), 7,656 conversions,
+    // 32,246 visits → dynamicPayout 0.02858506, visitCvr 23.742479%.
     expect(rpcPerAdClick(218.85, 7_656)).toBeCloseTo(0.02858506, 5);
+    expect(vcvr(7_656, 32_246)! * 100).toBeCloseTo(23.742479, 5);
   });
 
-  it('ad clicks are the funnel adclick event (the pixel Search event), not a stage name', () => {
+  it('CTR (keyword clicks ÷ visits) × CVR (ad clicks ÷ keyword clicks) = vCVR, like ClickFlare', () => {
+    // Staging, 7 days: 10,969 visits → 5,078 keyword clicks → 2,180 ad clicks.
+    expect(lpCtr(5_078, 10_969)).toBeCloseTo(0.4629, 4);
+    expect(cvr(2_180, 5_078)).toBeCloseTo(0.4293, 4);
+    expect(lpCtr(5_078, 10_969)! * cvr(2_180, 5_078)!).toBeCloseTo(vcvr(2_180, 10_969)!, 12);
+    expect([lpCtr(1, 0), cvr(1, 0)]).toEqual([null, null]);
+  });
+
+  it('the funnel counts the recorded events of each stage (not stage names)', () => {
+    expect(FUNNEL_EVENT_NAME).toEqual({ lander: 'ViewContent', search: 'AddToCart', adclick: 'Search' });
     expect(AD_CLICK_EVENT_NAME).toBe('Search');
   });
 

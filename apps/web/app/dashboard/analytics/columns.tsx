@@ -1,13 +1,15 @@
 import type { ReactNode } from 'react';
 import {
   type CampaignPerf,
+  type FunnelCounts,
   costPer,
+  cvr,
   epv,
   formatRate,
   formatRoi,
   formatUnitUsd,
   formatUsd,
-  perVisit,
+  lpCtr,
   rpcPerAdClick,
   vcvr,
 } from '@knn/shared';
@@ -21,28 +23,34 @@ import styles from '../analytics.module.css';
  */
 
 /** The inputs every derived metric is computed from — a campaign row or the summed totals. */
-export interface MetricInputs {
+export interface MetricInputs extends FunnelCounts {
   spendUsd: number;
   revenueUsd: number;
   impressions: number;
-  /** Visits = Facebook link clicks that reached the landing page. */
+  /** Facebook's link clicks (its own count). */
   clicks: number;
   /** Facebook-reported conversions (the pixel `Search` event = an ad click). */
   conversions: number;
-  /** Visits that clicked a Google ad — our own tracking, live and never hidden (ClickFlare Conversions). */
-  adClicks: number;
 }
+
+const ratio = (part: number, whole: number): number | null => (whole > 0 ? part / whole : null);
 
 export const derive = {
   profit: (r: MetricInputs): number => r.revenueUsd - r.spendUsd,
   roi: (r: MetricInputs): number | null => (r.spendUsd > 0 ? (r.revenueUsd - r.spendUsd) / r.spendUsd : null),
-  epv: (r: MetricInputs): number | null => epv(r.revenueUsd, r.clicks),
-  cpc: (r: MetricInputs): number | null => costPer(r.spendUsd, r.clicks),
+  // Unit economics on our own funnel — computed exactly like ClickFlare (see unit-economics.ts).
+  epv: (r: MetricInputs): number | null => epv(r.revenueUsd, r.visits),
+  cpv: (r: MetricInputs): number | null => costPer(r.spendUsd, r.visits),
   rpc: (r: MetricInputs): number | null => rpcPerAdClick(r.revenueUsd, r.adClicks),
-  vcvr: (r: MetricInputs): number | null => vcvr(r.adClicks, r.clicks),
-  ctr: (r: MetricInputs): number | null => perVisit(r.clicks, r.impressions),
+  vcvr: (r: MetricInputs): number | null => vcvr(r.adClicks, r.visits),
+  ctr: (r: MetricInputs): number | null => lpCtr(r.keywordClicks, r.visits),
+  cvr: (r: MetricInputs): number | null => cvr(r.adClicks, r.keywordClicks),
+  // Facebook's side.
+  landRate: (r: MetricInputs): number | null => ratio(r.visits, r.clicks),
+  ctrFb: (r: MetricInputs): number | null => ratio(r.clicks, r.impressions),
+  cpcFb: (r: MetricInputs): number | null => costPer(r.spendUsd, r.clicks),
   cpa: (r: MetricInputs): number | null => costPer(r.spendUsd, r.conversions),
-  cvrFb: (r: MetricInputs): number | null => perVisit(r.conversions, r.clicks),
+  cvrFb: (r: MetricInputs): number | null => ratio(r.conversions, r.clicks),
 };
 
 /** Counts: exact below 10k, compact above (small numbers precise, big ones scannable). */
@@ -55,13 +63,15 @@ export function fmtCount(n: number): string {
 
 /** Sum rows into totals inputs (ratios are then re-derived from the sums, never averaged). */
 export function sumInputs(rows: readonly MetricInputs[]): MetricInputs {
-  const t: MetricInputs = { spendUsd: 0, revenueUsd: 0, impressions: 0, clicks: 0, conversions: 0, adClicks: 0 };
+  const t: MetricInputs = { spendUsd: 0, revenueUsd: 0, impressions: 0, clicks: 0, conversions: 0, visits: 0, keywordClicks: 0, adClicks: 0 };
   for (const r of rows) {
     t.spendUsd += r.spendUsd;
     t.revenueUsd += r.revenueUsd;
     t.impressions += r.impressions;
     t.clicks += r.clicks;
     t.conversions += r.conversions;
+    t.visits += r.visits;
+    t.keywordClicks += r.keywordClicks;
     t.adClicks += r.adClicks;
   }
   return t;
@@ -73,10 +83,13 @@ export const GROUPS: Record<GroupKey, { label: string; info: string }> = {
   results: { label: 'Results', info: 'What the campaign spent and earned in the selected period.' },
   unit: {
     label: 'Per visit & per click',
-    info: 'Unit economics, named exactly like ClickFlare. A campaign makes money when EPV (earned per visit) beats CPC (paid per visit).',
+    info: 'Unit economics, computed exactly like ClickFlare. A campaign makes money when EPV (earned per visit) beats CPV (paid per visit).',
   },
-  traffic: { label: 'Traffic', info: 'Visitors from Facebook and the Google ads they clicked.' },
-  facebook: { label: 'Facebook', info: "Facebook's own conversion reporting — used for its optimization and CPA." },
+  traffic: {
+    label: 'Funnel',
+    info: 'Our own tracking, once per visit and live: visits → keyword clicks → ad clicks. The same counts ClickFlare shows as Visits → Clicks → Conversions.',
+  },
+  facebook: { label: 'Facebook', info: "Facebook's own numbers: its clicks, its cost per click and its pixel conversions (what it optimizes for)." },
   controls: { label: '', info: '' },
 };
 
@@ -86,13 +99,19 @@ export type ColKey =
   | 'profit'
   | 'roi'
   | 'epv'
-  | 'cpc'
+  | 'cpv'
   | 'rpc'
   | 'vcvr'
   | 'visits'
-  | 'adClicks'
-  | 'impressions'
+  | 'keywordClicks'
   | 'ctr'
+  | 'adClicks'
+  | 'cvr'
+  | 'impressions'
+  | 'fbClicks'
+  | 'ctrFb'
+  | 'cpcFb'
+  | 'landRate'
   | 'conv'
   | 'cpa'
   | 'cvrFb'
@@ -122,10 +141,26 @@ export interface ColumnDef {
 
 const toneOf = (n: number | null): string | undefined => (n === null || n === 0 ? undefined : n > 0 ? styles.pos : styles.neg);
 const csvNum = (n: number | null, digits: number): string => (n === null ? '' : n.toFixed(digits));
+const csvPct = (n: number | null): string => csvNum(n === null ? null : n * 100, 2);
 
 function dataBar(value: number, max: number, cls: string | undefined): ReactNode {
   if (value <= 0 || max <= 0) return null;
   return <span className={cls} style={{ width: `${Math.max(4, Math.round((value / max) * 100))}%` }} aria-hidden />;
+}
+
+/** A count column (sortable, compact, exact in CSV). */
+function countCol(key: ColKey, label: string, group: GroupKey, info: string, get: (r: MetricInputs) => number): ColumnDef {
+  return { key, label, group, info, sort: get, cell: (r) => fmtCount(get(r)), csv: (r) => String(get(r)) };
+}
+
+/** A rate column (a fraction shown as a %). */
+function rateCol(key: ColKey, label: string, group: GroupKey, info: string, get: (r: MetricInputs) => number | null): ColumnDef {
+  return { key, label, group, info, sort: get, cell: (r) => formatRate(get(r)), csv: (r) => csvPct(get(r)) };
+}
+
+/** A unit-price column (USD per visit / click). */
+function unitCol(key: ColKey, label: string, group: GroupKey, info: string, get: (r: MetricInputs) => number | null): ColumnDef {
+  return { key, label, group, info, sort: get, cell: (r) => formatUnitUsd(get(r)), csv: (r) => csvNum(get(r), 4) };
 }
 
 export const COLUMNS: ColumnDef[] = [
@@ -181,113 +216,87 @@ export const COLUMNS: ColumnDef[] = [
     csv: (r) => csvNum(derive.roi(r) === null ? null : derive.roi(r)! * 100, 1),
     tone: (r) => toneOf(derive.roi(r)),
   },
-  // ── Per visit & per click (ClickFlare-named) ──────────────────────────────────
+  // ── Per visit & per click (computed exactly like ClickFlare) ─────────────────
   {
-    key: 'epv',
-    label: 'EPV',
-    group: 'unit',
-    info: 'Earnings per visit = revenue ÷ visits. Same as ClickFlare EPV. Green when it beats CPC — each visit earns more than it costs.',
-    sort: (r) => derive.epv(r),
-    cell: (r) => formatUnitUsd(derive.epv(r)),
-    csv: (r) => csvNum(derive.epv(r), 4),
+    ...unitCol('epv', 'EPV', 'unit', 'Earnings per visit = revenue ÷ visits. Same as ClickFlare EPV. Green when it beats CPV — each visit earns more than it costs.', derive.epv),
     tone: (r) => {
       const e = derive.epv(r);
-      const c = derive.cpc(r);
+      const c = derive.cpv(r);
       return e === null || c === null ? undefined : e > c ? styles.pos : e < c ? styles.neg : undefined;
     },
   },
-  {
-    key: 'cpc',
-    label: 'CPC',
-    group: 'unit',
-    info: 'Cost per visit = spend ÷ visits (Facebook link clicks). Same as ClickFlare CPV.',
-    sort: (r) => derive.cpc(r),
-    cell: (r) => formatUnitUsd(derive.cpc(r)),
-    csv: (r) => csvNum(derive.cpc(r), 4),
-  },
-  {
-    key: 'rpc',
-    label: 'RPC',
-    group: 'unit',
-    info: "Revenue per ad click = revenue ÷ ad clicks. Same as ClickFlare's Dynamic payout (revenue ÷ conversions). Today's RPC climbs through the day as Google's earnings catch up with the clicks.",
-    sort: (r) => derive.rpc(r),
-    cell: (r) => formatUnitUsd(derive.rpc(r)),
-    csv: (r) => csvNum(derive.rpc(r), 4),
-  },
-  {
-    key: 'vcvr',
-    label: 'vCVR',
-    group: 'unit',
-    info: 'Ad clicks ÷ visits — the share of visitors who clicked a Google ad. Same as ClickFlare vCVR.',
-    sort: (r) => derive.vcvr(r),
-    cell: (r) => formatRate(derive.vcvr(r)),
-    csv: (r) => csvNum(derive.vcvr(r) === null ? null : derive.vcvr(r)! * 100, 2),
-  },
-  // ── Traffic ────────────────────────────────────────────────────────────────
-  {
-    key: 'visits',
-    label: 'Visits',
-    group: 'traffic',
-    info: 'Facebook link clicks that reached the landing page. Same as ClickFlare Visits.',
-    sort: (r) => r.clicks,
-    cell: (r) => fmtCount(r.clicks),
-    csv: (r) => String(r.clicks),
-  },
-  {
-    key: 'adClicks',
-    label: 'Ad clicks',
-    group: 'traffic',
-    info: "Visits that clicked a Google ad on the results page, counted live by our page — once per visit, the way ClickFlare counts Conversions. Google's own count runs higher (it counts every click, and a visitor can click more than one ad).",
-    sort: (r) => r.adClicks,
-    cell: (r) => fmtCount(r.adClicks),
-    csv: (r) => String(r.adClicks),
-  },
-  {
-    key: 'impressions',
-    label: 'Impr',
-    group: 'traffic',
-    info: 'How many times Facebook showed the ads.',
-    sort: (r) => r.impressions,
-    cell: (r) => fmtCount(r.impressions),
-    csv: (r) => String(r.impressions),
-  },
-  {
-    key: 'ctr',
-    label: 'CTR',
-    group: 'traffic',
-    info: 'Visits ÷ impressions — how often the ad was clicked when shown.',
-    sort: (r) => derive.ctr(r),
-    cell: (r) => formatRate(derive.ctr(r)),
-    csv: (r) => csvNum(derive.ctr(r) === null ? null : derive.ctr(r)! * 100, 2),
-  },
+  unitCol('cpv', 'CPV', 'unit', 'Cost per visit = spend ÷ visits. Same as ClickFlare CPV.', derive.cpv),
+  unitCol(
+    'rpc',
+    'RPC',
+    'unit',
+    "Revenue per ad click = revenue ÷ ad clicks. Same as ClickFlare's Dynamic payout (revenue ÷ conversions). Today's RPC climbs through the day as Google's earnings catch up with the clicks.",
+    derive.rpc,
+  ),
+  rateCol(
+    'vcvr',
+    'vCVR',
+    'unit',
+    'Ad clicks ÷ visits — the landing page → conversion rate: the share of visitors who clicked a Google ad. Same as ClickFlare vCVR (conversions ÷ visits).',
+    derive.vcvr,
+  ),
+  // ── Funnel (our own tracking, once per visit) ─────────────────────────────────
+  countCol(
+    'visits',
+    'Visits',
+    'traffic',
+    'People who landed on the page — counted by our page, once per visit, live. Same as ClickFlare Visits. Below FB clicks: some people leave before the page loads.',
+    (r) => r.visits,
+  ),
+  countCol(
+    'keywordClicks',
+    'Keyword clicks',
+    'traffic',
+    'Visits that clicked a keyword on the page and reached the results page (once per visit). ClickFlare: Clicks.',
+    (r) => r.keywordClicks,
+  ),
+  rateCol(
+    'ctr',
+    'CTR',
+    'traffic',
+    'Keyword clicks ÷ visits — how many visitors clicked a keyword. Same as ClickFlare CTR. Low CTR usually means Google hid or weakened the keyword block: check the rc and the keywords.',
+    derive.ctr,
+  ),
+  countCol(
+    'adClicks',
+    'Ad clicks',
+    'traffic',
+    "Visits that clicked a Google ad on the results page (once per visit). ClickFlare: Conversions. Google's own count runs higher — it counts every click, and a visitor can click more than one ad.",
+    (r) => r.adClicks,
+  ),
+  rateCol(
+    'cvr',
+    'CVR',
+    'traffic',
+    'Ad clicks ÷ keyword clicks — of the visitors who searched, how many clicked an ad. Same as ClickFlare CVR. Low CVR usually means the keywords bring weak ads. vCVR = CTR × CVR.',
+    derive.cvr,
+  ),
   // ── Facebook ───────────────────────────────────────────────────────────────
-  {
-    key: 'conv',
-    label: 'Conv (FB)',
-    group: 'facebook',
-    info: "Facebook's count of the same ad-click event (the pixel 'Search' event) — what Facebook optimizes for. Usually below Ad clicks: Facebook can't match every visitor.",
-    sort: (r) => r.conversions,
-    cell: (r) => fmtCount(r.conversions),
-    csv: (r) => String(r.conversions),
-  },
-  {
-    key: 'cpa',
-    label: 'CPA (FB)',
-    group: 'facebook',
-    info: 'Spend ÷ Conv (FB) — what Facebook reports each ad click cost.',
-    sort: (r) => derive.cpa(r),
-    cell: (r) => formatUnitUsd(derive.cpa(r)),
-    csv: (r) => csvNum(derive.cpa(r), 4),
-  },
-  {
-    key: 'cvrFb',
-    label: 'CVR (FB)',
-    group: 'facebook',
-    info: 'Conv (FB) ÷ visits — the ad-click rate as Facebook sees it. Compare with vCVR.',
-    sort: (r) => derive.cvrFb(r),
-    cell: (r) => formatRate(derive.cvrFb(r)),
-    csv: (r) => csvNum(derive.cvrFb(r) === null ? null : derive.cvrFb(r)! * 100, 2),
-  },
+  countCol('impressions', 'Impr', 'facebook', 'How many times Facebook showed the ads.', (r) => r.impressions),
+  countCol('fbClicks', 'FB clicks', 'facebook', "Facebook's link clicks — people who clicked the ad on Facebook.", (r) => r.clicks),
+  rateCol('ctrFb', 'CTR (FB)', 'facebook', 'FB clicks ÷ impressions — how often people clicked the ad when Facebook showed it.', derive.ctrFb),
+  unitCol('cpcFb', 'CPC (FB)', 'facebook', "Spend ÷ FB clicks — Facebook's cost per link click.", derive.cpcFb),
+  rateCol(
+    'landRate',
+    'Land rate',
+    'facebook',
+    "Visits ÷ FB clicks — how many Facebook clicks actually loaded the page. The rest left before it loaded (slow page, redirect) or were sent to the safe page. Today's value can run ahead while Facebook catches up on its clicks.",
+    derive.landRate,
+  ),
+  countCol(
+    'conv',
+    'Conv (FB)',
+    'facebook',
+    "Facebook's count of the same ad-click event (the pixel 'Search' event) — what Facebook optimizes for. Usually below Ad clicks: Facebook can't match every visitor.",
+    (r) => r.conversions,
+  ),
+  unitCol('cpa', 'CPA (FB)', 'facebook', 'Spend ÷ Conv (FB) — what Facebook reports each ad click cost.', derive.cpa),
+  rateCol('cvrFb', 'CVR (FB)', 'facebook', 'Conv (FB) ÷ FB clicks — the ad-click rate as Facebook sees it.', derive.cvrFb),
   // ── Controls ───────────────────────────────────────────────────────────────
   {
     key: 'budget',
@@ -302,12 +311,12 @@ export const COLUMNS: ColumnDef[] = [
 export const COLUMN_BY_KEY = new Map(COLUMNS.map((c) => [c.key, c]));
 
 /** The default view: results + the four unit metrics that explain them, plus the budget control. */
-export const ESSENTIAL_COLUMNS: ColKey[] = ['spend', 'revenue', 'profit', 'roi', 'epv', 'cpc', 'rpc', 'vcvr', 'budget'];
+export const ESSENTIAL_COLUMNS: ColKey[] = ['spend', 'revenue', 'profit', 'roi', 'epv', 'cpv', 'rpc', 'vcvr', 'budget'];
 export const ALL_COLUMNS: ColKey[] = COLUMNS.map((c) => c.key);
 
 export const COLUMN_PRESETS: { id: string; label: string; columns: ColKey[] }[] = [
   { id: 'essentials', label: 'Essentials', columns: ESSENTIAL_COLUMNS },
-  { id: 'funnel', label: 'Funnel', columns: ['spend', 'revenue', 'roi', 'visits', 'cpc', 'vcvr', 'adClicks', 'rpc', 'epv', 'conv', 'cvrFb'] },
-  { id: 'facebook', label: 'Facebook', columns: ['spend', 'impressions', 'ctr', 'visits', 'cpc', 'conv', 'cpa', 'budget'] },
+  { id: 'funnel', label: 'Funnel', columns: ['spend', 'revenue', 'roi', 'epv', 'rpc', 'vcvr', 'visits', 'keywordClicks', 'ctr', 'adClicks', 'cvr'] },
+  { id: 'facebook', label: 'Facebook', columns: ['spend', 'impressions', 'fbClicks', 'ctrFb', 'cpcFb', 'landRate', 'conv', 'cpa', 'cvrFb', 'budget'] },
   { id: 'all', label: 'All', columns: ALL_COLUMNS },
 ];

@@ -5,14 +5,19 @@ import {
   type AdPerf,
   type CampaignBreakdown,
   type DimStat,
+  type FunnelCounts,
   type OfferStat,
   costPer,
+  cvr,
   epv,
   formatRate,
   formatRoi,
   formatUnitUsd,
   formatUsd,
+  lpCtr,
   perVisit,
+  rpcPerAdClick,
+  vcvr,
 } from '@knn/shared';
 import { Skeleton } from '@/components/ui';
 import { Tooltip } from '@/components/tooltip';
@@ -33,21 +38,32 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'hours', label: 'Hours' },
 ];
 
-/** A breakdown row's raw numbers — every other column is derived from these. */
+/** A breakdown row's Facebook + revenue numbers — every other column is derived from these. */
 interface Row {
   spendUsd: number;
   revenueUsd: number;
   impressions: number;
+  /** Facebook's link clicks. */
   clicks: number;
+  /** Facebook's pixel conversions. */
   conversions: number;
 }
 
-/**
- * The breakdown columns shared by the Ads / Countries / Hours tabs — the same metrics, names and
- * definitions as the main table. `est` marks the ones built on revenue, which Google reports per
- * campaign only: per ad / country / hour it's split by Facebook conversions, so it's an estimate.
- */
-const DETAIL_COLS: { key: string; label: string; est?: boolean; info: string; cell: (r: Row) => ReactNode; tone?: (r: Row) => string | undefined }[] = [
+/** An ad / ad-set / campaign-total row: also carries our own funnel counts (exact per ad, D30). */
+type FunnelRow = Row & FunnelCounts;
+
+interface DetailCol<R> {
+  key: string;
+  label: string;
+  /** Built on revenue, which Google reports per campaign only — so per ad / country / hour it's split
+   *  by Facebook conversions, an estimate. */
+  est?: boolean;
+  info: string;
+  cell: (r: R) => ReactNode;
+  tone?: (r: R) => string | undefined;
+}
+
+const RESULT_COLS: DetailCol<Row>[] = [
   { key: 'spend', label: 'Spend', info: 'Facebook ad spend.', cell: (r) => formatUsd(r.spendUsd) },
   { key: 'revenue', label: 'Revenue', est: true, info: 'Estimated — Google reports revenue per campaign, so it is split by Facebook conversions.', cell: (r) => formatUsd(r.revenueUsd) },
   {
@@ -66,24 +82,53 @@ const DETAIL_COLS: { key: string; label: string; est?: boolean; info: string; ce
     cell: (r) => (r.spendUsd > 0 ? formatRoi((r.revenueUsd - r.spendUsd) / r.spendUsd) : '—'),
     tone: (r) => (r.spendUsd <= 0 ? undefined : r.revenueUsd > r.spendUsd ? styles.pos : r.revenueUsd < r.spendUsd ? styles.neg : undefined),
   },
+];
+
+const FB_CTR_COL: DetailCol<Row> = { key: 'ctrFb', label: 'CTR (FB)', info: 'FB clicks ÷ impressions — how often people clicked the ad when Facebook showed it.', cell: (r) => formatRate(perVisit(r.clicks, r.impressions)) };
+const FB_CONV_COLS: DetailCol<Row>[] = [
+  { key: 'conv', label: 'Conv (FB)', info: "Facebook's count of ad clicks (its pixel 'Search' event).", cell: (r) => fmtCount(r.conversions) },
+  { key: 'cpa', label: 'CPA (FB)', info: 'Spend ÷ Conv (FB).', cell: (r) => formatUnitUsd(costPer(r.spendUsd, r.conversions)) },
+];
+
+/**
+ * Ads tab — the main table's metrics per ad (same names and definitions). Our funnel counts are exact
+ * per ad; revenue is split across ads by Facebook conversions, so the columns built on it are marked.
+ */
+const AD_COLS: DetailCol<FunnelRow>[] = [
+  ...RESULT_COLS,
   {
     key: 'epv',
     label: 'EPV',
     est: true,
-    info: 'Estimated revenue ÷ visits (ClickFlare EPV). Green when it beats CPC.',
-    cell: (r) => formatUnitUsd(epv(r.revenueUsd, r.clicks)),
+    info: 'Estimated revenue ÷ visits (ClickFlare EPV). Green when it beats CPV.',
+    cell: (r) => formatUnitUsd(epv(r.revenueUsd, r.visits)),
     tone: (r) => {
-      const e = epv(r.revenueUsd, r.clicks);
-      const c = costPer(r.spendUsd, r.clicks);
+      const e = epv(r.revenueUsd, r.visits);
+      const c = costPer(r.spendUsd, r.visits);
       return e === null || c === null ? undefined : e > c ? styles.pos : e < c ? styles.neg : undefined;
     },
   },
-  { key: 'cpc', label: 'CPC', info: 'Spend ÷ visits (ClickFlare CPV).', cell: (r) => formatUnitUsd(costPer(r.spendUsd, r.clicks)) },
-  { key: 'visits', label: 'Visits', info: 'Facebook link clicks that reached the landing page.', cell: (r) => fmtCount(r.clicks) },
-  { key: 'conv', label: 'Conv (FB)', info: "Facebook's count of ad clicks (pixel 'Search' event).", cell: (r) => fmtCount(r.conversions) },
-  { key: 'cvrFb', label: 'CVR (FB)', info: 'Conv (FB) ÷ visits — the ad-click rate as Facebook sees it.', cell: (r) => formatRate(perVisit(r.conversions, r.clicks)) },
-  { key: 'cpa', label: 'CPA (FB)', info: 'Spend ÷ Conv (FB).', cell: (r) => formatUnitUsd(costPer(r.spendUsd, r.conversions)) },
-  { key: 'ctr', label: 'CTR', info: 'Visits ÷ impressions.', cell: (r) => formatRate(perVisit(r.clicks, r.impressions)) },
+  { key: 'cpv', label: 'CPV', info: 'Spend ÷ visits (ClickFlare CPV).', cell: (r) => formatUnitUsd(costPer(r.spendUsd, r.visits)) },
+  { key: 'rpc', label: 'RPC', est: true, info: 'Estimated revenue ÷ ad clicks (ClickFlare Dynamic payout).', cell: (r) => formatUnitUsd(rpcPerAdClick(r.revenueUsd, r.adClicks)) },
+  { key: 'vcvr', label: 'vCVR', info: 'Ad clicks ÷ visits — landing page → conversion (ClickFlare vCVR).', cell: (r) => formatRate(vcvr(r.adClicks, r.visits)) },
+  { key: 'visits', label: 'Visits', info: 'People who landed on the page from this ad (once per visit).', cell: (r) => fmtCount(r.visits) },
+  { key: 'ctr', label: 'CTR', info: 'Keyword clicks ÷ visits (ClickFlare CTR).', cell: (r) => formatRate(lpCtr(r.keywordClicks, r.visits)) },
+  { key: 'cvr', label: 'CVR', info: 'Ad clicks ÷ keyword clicks (ClickFlare CVR).', cell: (r) => formatRate(cvr(r.adClicks, r.keywordClicks)) },
+  FB_CTR_COL,
+  ...FB_CONV_COLS,
+];
+
+/**
+ * Countries / Hours tabs — Facebook's breakdowns, so Facebook's clicks: our funnel events don't carry a
+ * country, and Facebook's hours are in the ad account's time zone.
+ */
+const DIM_COLS: DetailCol<Row>[] = [
+  ...RESULT_COLS,
+  { key: 'fbClicks', label: 'FB clicks', info: "Facebook's link clicks.", cell: (r) => fmtCount(r.clicks) },
+  { key: 'cpcFb', label: 'CPC (FB)', info: 'Spend ÷ FB clicks.', cell: (r) => formatUnitUsd(costPer(r.spendUsd, r.clicks)) },
+  FB_CTR_COL,
+  ...FB_CONV_COLS,
+  { key: 'cvrFb', label: 'CVR (FB)', info: 'Conv (FB) ÷ FB clicks — the ad-click rate as Facebook sees it.', cell: (r) => formatRate(perVisit(r.conversions, r.clicks)) },
 ];
 
 function sumRows(rows: readonly Row[]): Row {
@@ -109,14 +154,37 @@ function HeadCell({ label, info, est, left }: { label: string; info: string; est
   );
 }
 
-function MetricCells({ r }: { r: Row }) {
+function MetricCells<R>({ r, cols }: { r: R; cols: readonly DetailCol<R>[] }) {
   return (
     <>
-      {DETAIL_COLS.map((c) => (
+      {cols.map((c) => (
         <td key={c.key} className={`${admin.num} ${c.tone?.(r) ?? ''}`}>
           {c.cell(r)}
         </td>
       ))}
+    </>
+  );
+}
+
+type WebsiteNums = Pick<OfferStat, 'revenueUsd' | 'visits' | 'keywordClicks' | 'adClicks'>;
+
+function sumOffers(offers: readonly OfferStat[]): WebsiteNums {
+  return offers.reduce<WebsiteNums>(
+    (t, o) => ({ revenueUsd: t.revenueUsd + o.revenueUsd, visits: t.visits + o.visits, keywordClicks: t.keywordClicks + o.keywordClicks, adClicks: t.adClicks + o.adClicks }),
+    { revenueUsd: 0, visits: 0, keywordClicks: 0, adClicks: 0 },
+  );
+}
+
+/** One website's (or the total's) cells — every value derived from the same four numbers. */
+function WebsiteCells({ r }: { r: WebsiteNums }) {
+  return (
+    <>
+      <td className={admin.num}>{fmtCount(r.visits)}</td>
+      <td className={admin.num}>{formatRate(vcvr(r.adClicks, r.visits))}</td>
+      <td className={admin.num}>{fmtCount(r.adClicks)}</td>
+      <td className={admin.num}>{formatUsd(r.revenueUsd)}</td>
+      <td className={admin.num}>{formatUnitUsd(epv(r.revenueUsd, r.visits))}</td>
+      <td className={admin.num}>{formatUnitUsd(rpcPerAdClick(r.revenueUsd, r.adClicks))}</td>
     </>
   );
 }
@@ -200,8 +268,9 @@ export function CampaignDetail({
           ) : (
             <>
               <p className={styles.detailNote}>
-                <span className={styles.estChip}>Estimated</span> Revenue, profit, ROI and EPV per ad are estimates: Google reports revenue per
-                campaign, so it&apos;s split across ads by their Facebook conversions. Spend, visits and conversions are exact.
+                <span className={styles.estChip}>Estimated</span> Revenue, profit, ROI, EPV and RPC per ad are estimates: Google reports revenue per
+                campaign, so it&apos;s split across ads by their Facebook conversions. Spend, visits, keyword clicks, ad clicks and Facebook&apos;s
+                numbers are exact.
               </p>
               <div className={styles.detailScroll}>
                 <table className={`${admin.table} ${styles.detailTable}`}>
@@ -210,7 +279,7 @@ export function CampaignDetail({
                       <th scope="col" className={admin.thLeft}>
                         Ad set / Ad
                       </th>
-                      {DETAIL_COLS.map((c) => (
+                      {AD_COLS.map((c) => (
                         <HeadCell key={c.key} label={c.label} info={c.info} est={c.est} />
                       ))}
                       <HeadCell label="Budget" info="The ad set's daily budget. Click to edit — goes live on Facebook." />
@@ -226,7 +295,7 @@ export function CampaignDetail({
                       <th scope="row" className={admin.thLeft}>
                         Campaign total
                       </th>
-                      <MetricCells r={bd.totals} />
+                      <MetricCells r={bd.totals} cols={AD_COLS} />
                       <td />
                     </tr>
                   </tfoot>
@@ -242,8 +311,9 @@ export function CampaignDetail({
           ) : (
             <>
               <p className={styles.detailNote}>
-                Spend and visits aren&apos;t tracked per website (the redirect splits traffic by share), so compare websites on revenue,
-                ad clicks and RPC.
+                Each website&apos;s visits and ad clicks are counted on that website by our pages, and its revenue comes from its own AdSense
+                channel — all exact. Spend isn&apos;t split by website (the redirect splits traffic by share), so compare websites on EPV, vCVR
+                and RPC.
               </p>
               <div className={styles.detailScroll}>
                 <table className={`${admin.table} ${styles.detailTable}`}>
@@ -256,8 +326,11 @@ export function CampaignDetail({
                         Type
                       </th>
                       <HeadCell label="Traffic share" info="The share of paid traffic this website gets." />
+                      <HeadCell label="Visits" info="People who landed on this website (once per visit)." />
+                      <HeadCell label="vCVR" info="Ad clicks ÷ visits — landing page → conversion (ClickFlare vCVR)." />
+                      <HeadCell label="Ad clicks" info="Visits on this website that clicked a Google ad (once per visit). ClickFlare: Conversions." />
                       <HeadCell label="Revenue" info="AdSense earnings on this website's channel (after any platform cut)." />
-                      <HeadCell label="Ad clicks" info="Visits on this website that clicked a Google ad, counted live by our page (once per visit)." />
+                      <HeadCell label="EPV" info="Revenue ÷ visits (ClickFlare EPV)." />
                       <HeadCell label="RPC" info="Revenue ÷ ad clicks (ClickFlare Dynamic payout)." />
                     </tr>
                   </thead>
@@ -270,12 +343,18 @@ export function CampaignDetail({
                         </td>
                         <td className={admin.subtle}>{o.kind === 'PAID' ? 'Paid' : 'Organic'}</td>
                         <td className={admin.num}>{o.kind === 'PAID' ? `${o.weightPct}%` : '—'}</td>
-                        <td className={admin.num}>{formatUsd(o.revenueUsd)}</td>
-                        <td className={admin.num}>{fmtCount(o.adClicks)}</td>
-                        <td className={admin.num}>{formatUnitUsd(o.rpcUsd)}</td>
+                        <WebsiteCells r={o} />
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr className={styles.detailTotal}>
+                      <th scope="row" className={admin.thLeft} colSpan={3}>
+                        Total
+                      </th>
+                      <WebsiteCells r={sumOffers(offers)} />
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </>
@@ -287,8 +366,9 @@ export function CampaignDetail({
         ) : (
           <>
             <p className={styles.detailNote}>
-              <span className={styles.estChip}>Estimated</span> AdSense earnings aren&apos;t tagged by {dimWord}, so revenue, profit, ROI and EPV
-              are split by Facebook conversions. Spend, visits and conversions are exact.
+              <span className={styles.estChip}>Estimated</span> This view comes from Facebook&apos;s {dimWord} breakdown, so it uses Facebook&apos;s
+              clicks — our visits, vCVR and RPC aren&apos;t split by {dimWord}. AdSense earnings aren&apos;t tagged by {dimWord} either, so revenue,
+              profit and ROI are split by Facebook conversions. Spend and Facebook&apos;s numbers are exact.
             </p>
             <div className={styles.detailScroll}>
               <table className={`${admin.table} ${styles.detailTable}`}>
@@ -297,7 +377,7 @@ export function CampaignDetail({
                     <th scope="col" className={admin.thLeft}>
                       {tab === 'countries' ? 'Country' : 'Hour (ad account time)'}
                     </th>
-                    {DETAIL_COLS.map((c) => (
+                    {DIM_COLS.map((c) => (
                       <HeadCell key={c.key} label={c.label} info={c.info} est={c.est} />
                     ))}
                   </tr>
@@ -306,7 +386,7 @@ export function CampaignDetail({
                   {dimRows.map((d) => (
                     <tr key={d.dimValue}>
                       <td className={admin.name}>{d.dimValue}</td>
-                      <MetricCells r={d} />
+                      <MetricCells r={d} cols={DIM_COLS} />
                     </tr>
                   ))}
                 </tbody>
@@ -315,7 +395,7 @@ export function CampaignDetail({
                     <th scope="row" className={admin.thLeft}>
                       Total
                     </th>
-                    <MetricCells r={sumRows(dimRows)} />
+                    <MetricCells r={sumRows(dimRows)} cols={DIM_COLS} />
                   </tr>
                 </tfoot>
               </table>
@@ -336,7 +416,7 @@ function SetRows({ campaignId, set, onError }: { campaignId: string; set: Campai
             {set.name} <FbStatusBadge status={set.effectiveStatus} />
           </span>
         </th>
-        <MetricCells r={set} />
+        <MetricCells r={set} cols={AD_COLS} />
         <td className={admin.num}>
           <BudgetCell
             cents={set.dailyBudgetCents}
@@ -357,7 +437,7 @@ function SetRows({ campaignId, set, onError }: { campaignId: string; set: Campai
               </span>
               {note && <span className={styles.cellSub}>{note}</span>}
             </th>
-            <MetricCells r={ad} />
+            <MetricCells r={ad} cols={AD_COLS} />
             <td className={admin.subtle} />
           </tr>
         );
