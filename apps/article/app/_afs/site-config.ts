@@ -1,5 +1,5 @@
 import { headers } from 'next/headers';
-import type { SiteConfig } from './csa';
+import { DEFAULT_ADSAFE, type SiteConfig } from './csa';
 
 /**
  * Resolve the AFS monetization config for the CURRENT request's host (Phase D
@@ -22,7 +22,7 @@ function envConfig(): SiteConfig {
   return {
     pubId: process.env.NEXT_PUBLIC_AFS_PUB_ID ?? '',
     styleId: process.env.NEXT_PUBLIC_AFS_STYLE_ID ?? '',
-    adsafe: process.env.NEXT_PUBLIC_AFS_ADSAFE || 'medium',
+    adsafe: process.env.NEXT_PUBLIC_AFS_ADSAFE || DEFAULT_ADSAFE,
     adtest: process.env.NEXT_PUBLIC_AFS_ADTEST === 'on',
   };
 }
