@@ -28,9 +28,10 @@ export function whopAdRejected(ad: WhopRunFields): boolean {
 }
 
 /**
- * The campaign status to mirror from what Whop reports. Order matters and mirrors the Facebook reconcile:
- *  1. A rejection wins: any ad rejected, or Whop's own `all_ads_rejected` / `in_appeal`. It is the most actionable
- *     state and the only one that must release the channel and stop the redirect.
+ * The campaign status to mirror from what Whop reports. Order matters:
+ *  1. A rejection of the WHOLE campaign wins: Whop's own `all_ads_rejected`, or every ad rejected / in appeal. It is the
+ *     most actionable state and the only one that must release the channel and stop the redirect. A rejection of only
+ *     SOME ads does not stop the campaign (the rest keep running; the buyer is told which ones were rejected).
  *  2. Paused in Whop (campaign level) -> PAUSED; active in Whop -> ACTIVE. Everything else (a draft, an ended
  *     campaign, `ad_groups_off`, a review or flag state we do not know) is left alone: we only mirror what we are
  *     sure of, because a wrong flip re-routes live traffic.
@@ -38,7 +39,10 @@ export function whopAdRejected(ad: WhopRunFields): boolean {
  */
 export function whopSyncTarget(campaign: WhopRunFields, ads: readonly WhopRunFields[]): WhopSyncTarget {
   const d = lower(campaign.delivery_status);
-  if (d === 'all_ads_rejected' || d === 'in_appeal' || ads.some(whopAdRejected)) return 'META_REJECTED';
+  // A campaign is rejected only when Meta rejected ALL of its ads: Whop's own `all_ads_rejected`, or every ad we can see
+  // is rejected (or in appeal). Some rejected ads among others that run or are in review do NOT stop the campaign: Whop
+  // never serves a rejected ad, and pausing the whole campaign would stop the ones that can still earn.
+  if (d === 'all_ads_rejected' || (ads.length > 0 && ads.every(whopAdRejected))) return 'META_REJECTED';
   const s = lower(campaign.status);
   if (s === 'paused' || d === 'paused') return 'PAUSED';
   if (s === 'active') return 'ACTIVE';

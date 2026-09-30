@@ -222,11 +222,42 @@ describe('reconcileWhopCampaigns', () => {
     expect(notes).toHaveBeenCalledWith(expect.objectContaining({ type: 'campaign.meta_rejected', body: expect.stringContaining('it is paused in Whop') }));
   });
 
-  it('treats one rejected ad among healthy ones as a rejection, like a Facebook DISAPPROVED ad', async () => {
-    const t = await launchedCampaign({ ads: 2 });
+  it('keeps a campaign running when only SOME of its ads are rejected: not paused at Whop, channel kept, buyer told once', async () => {
+    const t = await launchedCampaign({ ads: 3 });
     whopAdRows().get(t.whopAdIds[1]!)!.delivery_status = 'rejected';
     await reconcileWhopCampaigns(deps());
+    const r = await row(t.campaignId);
+    expect(r.status).toBe('ACTIVE');
+    // The rejected ad is shown as such; the others are not.
+    expect(r.adSets[0]!.ads.map((a) => a.effectiveStatus).sort()).toEqual(['ACTIVE', 'ACTIVE', 'DISAPPROVED'].sort());
+    expect(released).not.toContain(t.campaignId);
+    expect(resynced).not.toContain(t.campaignId);
+    expect(whopCampaignRow(t.whopCampaignId).status).toBe('active');
+    const told = notes.mock.calls.map(([n]) => n).filter((n) => n.type === 'campaign.ads_rejected');
+    expect(told).toHaveLength(1);
+    expect(told[0]).toMatchObject({ userId: buyerId, body: expect.stringMatching(/1 of 3 ads.*keeps running/) });
+    expect(notes).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'campaign.meta_rejected' }));
+
+    // The next tick says nothing more about the same ad.
+    notes.mockClear();
+    await reconcileWhopCampaigns(deps());
+    expect(notes).not.toHaveBeenCalled();
+
+    // A second ad rejected later is announced on its own.
+    whopAdRows().get(t.whopAdIds[2]!)!.delivery_status = 'rejected';
+    await reconcileWhopCampaigns(deps());
+    expect((await row(t.campaignId)).status).toBe('ACTIVE');
+    expect(notes).toHaveBeenCalledWith(expect.objectContaining({ type: 'campaign.ads_rejected', body: expect.stringMatching(/2 of 3 ads/) }));
+  });
+
+  it('rejects the campaign once EVERY ad is rejected', async () => {
+    const t = await launchedCampaign({ ads: 2 });
+    for (const id of t.whopAdIds) whopAdRows().get(id)!.delivery_status = 'rejected';
+    await reconcileWhopCampaigns(deps());
     expect((await row(t.campaignId)).status).toBe('META_REJECTED');
+    expect(released).toContain(t.campaignId);
+    expect(notes).toHaveBeenCalledWith(expect.objectContaining({ type: 'campaign.meta_rejected' }));
+    expect(notes).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'campaign.ads_rejected' }));
   });
 
   it('mirrors a pause and a resume done in Whop, keeping the channel', async () => {

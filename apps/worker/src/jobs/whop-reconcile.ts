@@ -30,9 +30,11 @@ import {
  * reaches us by itself. A cron reads each business's campaigns (one bulk call per 100, not one per campaign) and
  * their ads, and reconciles our rows against what Whop reports:
  *
- *   1. a rejected ad (or Whop's `all_ads_rejected` / `in_appeal`) -> META_REJECTED: stop it at Whop too (best effort:
- *      our redirect no longer sends it traffic, so a still-delivering ad would only burn money), stop routing to it,
- *      notify the buyer. Takes precedence, exactly like a Facebook DISAPPROVED ad.
+ *   1. EVERY ad rejected (Whop's `all_ads_rejected`, or all of the campaign's ads rejected / in appeal) -> META_REJECTED:
+ *      stop it at Whop too (best effort: our redirect no longer sends it traffic, so a still-delivering ad would only
+ *      burn money), stop routing to it, notify the buyer. Takes precedence. SOME ads rejected does NOT stop the campaign
+ *      (unlike Facebook's D14, where one DISAPPROVED ad does): Whop never serves a rejected ad and the rest can still
+ *      earn, so the buyer is only told, once per rejected ad, which ones and why.
  *   2. paused / resumed in Whop -> mirror ACTIVE <-> PAUSED so Analytics tells the truth. The channel is KEPT on pause.
  *   3. deleted in Whop -> ARCHIVED and stop routing to it, but only on the SECOND consecutive tick on which a direct
  *      read says 404 (the first leaves a `not_found` marker in `whop_delivery_status`): archiving is one-way and releases
@@ -339,6 +341,28 @@ async function onMissing(ctx: Ctx, c: CampaignRow): Promise<void> {
   ctx.out.statusSynced += 1;
 }
 
+/**
+ * Some (not all) of a campaign's ads were rejected by Meta: the campaign keeps running, but the buyer should know which ads
+ * will never deliver. Told once per ad: an ad whose stored display status was already DISAPPROVED has been announced (the
+ * mirror that stores it runs only after this read, and this is called only when that mirror succeeded, so a failed write never
+ * repeats the notice the next tick).
+ */
+function tellAboutRejectedAds(ctx: Ctx, c: CampaignRow, whopAds: readonly WhopAd[]): void {
+  const told = new Set(c.adSets.flatMap((s) => s.ads.filter((a) => a.whopAdId && a.effectiveStatus === 'DISAPPROVED').map((a) => a.whopAdId as string)));
+  const rejected = whopAds.filter((a) => whopAdEffectiveStatus(a) === 'DISAPPROVED');
+  const fresh = rejected.filter((a) => !told.has(a.id));
+  if (fresh.length === 0 || rejected.length === whopAds.length) return;
+  const ids = new Set(fresh.map((a) => a.id));
+  const reasons = [...new Set(whopAds.filter((a) => ids.has(a.id)).flatMap((a) => (a.issues ?? []).map((i) => i.message)).filter((m): m is string => Boolean(m)))];
+  ctx.notify({
+    orgId: c.orgId,
+    userId: c.buyerId,
+    type: 'campaign.ads_rejected',
+    title: 'Some ads were rejected by Meta',
+    body: `${rejected.length} of ${whopAds.length} ads in "${c.name}" were rejected in Meta's ad review on Whop${reasons[0] ? ` (${reasons[0].slice(0, 160)})` : ''}. The campaign keeps running with the others; edit or replace the rejected ads in Whop.`,
+  });
+}
+
 /** Everything one campaign needs once Whop has answered for it. */
 async function reconcileKnown(ctx: Ctx, conn: WhopConnectionRow, ads: WhopAdsApi, c: CampaignRow, whop: WhopAdCampaign, whopAds: readonly WhopAd[]): Promise<void> {
   ctx.out.checked += 1;
@@ -367,6 +391,7 @@ async function reconcileKnown(ctx: Ctx, conn: WhopConnectionRow, ads: WhopAdsApi
   }
 
   const target = whopSyncTarget(whop, whopAds);
+  if (mirrored && target !== CAMPAIGN_STATUS.META_REJECTED) tellAboutRejectedAds(ctx, c, whopAds);
   if (!target) return;
 
   if (target === CAMPAIGN_STATUS.META_REJECTED) {
