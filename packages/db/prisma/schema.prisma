@@ -367,6 +367,12 @@ enum CampaignObjective {
   OUTCOME_APP_PROMOTION
 }
 
+/// Which ad network runs a campaign (D32). FACEBOOK is every campaign that existed before Whop Ads.
+enum AdProvider {
+  FACEBOOK
+  WHOP
+}
+
 enum AdCreativeType {
   IMAGE
   VIDEO
@@ -429,6 +435,26 @@ model Campaign {
   /// resolve a live token by the Meta id, never a session-bound row that can vanish (D-fix #3).
   fbAccountId String? @map("fb_account_id")
 
+  /// Which ad network runs this campaign (D32). Every campaign that existed before Whop Ads is FACEBOOK.
+  adProvider       AdProvider @default(FACEBOOK) @map("ad_provider")
+  /// Whop campaigns only. The connection that launched it (a scalar ref, no FK, like `adAccountId`: a
+  /// disconnect must not delete campaigns), the business frozen at launch (it survives a reconnect), and the
+  /// Facebook page (`sacc_…`) the ads run under.
+  whopConnectionId String?    @map("whop_connection_id") @db.Uuid
+  whopBizId        String?    @map("whop_biz_id")
+  whopPageId       String?    @map("whop_page_id")
+  /// Whop's id for this campaign (`adcamp_…`), stored the moment it is created so a half-finished launch resumes
+  /// instead of creating a second one. Unique: a Whop campaign belongs to exactly one of ours.
+  whopCampaignId   String?    @unique @map("whop_campaign_id")
+  /// Mirrored from Whop by the status sync, for display: its delivery state, and its issues (Meta's rejections
+  /// in words). Never drives anything by itself.
+  whopDeliveryStatus String?  @map("whop_delivery_status")
+  whopIssues         Json     @default("[]") @map("whop_issues")
+  /// Part of every Whop idempotency key (`knn-camp-<id>-e<epoch>`; epoch 0 has no suffix). Whop replays a repeated key for
+  /// 24 h, so after the Whop tree is DISCARDED (reopen, relaunch, a campaign deleted in Whop) the next tree must use new
+  /// keys or Whop would hand back the objects we just threw away. Bumped whenever the Whop ids are cleared.
+  whopKeyEpoch       Int      @default(0) @map("whop_key_epoch")
+
   /// The redirect (go.*) host this campaign was rotated onto at launch, and (cloaker only) the
   /// white host used for its fallback + FB display link. Stored for blast-radius reporting (which
   /// campaigns a flagged domain affects) and resync stability. NULL until launched / non-cloaker.
@@ -453,6 +479,8 @@ model Campaign {
 
   @@index([orgId, status])
   @@index([buyerId])
+  /// The Whop status sync scans launched Whop campaigns by state.
+  @@index([adProvider, status])
   @@map("campaigns")
 }
 
@@ -506,6 +534,8 @@ model AdSet {
   endTime   DateTime? @map("end_time")
   timezone  String?
   fbAdSetId String?   @map("fb_ad_set_id")
+  /// Whop's id for this ad group (`adgrp_…`), set when it is created (resume-safe). Unique.
+  whopAdGroupId String? @unique @map("whop_ad_group_id")
   /// Live Facebook delivery state (effective_status), mirrored by the worker reconcile job
   /// (display-only — the campaign's status governs the redirect). Null until the first sync
   /// after launch. ACTIVE | PAUSED | CAMPAIGN_PAUSED | DISAPPROVED | WITH_ISSUES | … .
@@ -548,6 +578,10 @@ model Ad {
   beneficiary String?
 
   fbAdId    String?  @map("fb_ad_id")
+  /// Whop's ids for this ad (`ad_…`) and its uploaded creative (`file_…`), set as they are created so a
+  /// half-finished launch resumes instead of duplicating (and never re-uploads the creative). `whopAdId` is unique.
+  whopAdId   String?  @unique @map("whop_ad_id")
+  whopFileId String?  @map("whop_file_id")
   /// Live Facebook delivery state (effective_status), mirrored by the worker reconcile job
   /// (display-only). Null until the first sync after launch; a DISAPPROVED ad here is what
   /// flips the whole campaign to META_REJECTED (D14).

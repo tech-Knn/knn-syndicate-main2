@@ -1,4 +1,5 @@
-import { FbConnectionStatus, type Prisma, type TxClient, withSystem } from '@knn/db';
+import { env } from '@knn/config';
+import { FbConnectionStatus, type Prisma, type TxClient, WhopConnectionStatus, withSystem } from '@knn/db';
 import {
   type AttributionWindow,
   CAMPAIGN_STATUS,
@@ -24,6 +25,7 @@ import { generateRedirectId } from '../../lib/ids.js';
 import { notify } from '../../lib/notify.js';
 import { runScoped } from '../../lib/scope.js';
 import { type OfferInput, setOffers } from './offers.service.js';
+import { clearWhopIds, discardWhopCampaign, whopLeftover } from './whop-cleanup.js';
 import { blockedRcHits } from './rc-terms.service.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 
@@ -84,6 +86,9 @@ async function carryAdRacValues(
 export interface CampaignAssetLabels {
   adAccount: { id: string; fbAccountId: string; name: string } | null;
   page: { id: string; fbPageId: string; name: string } | null;
+  /** A Whop campaign's business and page (D32), resolved the same way, so a reviewer sees what the buyer picked. */
+  whopBusiness: { bizId: string; label: string | null } | null;
+  whopPage: { whopId: string; name: string | null } | null;
 }
 
 type AccountLabel = NonNullable<CampaignAssetLabels['adAccount']>;
@@ -115,18 +120,39 @@ async function resolveAssetLabels(
   };
 }
 
-/** Attach `adAccount` / `page` label objects to each campaign by looking up the fb_* rows. */
-export async function withAssetLabels<T extends { adAccountId: string | null; pageId: string | null }>(
+/** The Whop business and page labels of the Whop campaigns among `campaigns` (one lookup each, not one per campaign). */
+async function resolveWhopLabels(
   tx: TxClient,
-  campaigns: T[],
-): Promise<(T & CampaignAssetLabels)[]> {
+  campaigns: { adProvider: string; whopConnectionId: string | null; whopBizId: string | null; whopPageId: string | null }[],
+): Promise<{ connections: Map<string, { bizId: string; label: string | null }>; pages: Map<string, string | null> }> {
+  const whop = campaigns.filter((c) => c.adProvider === 'WHOP');
+  const connectionIds = [...new Set(whop.map((c) => c.whopConnectionId).filter((v): v is string => Boolean(v)))];
+  const pageIds = [...new Set(whop.map((c) => c.whopPageId).filter((v): v is string => Boolean(v)))];
+  const [connections, pages] = await Promise.all([
+    connectionIds.length > 0 ? tx.whopConnection.findMany({ where: { id: { in: connectionIds } }, select: { id: true, bizId: true, label: true } }) : Promise.resolve([]),
+    pageIds.length > 0 ? tx.whopSocialAccount.findMany({ where: { whopId: { in: pageIds }, connectionId: { in: connectionIds } }, select: { whopId: true, name: true } }) : Promise.resolve([]),
+  ]);
+  return { connections: new Map(connections.map((c) => [c.id, { bizId: c.bizId, label: c.label }])), pages: new Map(pages.map((p) => [p.whopId, p.name])) };
+}
+
+/** Attach `adAccount` / `page` (and, for Whop campaigns, `whopBusiness` / `whopPage`) label objects by looking up the rows. */
+export async function withAssetLabels<
+  T extends { adAccountId: string | null; pageId: string | null; adProvider: string; whopConnectionId: string | null; whopBizId: string | null; whopPageId: string | null },
+>(tx: TxClient, campaigns: T[]): Promise<(T & CampaignAssetLabels)[]> {
   if (campaigns.length === 0) return [];
-  const { accounts, pages } = await resolveAssetLabels(tx, campaigns);
-  return campaigns.map((c) => ({
-    ...c,
-    adAccount: c.adAccountId ? accounts.get(c.adAccountId) ?? null : null,
-    page: c.pageId ? pages.get(c.pageId) ?? null : null,
-  }));
+  const [{ accounts, pages }, whop] = await Promise.all([resolveAssetLabels(tx, campaigns), resolveWhopLabels(tx, campaigns)]);
+  return campaigns.map((c) => {
+    const isWhop = c.adProvider === 'WHOP';
+    // The business id is frozen on the campaign, so the business still shows by id after its connection is gone.
+    const conn = isWhop && c.whopConnectionId ? whop.connections.get(c.whopConnectionId) : undefined;
+    return {
+      ...c,
+      adAccount: c.adAccountId ? accounts.get(c.adAccountId) ?? null : null,
+      page: c.pageId ? pages.get(c.pageId) ?? null : null,
+      whopBusiness: isWhop && (conn || c.whopBizId) ? { bizId: conn?.bizId ?? c.whopBizId!, label: conn?.label ?? null } : null,
+      whopPage: isWhop && c.whopPageId ? { whopId: c.whopPageId, name: whop.pages.get(c.whopPageId) ?? null } : null,
+    };
+  });
 }
 
 /** The FB asset ids the acting user is allowed to reference (their own connection's). */
@@ -160,8 +186,29 @@ async function ownedAssetIds(
   };
 }
 
+/**
+ * A Whop campaign may reference only the acting user's own Whop connection, and a page that belongs to it; and
+ * only while Whop Ads is on for the company (D32). Returns the business id to freeze on the campaign.
+ */
+async function assertWhopAssetsOwned(tx: TxClient, auth: { userId: string; orgId: string }, input: CampaignDraft): Promise<{ whopBizId: string | null }> {
+  if (!env.WHOP_ADS_ENABLED) throw new AppError(409, "Whop Ads isn't switched on.");
+  const org = await tx.organization.findUnique({ where: { id: auth.orgId }, select: { whopEnabled: true } });
+  if (!org?.whopEnabled) throw new AppError(409, "Whop Ads isn't switched on for your company.");
+  if (!input.whopConnectionId) return { whopBizId: null };
+  const conn = await tx.whopConnection.findFirst({ where: { id: input.whopConnectionId, userId: auth.userId }, select: { id: true, bizId: true } });
+  if (!conn) throw new AppError(400, 'Selected Whop business is not connected to your account');
+  if (input.whopPageId) {
+    // A Facebook page specifically: Whop's launch gate is "Connect a Facebook page" (an Instagram account does not satisfy it).
+    const page = await tx.whopSocialAccount.findFirst({ where: { connectionId: conn.id, whopId: input.whopPageId, platform: 'facebook' }, select: { id: true } });
+    if (!page) throw new AppError(400, 'Selected page is not a Facebook page of that Whop business');
+  }
+  return { whopBizId: conn.bizId };
+}
+
 /** Reject any selected FB asset that isn't one of the acting user's synced assets. */
-async function assertAssetsOwned(tx: TxClient, userId: string, input: CampaignDraft): Promise<void> {
+async function assertAssetsOwned(tx: TxClient, auth: { userId: string; orgId: string }, input: CampaignDraft): Promise<{ whopBizId: string | null }> {
+  if (input.adProvider === 'WHOP') return assertWhopAssetsOwned(tx, auth, input);
+  const userId = auth.userId;
   const owned = await ownedAssetIds(tx, userId);
   if (input.adAccountId && !owned.accounts.has(input.adAccountId)) {
     throw new AppError(400, 'Selected ad account is not connected to your account');
@@ -174,6 +221,7 @@ async function assertAssetsOwned(tx: TxClient, userId: string, input: CampaignDr
       throw new AppError(400, `Pixel for ad set "${set.name}" is not connected to your account`);
     }
   }
+  return { whopBizId: null };
 }
 
 function adSetCreateInputs(orgId: string, input: CampaignDraft): Prisma.AdSetCreateWithoutCampaignInput[] {
@@ -195,7 +243,8 @@ function adSetCreateInputs(orgId: string, input: CampaignDraft): Prisma.AdSetCre
     advantageAudience: set.advantageAudience,
     placementMode: set.placementMode,
     placements: set.placements,
-    pixelId: set.pixelId ?? null,
+    // A Whop campaign has no Facebook pixel: Whop owns the pixel (D32).
+    pixelId: input.adProvider === 'WHOP' ? null : set.pixelId ?? null,
     pxeEvent: set.pxeEvent,
     conversionType: set.conversionType,
     costCapCents: set.costCapCents ?? null,
@@ -225,7 +274,10 @@ function adSetCreateInputs(orgId: string, input: CampaignDraft): Prisma.AdSetCre
 }
 
 // Coerce optionals to null so a wholesale draft update can also *clear* a field.
-function campaignScalars(_orgId: string, input: CampaignDraft) {
+// Each provider's assets are cleared on the other's campaigns: a Whop campaign has no Facebook ad account, page or
+// pixel, and a Facebook campaign has no Whop ids, so "no Facebook ids" can never be a half-configured Facebook row.
+function campaignScalars(_orgId: string, input: CampaignDraft, whopBizId: string | null = null) {
+  const whop = input.adProvider === 'WHOP';
   return {
     name: input.name,
     objective: input.objective,
@@ -239,8 +291,12 @@ function campaignScalars(_orgId: string, input: CampaignDraft) {
     racValue: input.racValue ?? null,
     query: input.query ?? null,
     fallbackUrl: input.fallbackUrl ?? null,
-    adAccountId: input.adAccountId ?? null,
-    pageId: input.pageId ?? null,
+    adProvider: input.adProvider,
+    adAccountId: whop ? null : input.adAccountId ?? null,
+    pageId: whop ? null : input.pageId ?? null,
+    whopConnectionId: whop ? input.whopConnectionId ?? null : null,
+    whopPageId: whop ? input.whopPageId ?? null : null,
+    whopBizId: whop ? whopBizId : null,
   };
 }
 
@@ -252,12 +308,12 @@ export async function createCampaign(
   input: CampaignDraft,
 ): Promise<CampaignWithChildren> {
   return runScoped(auth, async (tx) => {
-    await assertAssetsOwned(tx, auth.userId, input);
+    const { whopBizId } = await assertAssetsOwned(tx, auth, input);
     return tx.campaign.create({
       data: {
         orgId: auth.orgId,
         buyerId: auth.userId,
-        ...campaignScalars(auth.orgId, input),
+        ...campaignScalars(auth.orgId, input, whopBizId),
         adSets: { create: adSetCreateInputs(auth.orgId, input) },
       },
       include: campaignInclude,
@@ -317,16 +373,35 @@ async function buildCloneSource(
     // never carries a dead dependency — the buyer re-selects a live asset in the wizard. (FB
     // campaign/ad-set/ad ids, channel, and status are already not copied — clone is a fresh DRAFT.)
     const draftRaw = toDraft(source);
-    const healthy = await ownedAssetIds(tx, auth.userId, { healthyOnly: true });
-    const draft: CampaignDraft = {
-      ...draftRaw,
-      adAccountId: draftRaw.adAccountId && healthy.accounts.has(draftRaw.adAccountId) ? draftRaw.adAccountId : undefined,
-      pageId: draftRaw.pageId && healthy.pages.has(draftRaw.pageId) ? draftRaw.pageId : undefined,
-      adSets: draftRaw.adSets.map((set) => ({
-        ...set,
-        pixelId: set.pixelId && healthy.pixels.has(set.pixelId) ? set.pixelId : undefined,
-      })),
-    };
+    let draft: CampaignDraft;
+    if (draftRaw.adProvider === 'WHOP') {
+      // Same rule for a Whop source (D32): keep the business only while its connection is healthy, and the page
+      // only while that business still has it. A Whop campaign has no Facebook ad account, page or pixel.
+      const conn = draftRaw.whopConnectionId
+        ? await tx.whopConnection.findFirst({
+            where: { id: draftRaw.whopConnectionId, userId: auth.userId, status: WhopConnectionStatus.ACTIVE },
+            select: { id: true, socialAccounts: { select: { whopId: true } } },
+          })
+        : null;
+      const pageStillThere = Boolean(conn && draftRaw.whopPageId && conn.socialAccounts.some((p) => p.whopId === draftRaw.whopPageId));
+      draft = {
+        ...draftRaw,
+        whopConnectionId: conn?.id,
+        whopPageId: pageStillThere ? draftRaw.whopPageId : undefined,
+        adSets: draftRaw.adSets.map((set) => ({ ...set, pixelId: undefined })),
+      };
+    } else {
+      const healthy = await ownedAssetIds(tx, auth.userId, { healthyOnly: true });
+      draft = {
+        ...draftRaw,
+        adAccountId: draftRaw.adAccountId && healthy.accounts.has(draftRaw.adAccountId) ? draftRaw.adAccountId : undefined,
+        pageId: draftRaw.pageId && healthy.pages.has(draftRaw.pageId) ? draftRaw.pageId : undefined,
+        adSets: draftRaw.adSets.map((set) => ({
+          ...set,
+          pixelId: set.pixelId && healthy.pixels.has(set.pixelId) ? set.pixelId : undefined,
+        })),
+      };
+    }
 
     return {
       draft,
@@ -404,14 +479,14 @@ export async function updateCampaign(
     if (existing.status !== 'DRAFT') {
       throw new AppError(409, 'Only draft campaigns can be edited');
     }
-    await assertAssetsOwned(tx, auth.userId, input);
+    const { whopBizId } = await assertAssetsOwned(tx, auth, input);
     // Wholesale-replace the ad sets/ads (the wizard submits the full current state).
     const previousAds = existing.adSets.flatMap((s) => s.ads);
     await tx.adSet.deleteMany({ where: { campaignId: id } });
     const updated = await tx.campaign.update({
       where: { id },
       data: {
-        ...campaignScalars(auth.orgId, input),
+        ...campaignScalars(auth.orgId, input, whopBizId),
         adSets: { create: adSetCreateInputs(auth.orgId, input) },
       },
       include: campaignInclude,
@@ -437,8 +512,11 @@ export function toDraft(campaign: CampaignWithChildren): CampaignDraft {
     racValue: campaign.racValue ?? undefined,
     query: campaign.query ?? undefined,
     fallbackUrl: campaign.fallbackUrl ?? undefined,
+    adProvider: campaign.adProvider,
     adAccountId: campaign.adAccountId ?? undefined,
     pageId: campaign.pageId ?? undefined,
+    whopConnectionId: campaign.whopConnectionId ?? undefined,
+    whopPageId: campaign.whopPageId ?? undefined,
     adSets: campaign.adSets.map((set) => ({
       name: set.name,
       dailyBudgetCents: set.dailyBudgetCents ?? undefined,
@@ -482,6 +560,22 @@ export function toDraft(campaign: CampaignWithChildren): CampaignDraft {
 }
 
 /**
+ * A Whop campaign can only be submitted while its Whop business is usable (D32): Whop Ads is on for the company
+ * and the connection exists and works. Deliberately NOT the connection's `canLaunch` checklist: a missing payment
+ * method or page is something Whop tells the buyer at launch, in its own words, and the buyer can fix it in Whop
+ * after approval without the campaign having to go back through review.
+ */
+async function whopSubmitProblem(tx: TxClient, c: { orgId: string; whopConnectionId: string | null }): Promise<string | null> {
+  if (!env.WHOP_ADS_ENABLED) return "Whop Ads isn't switched on.";
+  const org = await tx.organization.findUnique({ where: { id: c.orgId }, select: { whopEnabled: true } });
+  if (!org?.whopEnabled) return "Whop Ads isn't switched on for your company.";
+  const conn = c.whopConnectionId ? await tx.whopConnection.findUnique({ where: { id: c.whopConnectionId }, select: { status: true } }) : null;
+  if (!conn) return 'The Whop business for this campaign is no longer connected. Pick one again.';
+  if (conn.status !== WhopConnectionStatus.ACTIVE) return 'This Whop connection needs attention. Reconnect it in Settings → Whop.';
+  return null;
+}
+
+/**
  * Submit a complete draft for review (DRAFT → PENDING_APPROVAL). If the buyer's
  * org has auto-approve on, the submission is approved in the same step (modeled
  * as submit + immediate system approval — both state-machine edges are valid, so
@@ -499,6 +593,10 @@ export async function submitCampaign(
       throw new AppError(409, 'Campaign is not a draft');
     }
     const issues = campaignSubmitIssues(toDraft(existing));
+    if (existing.adProvider === 'WHOP') {
+      const problem = await whopSubmitProblem(tx, existing);
+      if (problem) issues.push(problem);
+    }
     // A campaign monetizes through its offers (the websites it routes to). Without at
     // least one PAID offer it has no destination + no channel to assign, so it would
     // hang in QUEUED_NO_CHANNEL after approval — block it at submit with a clear reason.
@@ -572,18 +670,15 @@ export async function reopenCampaign(
   // approval re-assigns cleanly. Only pre-launch states reach DRAFT (state machine);
   // an ACTIVE/LAUNCHING campaign can't be reopened (it'd orphan the FB campaign).
   const channelIds: string[] = [];
-  const result = await runScoped(auth, async (tx) => {
+  const { result, leftover } = await runScoped(auth, async (tx) => {
     const campaign = await loadOwnedCampaign(tx, auth, id);
     if (!canTransitionCampaign(campaign.status, CAMPAIGN_STATUS.DRAFT)) {
       throw new AppError(409, `Cannot reopen a campaign in ${campaign.status} state`);
     }
-    if (campaign.channelId) channelIds.push(campaign.channelId);
-    const offers = await tx.offer.findMany({ where: { campaignId: id }, select: { channelRef: true } });
-    for (const o of offers) if (o.channelRef) channelIds.push(o.channelRef);
-    // Detach channels from the campaign + its offers.
-    await tx.offer.updateMany({ where: { campaignId: id, channelRef: { not: null } }, data: { channelRef: null } });
-    const updated = await tx.campaign.update({
-      where: { id },
+    // Conditional on the status we just read: a launch that claimed the campaign between the read and this write
+    // (PROCESSING -> LAUNCHING) must not be reopened underneath itself, or it would finish ACTIVE with no channel.
+    const flipped = await tx.campaign.updateMany({
+      where: { id, status: campaign.status },
       data: {
         status: CAMPAIGN_STATUS.DRAFT,
         channelId: null,
@@ -592,17 +687,29 @@ export async function reopenCampaign(
         reviewedById: null,
         rejectionReason: null,
       },
-      include: campaignInclude,
     });
+    if (flipped.count === 0) throw new AppError(409, 'The campaign changed while it was being reopened. Check it, then try again.');
+    // A Whop campaign (D32): a draft must not reference Whop objects, so forget them here, in the same transaction, and
+    // delete the Whop campaign once this commits (see whop-cleanup.ts). Clearing ALWAYS moves the campaign to its next key
+    // epoch, even when no Whop id was saved: a create that reached Whop but whose answer was lost is replayed by Whop for 24 h
+    // under the old key, and would hand the OLD campaign (old budget, old objective) back to the edited draft.
+    const leftover = whopLeftover(campaign);
+    if (campaign.adProvider === 'WHOP') await clearWhopIds(tx, id);
+    if (campaign.channelId) channelIds.push(campaign.channelId);
+    const offers = await tx.offer.findMany({ where: { campaignId: id }, select: { channelRef: true } });
+    for (const o of offers) if (o.channelRef) channelIds.push(o.channelRef);
+    // Detach channels from the campaign + its offers.
+    await tx.offer.updateMany({ where: { campaignId: id, channelRef: { not: null } }, data: { channelRef: null } });
+    const updated = await tx.campaign.findUniqueOrThrow({ where: { id }, include: campaignInclude });
     await writeAudit(tx, {
       orgId: campaign.orgId,
       actorId: auth.userId,
       action: 'campaign.reopened',
       entityType: 'campaign',
       entityId: id,
-      details: { releasedChannels: channelIds.length },
+      details: { releasedChannels: channelIds.length, ...(leftover ? { whopCampaignId: leftover.whopCampaignId } : {}) },
     });
-    return updated;
+    return { result: updated, leftover };
   });
   // Channels are global (no org_id) → release them under withSystem, back to the pool.
   // `lockedForDay` is kept so the pool's same-day cooldown (D25) applies here too.
@@ -614,15 +721,20 @@ export async function reopenCampaign(
       }),
     );
   }
+  // Released FIRST: the Whop delete below can take a while (its client retries), and a channel must not be held meanwhile.
+  if (leftover) await discardWhopCampaign(leftover, auth.userId);
   return result;
 }
 
 export async function deleteCampaign(auth: AuthContext, id: string): Promise<void> {
-  await runScoped(auth, async (tx) => {
+  const leftover = await runScoped(auth, async (tx) => {
     const campaign = await loadOwnedCampaign(tx, auth, id);
     if (campaign.status !== 'DRAFT' && campaign.status !== 'REJECTED') {
       throw new AppError(409, 'Only draft or rejected campaigns can be deleted');
     }
     await tx.campaign.delete({ where: { id } });
+    // Normally none (reopening already discards them); defence in depth so a delete never strands a Whop campaign.
+    return whopLeftover(campaign);
   });
+  if (leftover) await discardWhopCampaign(leftover, auth.userId);
 }

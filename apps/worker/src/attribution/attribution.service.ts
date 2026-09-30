@@ -13,6 +13,7 @@ import {
   zonedStartOfDayUtc,
 } from '@knn/shared';
 import { liveAdsenseFetch } from './adsense-source.js';
+import { type WhopStatsDeps, pullWhopStats } from './whop-stats.js';
 import { ensureFxRatesForDays, getUsdRate } from './fx.service.js';
 
 /**
@@ -40,6 +41,20 @@ export interface AttributionDeps {
   getRate: (tx: TxClient, day: string, currency: string) => Promise<number>;
   /** Refresh FX rates for the days before pulling (best-effort; omitted in tests). */
   ensureFx?: (days: string[]) => Promise<void>;
+  /** Whop spend pull (D32) overrides, for tests. Off unless `WHOP_ADS_ENABLED`. */
+  whopStats?: WhopStatsDeps;
+}
+
+/**
+ * The Whop pass runs beside the Facebook pull and can never stop it: a failure here is logged, and revenue
+ * allocation (which reads both providers' rows) still runs.
+ */
+async function pullWhopStatsSafely(since: string, until: string, deps: AttributionDeps): Promise<void> {
+  try {
+    await pullWhopStats(since, until, deps.whopStats);
+  } catch (err) {
+    console.error('[attribution] Whop stats pull failed:', err instanceof Error ? err.message : String(err));
+  }
 }
 
 const defaultDeps: AttributionDeps = {
@@ -510,6 +525,7 @@ export async function runAttribution(
   const until = days[days.length - 1]!;
   await deps.ensureFx?.(days);
   await pullFbStats(since, until, deps);
+  await pullWhopStatsSafely(since, until, deps);
   await pullAdsenseRevenue(since, until, deps);
   await allocateRevenue(days);
 }
@@ -537,6 +553,7 @@ export async function runFinalization(
   // then re-allocate the union (= the AdSense window, the superset).
   await deps.ensureFx?.(adsenseDays);
   await pullFbStats(fbDays[0]!, fbDays[fbDays.length - 1]!, deps);
+  await pullWhopStatsSafely(fbDays[0]!, fbDays[fbDays.length - 1]!, deps);
   await pullAdsenseRevenue(adsenseDays[0]!, adsenseDays[adsenseDays.length - 1]!, deps);
   await allocateRevenue(adsenseDays);
 }

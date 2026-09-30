@@ -198,13 +198,16 @@ export async function runWhopHealthCheck(
     items.push({ key: 'page', label: 'Facebook page', status: 'unknown', detail: kindOf(social) === 'permission' ? 'Could not read the pages (needs the social_account:read permission).' : whopDown(social) });
   }
 
-  // 7. Whop pixel.
+  // 7. Whop pixel. Informational only: it never blocks a launch. The pixel lives on OUR landing page, not on anything
+  //    Whop hosts, and Whop checks it per ad, on that ad's own URL, at the moment the ad is created (a launch runs the
+  //    same check first, see `apps/api/.../whop-launch.service.ts`). The account-level "seen recently" answer is
+  //    therefore always "not yet" before a first launch, which is expected, not something for the buyer to fix.
   if (pixel.ok) {
     const days = pixel.value.last_seen_days;
     items.push(
       pixel.value.installed
         ? { key: 'pixel', label: 'Whop pixel', status: 'ok', detail: days === null ? 'Installed.' : days === 0 ? 'Seen today.' : `Last seen ${days} day${days === 1 ? '' : 's'} ago.` }
-        : { key: 'pixel', label: 'Whop pixel', status: 'todo', detail: 'Whop has not seen its pixel yet. Launching needs it. To test a page, paste its address into the pixel check below.', actions: [{ kind: 'recheck', label: 'Check again' }] },
+        : { key: 'pixel', label: 'Whop pixel', status: 'unknown', detail: 'Not seen yet. That is expected before your first launch: Whop looks for its pixel on the page an ad links to, when the ad is created. To test a page now, paste its address into the pixel check below.' },
     );
   } else {
     items.push({ key: 'pixel', label: 'Whop pixel', status: 'unknown', detail: kindOf(pixel) === 'permission' ? 'Could not check the pixel (needs the company:basic:read permission).' : whopDown(pixel) });
@@ -212,7 +215,7 @@ export async function runWhopHealthCheck(
 
   const ok = (key: string): boolean => items.find((i) => i.key === key)?.status === 'ok';
   const canDraft = ok('credentials');
-  const canLaunch = canDraft && ['permissions', 'agreement', 'payment', 'page', 'pixel'].every(ok);
+  const canLaunch = canDraft && ['permissions', 'agreement', 'payment', 'page'].every(ok);
   return {
     keyStatus: 'ok',
     checklist: { checkedAt, items, canDraft, canLaunch },

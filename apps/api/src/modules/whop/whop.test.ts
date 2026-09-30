@@ -300,6 +300,21 @@ describe('checking a connection', () => {
     expect(conn.checklist.items[0]).toMatchObject({ key: 'credentials', status: 'unknown' });
   }, 20_000);
 
+  it('refuses to disconnect while a campaign is live on the business, and allows it once that campaign is paused', async () => {
+    const live = await withSystem(async (tx) => {
+      const buyer = await tx.user.findFirstOrThrow({ where: { email: emails.a1 } });
+      return tx.campaign.create({ data: { orgId: orgAId, buyerId: buyer.id, name: 'live on whop', status: 'ACTIVE', adProvider: 'WHOP', whopConnectionId: id, whopBizId: BIZ, whopCampaignId: `adcamp_Disc${suffix}`.slice(0, 30), keywords: [] } });
+    });
+    const refused = await inject('DELETE', `${BASE}/connections/${id}`, tokens.a1);
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json<{ error: string }>().error).toMatch(/1 campaign is live.*Pause it first/);
+    expect((await inject('GET', `${BASE}/connections/${id}`, tokens.a1)).statusCode).toBe(200); // still connected, key intact
+
+    await withSystem((tx) => tx.campaign.update({ where: { id: live.id }, data: { status: 'PAUSED' } }));
+    expect((await inject('DELETE', `${BASE}/connections/${id}`, tokens.a1)).statusCode).toBe(204);
+    await withSystem((tx) => tx.campaign.delete({ where: { id: live.id } }));
+  });
+
   it('disconnect deletes the connection, its pages and its key, and is audited', async () => {
     const res = await inject('DELETE', `${BASE}/connections/${id}`, tokens.a1);
     expect(res.statusCode).toBe(204);

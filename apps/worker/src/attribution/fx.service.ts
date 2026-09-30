@@ -5,7 +5,7 @@ import { type TxClient, withSystem } from '@knn/db';
  * FX rates (D15). All revenue/spend is stored in native minor units paired with a
  * USD conversion. We store `FxRate.rate` = USD per 1 unit of a currency for an IST
  * day; USD→USD is always 1. Rates are pulled daily (exchangerate.host) for the
- * distinct currencies in play (ad-account + AdSense). The fetch is best-effort and
+ * distinct currencies in play (ad-account + Whop reporting currency + AdSense). The fetch is best-effort and
  * injectable; `getUsdRate` is the read side used by attribution.
  */
 
@@ -79,8 +79,17 @@ export async function fetchAndStoreRates(
  * down) are logged and swallowed — `getUsdRate` then falls back to a recent/1.0 rate.
  */
 export async function ensureFxRatesForDays(days: string[], deps: FxDeps = { fetch }): Promise<void> {
-  const accounts = await withSystem((tx) => tx.fbAdAccount.findMany({ distinct: ['currency'], select: { currency: true } }));
-  const currencies = accounts.map((a) => a.currency);
+  const [accounts, whop, stored] = await withSystem((tx) =>
+    Promise.all([
+      tx.fbAdAccount.findMany({ distinct: ['currency'], select: { currency: true } }),
+      // Whop businesses report spend in their reporting currency (D32).
+      tx.whopConnection.findMany({ where: { reportingCurrency: { not: null } }, distinct: ['reportingCurrency'], select: { reportingCurrency: true } }),
+      // Whop reports each ad's spend in the currency it was charged in, which need not be the business's reporting currency:
+      // any currency already stored for these days needs a rate too (the next run then re-converts with it).
+      tx.adStatsDaily.findMany({ where: { day: { in: days } }, distinct: ['currency'], select: { currency: true } }),
+    ]),
+  );
+  const currencies = [...accounts.map((a) => a.currency), ...whop.map((w) => w.reportingCurrency as string), ...stored.map((s) => s.currency)];
   if (currencies.every((c) => (c || 'USD').toUpperCase() === 'USD')) return;
   for (const day of days) {
     try {

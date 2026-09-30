@@ -40,7 +40,13 @@ buyers see real-time ROI. Multi-tenant (companies), ~50–200 buyers, ~1500–20
   (1536-dim) in pgvector (ivfflat, cosine, reuse ≥0.70).
 - **Whop Ads (D32)**: a second ad provider — Whop owns the Meta ad account and the buyer connects a business
   ID + API key. Its own tables (`whop_*`), package (`@knn/whop`) and routes (`/api/ad-providers/whop/*`);
-  the Facebook code paths are untouched. Off unless `WHOP_ADS_ENABLED` **and** the company's switch are on.
+  the Facebook code paths are untouched. Off unless `WHOP_ADS_ENABLED` **and** the company's switch are on. A campaign
+  picks its network in the wizard (`Campaign.adProvider`); launch, pause / resume, budgets and relaunch route by provider
+  before any side effect. A Whop launch is draft-first and resumable (Whop ids saved as they appear, idempotent creates
+  keyed by our row ids + `whop_key_epoch`), and Whop ids never go in an `fb_*` column. Ask `isLaunched()` (`@knn/shared`),
+  not `fbCampaignId != null`. A launch whose outcome is unknown stays `LAUNCHING` with its edge config active (never
+  reported as "not launched" while Whop may be spending); the worker settles it from Whop's word. The worker syncs Whop
+  status and spend inside the Facebook crons, with every write conditional on what it read and recorded spend never erased.
   Guide: `docs/WHOP.md`.
 
 ## Layout

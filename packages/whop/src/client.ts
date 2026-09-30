@@ -118,6 +118,27 @@ export class WhopClient {
     this.#userAgent = opts.userAgent ?? 'knn-syndicate-whop-client/1';
   }
 
+  /**
+   * PUT bytes to a presigned storage URL Whop handed out (the direct-upload flow for creatives). This is NOT
+   * a Whop API call: the credentials are baked into the URL, so the API key is never sent here. Failures are
+   * mapped to `WhopApiError` like everything else; an expired link (403) is `validation`, never `auth`,
+   * because it says nothing about our key and must not break the connection. No retries: the caller
+   * creates a fresh file record, since a presigned URL lives one hour.
+   */
+  async upload(url: string, headers: Record<string, string>, body: Uint8Array, opts: { timeoutMs?: number } = {}): Promise<{ etag: string | null }> {
+    const where = { method: 'PUT', path: '(presigned upload)' };
+    let res: Response;
+    try {
+      res = await this.#fetch(url, { method: 'PUT', headers, body, signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000) });
+    } catch (err) {
+      const timedOut = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
+      throw new WhopApiError(timedOut ? 'timeout' : 'network', timedOut ? 'The upload to Whop timed out.' : 'Could not reach Whop\'s file storage.', { status: 0, ...where });
+    }
+    if (res.ok) return { etag: res.headers.get('etag') };
+    if (res.status === 403) throw new WhopApiError('validation', 'The upload link expired or was refused. Start the upload again.', { status: 403, ...where });
+    throw new WhopApiError(res.status >= 500 ? 'server' : 'validation', `Whop's file storage answered ${res.status}.`, { status: res.status, ...where });
+  }
+
   /** Send one request, retrying transient failures. Throws `WhopApiError` for every failure. */
   async request<T = unknown>(req: WhopRequest): Promise<T> {
     const url = buildUrl(this.baseUrl, req.path, req.query);

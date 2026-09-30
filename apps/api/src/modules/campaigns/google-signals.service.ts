@@ -5,6 +5,7 @@ import {
   type GoogleSignalsView,
   effectiveRac,
   googleSignalsUpdateSchema,
+  isLaunched,
   normalizeCustomTerms,
   resolvePublisherTerms,
 } from '@knn/shared';
@@ -26,9 +27,9 @@ import { assertRcTextsAllowed } from './rc-terms.service.js';
 
 type Campaign = Awaited<ReturnType<typeof loadOwnedCampaign>>;
 
-/** A launched campaign has redirect configs at the edge → an edit must re-sync them. */
-function isLive(c: Pick<Campaign, 'fbCampaignId'>): boolean {
-  return Boolean(c.fbCampaignId);
+/** A launched campaign has redirect configs at the edge → an edit must re-sync them. Provider-neutral (D32). */
+function isLive(c: Pick<Campaign, 'adProvider' | 'fbCampaignId' | 'whopCampaignId' | 'status'>): boolean {
+  return isLaunched(c);
 }
 
 function keywordsOf(json: unknown): string[] {

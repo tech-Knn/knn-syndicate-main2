@@ -54,6 +54,44 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
   (Whop refuses 28). Idempotent: Whop keeps one copy of an `event_name` + `event_id` (= the click id). The
   Facebook and Whop paths never share a row, a queue or a retry policy: one row is one send.
 
+- **Whop status sync + spend (D32 phase 2, `src/jobs/whop-reconcile.ts`, `src/attribution/whop-stats.ts`, `src/lib/whop-auth.ts`):**
+  the Whop twins of the Facebook reconcile and insights pull, run inside the same crons (`META_REJECTION_CHECK` and
+  `ATTRIBUTION`: no new queue; each provider runs independently, so one's failure never stops the other).
+  - **Sync:** one bulk `listCampaigns` per business, `listAds` only for the campaigns it listed (a batch Whop refuses is
+    re-read campaign by campaign; a campaign whose ads cannot be read is skipped, never decided on). Then: rejection →
+    `META_REJECTED` (pause at Whop best-effort, `stopRouting`, notify), pause / resume mirrored (if the edge resync fails the
+    status is given back and nothing is announced), deleted-in-Whop →
+    `ARCHIVED` only on the **second consecutive** tick whose direct read says 404 (the first leaves `not_found` in
+    `whop_delivery_status`; any real answer clears it), billing failure notified once per episode (`payment_failed` is stored
+    in the delivery word, and the notice follows a successful mirror), Whop's words mirrored for display
+    (`shared/whop-status.ts` is the table).
+  - **Every write is conditional on what the tick read** (`updateMany` on id + status + `whop_campaign_id`; mirrors on the Whop
+    id they mirror). Keep it that way: a buyer's pause, or a relaunch swapping the Whop campaign mid-tick, must never be
+    overwritten. **`stopRouting` is edge-first:** re-publish the KV, and only then release the channel (released first, the
+    next holder could be credited with a stopped campaign's clicks); each is tried three times (`afterMove`, injectable
+    `sleep`). A stopped campaign is no longer in the scan, so nothing would retry a failure: `repairHeldChannels` runs first on
+    every pass and finishes the routing of stopped Whop campaigns that still hold a channel (the channel is the marker). The
+    buyer notice reports what actually happened.
+  - **Safe defaults: no connection / broken key / outage / unreadable = skip, never archive or release.** 401 and 403 break the
+    connection once (CAS on the key that failed: a reconnect is never undone by a late answer); transport failures do not. A
+    pass has a 5-minute budget and stops after three businesses in a row fail to ANSWER (`nextTransportFailures`: a 429 is
+    `limited`, a 401 is `fatal`, both are Whop answering and reset the run; an unusable key is `skipped`, neutral). Businesses
+    are visited in a stable order rotated to a random start (`rotate`, `deps.rand`), so an early stop never starves the same
+    ones. The company switch is not consulted (a live campaign must keep being watched); only the global `WHOP_ADS_ENABLED`.
+  - **Stuck launches** (`LAUNCHING`, no write to the campaign, its ad sets or ads for 15 min) are settled from Whop's word
+    (`launchVerdict`): past draft → `ACTIVE`/`PAUSED` + audit + "live" notice; draft or no Whop campaign → `PROCESSING` (ids
+    kept); a 404 twice → `PROCESSING`; unreadable → wait. The marker write holds `updatedAt` still, or it would look alive.
+  - **Spend:** per business per IST day (`time_zone=Asia/Kolkata`, `stats_to` = the last second of the day) into
+    `ad_stats_daily`. `conversions` = our own first-party ad-click events per ad (counted by `createdAt`, like Analytics);
+    Whop's `submitted_applications` only for a campaign-day on which we recorded none (one scale per campaign-day).
+    **Never erases:** "Whop reported something" is decided from Whop's own figures ALONE (never from our conversion count) and
+    only then is the row rewritten; otherwise only `conversions` refreshes (a conversions-only row if none exists). A
+    relaunched ad has no history. Only campaigns Whop still lists are asked about.
+  - The worker resolves a campaign's connection itself (`lib/whop-auth.ts`: by id **and org**, else the buyer's connection to
+    the same `whop_biz_id`), mirroring the API. **Tests are global scans:** the Whop tests inject an `adsFor` that refuses any
+    connection outside their own org, and clear their org's campaigns between tests, because an unrelated Whop campaign would
+    otherwise read as "deleted".
+
 **Testing footgun:** worker tests share one Postgres and use GLOBAL (cross-org) scans (channel pool,
 meta-rejection, attribution), so `vitest.config.ts` sets `fileParallelism: false` — don't re-enable
 it or files will leak fixtures into each other's scans. (Cross-*package* concurrency can still surface

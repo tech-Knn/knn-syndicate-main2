@@ -401,3 +401,33 @@ describe('edge failures + URL budget (D27)', () => {
     await updateGoogleSignals(buyer(), liveId, { terms: [], ads: [{ adId: adA, racValue: null }] }, { writeRedirectConfigs });
   });
 });
+
+describe('live-ness is provider-neutral (D32)', () => {
+  const whopCampaign = async (status: 'ACTIVE' | 'PROCESSING', whopCampaignId: string | null): Promise<string> => {
+    const c = await withSystem((tx) =>
+      tx.campaign.create({
+        data: {
+          orgId,
+          buyerId,
+          name: `Whop ${status}`,
+          status,
+          keywords: [],
+          adProvider: 'WHOP',
+          whopCampaignId,
+          adSets: { create: [{ orgId, name: 's', ads: { create: [{ orgId, name: 'W', headline: 'h', primaryText: 'p', redirectId: `gs-w-${status}-${suffix}` }] } }] },
+        },
+      }),
+    );
+    return c.id;
+  };
+
+  it('a Whop campaign is live when it has a Whop campaign and is ACTIVE, with no Facebook id at all', async () => {
+    const id = await whopCampaign('ACTIVE', `adcamp_GsLive${suffix}`.slice(0, 30));
+    expect((await getGoogleSignals(buyer(), id)).live).toBe(true);
+  });
+
+  it('a half-built Whop campaign (its Whop draft exists, it is not launched) is not live: its edit must not write the edge', async () => {
+    const id = await whopCampaign('PROCESSING', `adcamp_GsHalf${suffix}`.slice(0, 30));
+    expect((await getGoogleSignals(buyer(), id)).live).toBe(false);
+  });
+});

@@ -137,6 +137,8 @@ export interface CampaignPerf extends FunnelCounts {
   id: string;
   name: string;
   status: string;
+  /** Which ad network runs it (D32): the row's live controls and budget floor depend on it. */
+  adProvider: 'FACEBOOK' | 'WHOP';
   channelLabel: string | null;
   /** The owning buyer + company — used by the Analytics workbench filters. */
   buyerId: string;
@@ -198,7 +200,7 @@ export interface AdSetPerf extends FunnelCounts {
 
 export interface CampaignBreakdown {
   range: DateRange;
-  campaign: { id: string; name: string; status: string };
+  campaign: { id: string; name: string; status: string; adProvider: 'FACEBOOK' | 'WHOP' };
   totals: MetricTotals & FunnelCounts;
   adSets: AdSetPerf[];
 }

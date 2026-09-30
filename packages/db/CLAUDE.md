@@ -13,6 +13,17 @@ Single source of truth for the data model. Exposes one shared `PrismaClient` sin
   DROP line, then `migrate:deploy`.** If `migrate dev` already applied a DROP, re-create the index
   (`CREATE INDEX articles_embedding_idx ON articles USING ivfflat (embedding vector_cosine_ops) WITH (lists=100)`)
   and fix the recorded checksum (`migrate reset` is blocked for AI agents).
+- **When `migrate dev` cannot run** (it wants an interactive yes, e.g. for a new unique index, or it proposes a drift
+  reset): write the migration by hand. `prisma migrate diff --from-schema-datasource prisma/schema.prisma
+  --to-schema-datamodel prisma/schema.prisma --script` prints the SQL; **delete the drift lines** (`DROP INDEX
+  "articles_embedding_idx"` and the `redirect_domains` `DROP DEFAULT`), save the rest as
+  `migrations/<timestamp>_<name>/migration.sql`, `migrate deploy`, `generate`. An additive change (a column, an enum, a
+  unique index on a brand-new column) is safe this way. D32 phase 2 (`20260930120029_whop_launch_columns`,
+  `20260930150000_whop_key_epoch`) was done like this.
+- **Provider columns (D32)**: `campaigns.ad_provider` (`FACEBOOK` default) says which ad network runs a campaign. A Whop
+  campaign uses `whop_*` columns (campaign, ad set, ad, file ids, all unique) and **never** an `fb_*` one: `ads.fb_ad_id`
+  being set is what arms the cloaker's enforce mode. Ask `isLaunched()` (`@knn/shared`), not `fb_campaign_id IS NOT NULL`.
+  `campaigns.whop_key_epoch` is part of every Whop idempotency key and is bumped wherever the Whop ids are cleared.
 - **Multi-tenancy (Phase 1)**: every business table carries `org_id`, and **RLS policies** enforce
   isolation. The app must `SET app.current_org = <id>` on the connection/txn for each request
   (the tenant guard). RLS is defense-in-depth on top of service-layer scoping (D2).

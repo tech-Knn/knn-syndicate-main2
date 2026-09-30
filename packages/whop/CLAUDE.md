@@ -51,6 +51,30 @@ library — no DB, no HTTP server. The API app owns persistence, notifications a
   409 conflict, 429 rate_limited, 5xx server, any other 4xx validation; `network` and `timeout` come from the
   transport. `apps/api/src/lib/whop-errors.ts` turns a kind into the answer a user sees.
 
+## Ads API (phase 2: `src/ads.ts`, `src/launch-map.ts`)
+
+- **Whop's hierarchy:** ad campaign (objective, optionally the budget) → ad group (targeting, placements, the optimized
+  event, by default the budget) → ad (copy, creatives, the destination URL). Inputs are Whop's own snake_case names, so
+  there is no translation layer to get wrong; only `idempotencyKey` is ours. `launch-map.ts` builds the request bodies
+  (pure, unit-tested); the vocabulary (objective / placement / category tables, what Whop cannot express) lives in
+  `@knn/shared` (`whop-launch.ts`) because the wizard and the submit gate use the same tables.
+- **A standalone campaign is a DRAFT and nothing spends until `PATCH status: active`.** `POST /ads` runs the pixel check on
+  `url` even under a draft. Launch gates, in observed order: a creative on every ad, a Facebook page, then (docs only) the
+  payment method and the agreement; each is a 400 whose message says what to fix, and the launch passes it through.
+- **Files:** `createFile` → PUT the bytes to the presigned URL (`client.upload`: **no `Authorization` header**, a 403 means the
+  link expired) → poll `getFile` until `ready` (`uploadCreative` does all three, up to three tries, each on a NEW record: a
+  replayed key would return the old, possibly expired, link. A transient failure retries under `<key>:retry`, then fresh keys;
+  an expired or refused link (403) gets a fresh key at once, because a leftover record from an earlier launch looks exactly
+  like that an hour later and would otherwise fail every launch until Whop forgets the key).
+- **Idempotency keys (`whopKeys`)** come from our row ids plus the campaign's key epoch (`-e<n>`, none for epoch 0). Whop
+  replays a repeated key for 24 h, so a rebuilt tree must not reuse the keys of a discarded one.
+- **Bulk reads:** `listCampaigns` and `listAds` (100 campaign ids per call, cursor pages, optional stats window with a
+  `time_zone`) are how the status and spend syncs read Whop: one call per 100, not one per campaign.
+- **`pnpm --filter @knn/whop sandbox-check`** replays the launch flow against Whop's real sandbox and compares it with what
+  the mock assumes (reads `~/whop-sandbox.env`, sandbox host only, creates and deletes clearly named drafts, never
+  launches). Run it when Whop ships an API version or before trusting a launch change; the mock is only as good as its
+  last comparison.
+
 ## The mock (`@knn/whop/testing`)
 
 `startMockWhop()` is a real HTTP server, so the real client (headers, retries, pagination) is what tests exercise.
@@ -63,6 +87,12 @@ It enforces the per-endpoint permission scopes Whop's spec lists, so "missing pe
   the final page, as Whop does, so a test can point it at our own redirect link (`pixelByUrl` scripts a
   fixed answer for one exact URL when a test does not host a page). Responses carry Whop's
   upsell field too, so tests prove it is stripped.
+- Ads: campaigns, ad groups, ads and files follow what the sandbox showed (draft-first, the pixel gate on ad creation, the
+  launch gates in observed order, the presigned upload, idempotent replay). `pixelForAnyUrl` scripts a pixel-check answer for
+  every URL (a launch builds its URLs from our redirect ids); `settle(bizId, campaignId, state)` moves a campaign to a
+  delivery state as Meta would later; `setStats(bizId, adId, …)` records delivery that a stats window then reports;
+  `uploadFailureStatus` and `fileProcessingPolls` script the upload. The payment-method and agreement gate texts are
+  guesses / docs (unverified).
 - Whop's spec is the source of truth (`https://api.whop.com/api/v1/openapi.json`). When a phase adds an endpoint
   to the client, add it to the mock in the same change and keep the scopes identical to the spec.
 - `pnpm --filter @knn/whop mock` runs it on `127.0.0.1:4919` with three demo businesses for clicking through the

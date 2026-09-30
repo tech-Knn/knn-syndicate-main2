@@ -811,11 +811,13 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
 - **Phases:**
   1. **Connect — built and tested (this entry).** Connection, checklist, page and pixel steps, the company
      switch, the dashboard page, the mock Whop API. Nothing launches yet.
-  2. **Build and launch** — neutral error kinds, `isLaunched()`, Whop ids on campaign / ad set / ad, a provider
-     choice in the wizard, draft-first launch that can resume and is idempotent, pause / resume, budget edit, clone.
-  3. **Pixel, events, stats** — **tracking built 2026-09-30** (see the addendum below): the Whop pixel on the
+  2. **Build and launch — built and tested 2026-09-30** (second addendum below): `isLaunched()`, Whop ids on
+     campaign / ad set / ad, a provider choice in the wizard, draft-first launch that resumes and is idempotent, pause /
+     resume, budget edit, relaunch, reopen, clone. (Neutral error kinds were not needed: Whop failures never enter a
+     Facebook branch, because the launch routes by provider before anything runs.)
+  3. **Pixel, events, stats** — **tracking built 2026-09-30** (first addendum below): the Whop pixel on the
      page Whop's check sees, Whop's click parameters kept through the redirect, conversion events to Whop.
-     Still to do: stats and status sync in the IST day, "(Whop)" column labels in Analytics.
+     **Status sync, spend in the IST day and "(FB)" / "(Whop)" column labels built 2026-09-30** (second addendum).
   4. **Operate** — webhooks, payment-failed banner with retry, notifications, super-admin overview, runbook.
   - **Phase 0 (sandbox spike)** answers the questions listed in `OPEN_QUESTIONS.md` #15 and gates phase 3. It
     waits for the sandbox key.
@@ -866,11 +868,147 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   - The redirect Worker stays dependency-free, so it holds its own copy of Whop's click parser (a test proves it
     agrees with `@knn/shared`); the scope token and the pixel loader are verbatim copies in the white Worker and
     the article app, each guarded by a test that fails on drift.
-- **Not done yet (phase 2 and deploy)**
-  - Nothing writes `whop.bizId` into a KV config until a Whop campaign can be launched (phase 2). **Both** config
-    builders in `launch.service.ts` must emit it, or the next resync drops it.
+- **Not done yet (deploy)**
+  - ~~Nothing writes `whop.bizId` into a KV config until a Whop campaign can be launched.~~ **Done in phase 2:** a Whop
+    campaign's config is built only by `syncCampaignRedirectConfigs` (`launch-routing.ts`), which emits `whop: { bizId }`;
+    the inline builder in `launchCampaign` is Facebook only.
   - `WHOP_SCOPE_SECRET` must be set as a secret in three places, with the same value: the redirect Worker and the
     white Worker (wrangler secrets, the white one on the white Cloudflare account) and the article app's runtime
     env. Unset anywhere = no pixel there (the safe default).
   - Whop-specific ad-id verification under `CLOAK_VERIFY_MODE=enforce` (an `expectedWhopAdId` matched against
     `waid`) waits until the ad id is known after creation.
+
+#### D32 addendum, 2026-09-30 (phase 2): build and launch campaigns on Whop
+
+- **What was built.** A buyer can choose **Whop** in the wizard, submit, and launch; pause, resume, change budgets,
+  relaunch, reopen and clone; and the worker keeps the campaign's status and spend in step with Whop. Facebook's code
+  path is unchanged: `launchCampaign`, `setCampaignActive`, the budget edits and `relaunchCampaign` each ask one question
+  first (`campaignProvider`) and hand a Whop campaign to its own service before any side effect or Facebook-only rule
+  (the $2 floor) can run. Details and the buyer-facing behaviour: `docs/WHOP.md`.
+- **Decisions**
+  - **A provider column, never a borrowed one.** `Campaign.adProvider` (`FACEBOOK` default, so every existing row is
+    unchanged). Whop's ids live in their own columns (`whop_campaign_id`, `whop_ad_group_id`, `whop_ad_id`,
+    `whop_file_id`, all unique). A Whop id is never stored in an `fb_*` column: `Ad.fbAdId` being set is what makes the
+    cloaker's enforce mode white-page every click, so nothing Whop-side may ever stand in for it. "Launched" is asked
+    through `isLaunched()` (`@knn/shared`), which for Whop means *has a Whop campaign and its status is ACTIVE, PAUSED or
+    META_REJECTED*: a Whop draft that failed a gate exists at Whop but is not launched.
+  - **The launch is draft-first and resumable, because Whop's model allows it.** A standalone Whop campaign is a draft and
+    nothing spends until the last call (`PATCH status: active`), so every Whop id is saved the moment it exists, every
+    create carries an `Idempotency-Key`, and a retry reuses what exists. Whop checks the pixel on an ad's URL when the ad
+    is *created*, so the edge config is written first (active, with the `whop` block) and a preflight asks Whop's own
+    checker what it sees before anything is built. Order and failure handling: `docs/WHOP.md`.
+  - **Key epoch, not a timestamp.** Whop replays a repeated idempotency key for 24 h. A rebuilt tree (reopen, relaunch, a
+    campaign deleted in Whop) would get the *discarded* objects back under the old keys (a test caught exactly this on
+    relaunch). `campaigns.whop_key_epoch` is part of every key and is bumped wherever Whop ids are cleared, so the
+    protection survives a retry, a restart and a second launch attempt, which a salt held in memory would not.
+  - **A draft never points at Whop objects.** `updateCampaign` replaces a draft's ad sets and ads wholesale, so ids kept on a
+    draft would be lost with the rows and the next launch would build a second set beside the old one. Reopening clears the
+    ids in the reopen's own transaction, then deletes the Whop campaign; a failed delete leaves a clean draft plus an audited,
+    notified orphan (a Whop *draft* cannot spend). `deleteCampaign` does the same, as a safety net.
+  - **Pause and resume tell Whop first.** The local status follows only once Whop agreed, so the two can never disagree in the
+    dangerous direction. "Already in that state at Whop" is success.
+  - **Whop launch errors are the buyer's to fix, in Whop's words.** Whop's 400s name what is missing; we wrap them
+    ("Whop would not launch this campaign: …"), keep them on the campaign (`whop_issues`, shown on its page) and notify,
+    because an auto-launch fails while the buyer is away. A 401 breaks the connection (once), a 429 parks the campaign in
+    `BATCHED`, everything else reverts the claim so the launch can be repeated.
+  - **Submitting needs a working connection, not a complete checklist.** A missing payment method or page is Whop's to say
+    at launch, and the buyer fixes it in Whop without re-review. The checklist's pixel row became informational for the same
+    reason the preflight exists: the pixel lives on our page and is checked per ad.
+  - **The launch never reports "not launched" while Whop may be running it.** `PATCH active` is the one call with
+    consequences, so after any Whop error on it the campaign is read back: still a draft → the failure is real (the claim is
+    given back, the error shown); no longer a draft → adopted as launched; unreadable → the campaign stays `LAUNCHING` with
+    its edge config *active* and the buyer is told to wait (`whop_launch_unconfirmed`), because reverting would send paid
+    clicks to the white page while Whop spends. Saving the result once Whop is live is retried, and if it still fails the
+    campaign stays `LAUNCHING` too (`whop_launch_unrecorded`). A relaunch goes on only once the old Whop campaign is
+    confirmed paused, a draft or gone (a second campaign must never run beside a live one).
+  - **Status sync is conservative by construction.** Only an explicit answer from a successful read changes a campaign, and
+    every write is conditional on the row still being what the tick read (`UPDATE … WHERE id, status, whop_campaign_id`;
+    mirrors on the Whop id they mirror), so a buyer's pause here, or a relaunch that swapped the Whop campaign between read
+    and write, loses nothing. A rejected ad (or `all_ads_rejected` / `in_appeal`) → `META_REJECTED` with routing stopped, the same
+    stop-and-release a Facebook `DISAPPROVED` ad triggers, **and the campaign is paused at Whop too** (best effort, and the buyer
+    is told whether it worked): our redirect no longer sends it traffic, so a still-delivering ad would only burn money.
+    Pause / resume are mirrored, and the edge config must follow: if it cannot be updated the status is given back and nothing
+    is announced (a resumed campaign whose edge still says "inactive" would send paid clicks to the white page while it runs). **Deleted in Whop → archived only on the second consecutive tick**
+    whose direct read says 404 (the first leaves a `not_found` marker in `whop_delivery_status`; any real answer clears it):
+    archiving is one-way and releases a channel, and one wrong answer from an API we only partly control must not do that to
+    a live campaign. No connection, a broken key, an outage, unreadable ads: skip. A pass is bounded (5 minutes, and it stops
+    after three businesses in a row fail to ANSWER: a rate limit or a rejected key is Whop answering) and fair (stable order,
+    random start, so a stopped pass does not starve the same businesses every time). The company switch is **not** consulted:
+    a live campaign must keep being watched even after a company's Whop switch is turned off.
+  - **Stopping routing is durable, and in the one safe order.** Rejection and archiving are one-way and the campaign then
+    leaves the scan, so two effects that can fail afterwards (the API is deploying, the KV is down) must not be lost. They are
+    done edge-first: the edge config is re-published (it then stops emitting the channel), and only then is the channel released
+    (it can be handed to someone else at once, so releasing first could credit the next holder with a rejected page's clicks:
+    the Facebook path's own B1 comment names that risk and only logs it). If the edge cannot be updated the channel stays held,
+    and that is the marker: every pass begins by finishing the routing of stopped Whop campaigns that still hold a channel. The
+    buyer is told what actually happened.
+  - **A launch that went quiet is settled from Whop's own word.** After 15 minutes without a write to the campaign, its ad
+    sets or its ads (a live launch touches the row each time it saves an id) the sync asks Whop what became of it: past draft
+    → completed here (`ACTIVE`, or `PAUSED` if paused meanwhile; audited; the buyer told it is live); a draft, or no Whop
+    campaign → back to `PROCESSING` with the ids kept, so a relaunch continues; a campaign Whop says does not exist → the same,
+    after two consecutive misses; unreadable → left alone. (The first version reset every quiet launch to `PROCESSING` without
+    asking, which is wrong exactly when the launch had succeeded and only its save had failed.)
+  - **Spend: our own events weigh the revenue split, Whop's count is only the fallback, and recorded spend is never erased.**
+    Whop reads are windowed per IST day into `ad_stats_daily`. Revenue is split (D8) by the ad's conversions. Every ad has its
+    own go-link, so our first-party ad-click events map to exactly one ad and are exact; Whop's `submitted_applications` (its
+    last-click count of the same event, which lags and matches only a subset) is used for a campaign-day only when we
+    recorded none. One scale per campaign-day, never per ad. (The first version preferred Whop's `results`; Whop's OpenAPI
+    spec shows `results` follows the ad group's optimization goal and is null when goals differ, while
+    `submitted_applications` is the field for our money event, and ours are the more complete count.) A row is written only
+    when Whop reports something for the ad and day: after a relaunch our ad row points at a new Whop ad with no history, and
+    "zero" for the days before it existed must not overwrite what the old ad really spent. "Reported" is decided from Whop's own
+    figures alone, never from our conversion count (a first version let our events make an idle Whop day look reported, which
+    zeroed a relaunched ad's spend whenever we held any event for that day); on such a day only the conversion count refreshes.
+    Our events are counted by `createdAt`, the day Analytics counts them by and the column the index is on.
+  - **Switching a campaign's network keeps what the new network cannot run, visibly.** A special ad category is a compliance
+    declaration; a placement or bid strategy shapes delivery. Dropping them silently on a Facebook → Whop switch (as the first
+    version did) meant the shared gate that exists to refuse them could never fire and the campaign went out without the
+    declared category. Now they are kept, marked "not on Whop", and reported by `whopUnsupportedProblems` (Review, the switch
+    message, an inline warning) until the buyer removes them or switches back; only what belongs to the other network is cleared
+    (account, page, pixel, schedule, display links), and the buyer is told what was.
+  - **Budget floor $1.00, and a live edit sends only the amount.** Whop documents no minimum. The draft schema already refuses
+    under $1.00 for every network, so the wizard uses that (a lower figure used to pass the wizard and fail the save with a bare
+    "Validation failed"); Whop's own, higher minimum is said at launch in its words. A live edit sends only `budget_amount`:
+    per the spec Whop refuses a change of budget type or optimization once launched.
+  - **Disconnect is refused while a campaign is live on the business.** Without the key we could not pause it.
+  - **One ads network, two labels.** Analytics names network-sourced columns "(FB)", "(Whop)" or "(FB/Whop)" by the rows in
+    view (the registry keeps one definition per metric; labels are rewritten at render, unchanged for all-Facebook views).
+- **Independent review, two rounds.** Three read-only reviewers (launch correctness, worker and money, web and regressions) went
+  over the working tree before this was written up; two more then re-reviewed the rewritten worker code and the wizard. Their reports are model output: every claim was checked against the code (and Whop
+  facts against Whop's OpenAPI spec) before anything changed. What held up and was fixed: the lost-activation and unsaved-result
+  holes and the quiet-launch reset (above); a relaunch that replayed the old Whop campaign (the key epoch) and did not stop it
+  first; connection resolution without an org check; a rejected key's late 401 breaking a connection the buyer had just
+  reconnected; spend erased after a relaunch; weights on the wrong field; unconditional writes and a one-shot archive in the
+  sync; side effects after a status change that could skip each other; an unbounded pass; and in the wizard a $0.01 floor the
+  server refuses, selections that outlived their connection, labels for a business that was no longer the one picked,
+  Instagram accounts offered as pages, duplicated issue lines, and a provider switch that kept schedules and old server errors.
+  The second round found, and fixed: spend erased whenever we held our own conversions for the ad-day (the worst: it made the
+  never-erase rule false exactly after a relaunch); three failing businesses starving everything behind them in a fixed order,
+  and a rate limit counted as an outage; side effects after a stop that could be lost for good and a notice that claimed a
+  channel was released when it was not; a stale-selection effect that would have let a company admin's Save wipe a buyer's Whop
+  business (it now applies to the campaign's own buyer only); a network switch that silently dropped a declared category;
+  tooltips that called our own recorded ad clicks "Whop's count"; stale Facebook labels after a round trip; and a Whop switch
+  turned off after a draft existed.
+- **Proven:** the mock Whop over real HTTP + real Postgres: launch (campaign, group, creative upload, ad, activate), resume
+  after a failure mid-way without duplicates or re-uploads, payment-method refusal then success, rate limit → `BATCHED`,
+  broken key, a campaign deleted in Whop, a lost activation answer and an unreadable one, an unsaved result, two launches at
+  once (one Whop campaign), relaunch and reopen-then-relaunch with fresh keys, pause / resume / budgets, disconnect guard; the
+  status sync (42 tests: CAS against a change made mid-tick, two-strike archive, pause-on-rejection and its failure, the
+  edge-first stop and its repair, stuck-launch verdicts, breaker, fairness and budget), the spend pull (22: never erases, even
+  with our own events, own-first weights, Whop fallback, conversions-only rows, fairness), connection handling (17) and FX (3),
+  including the revenue split using those rows; the wizard in a browser against the real API and the mock Whop (floor,
+  pickers, issue list, broken and deleted connections, provider switch), and a real launch that ends in the pixel preflight's
+  "could not load" message, recorded on the campaign and shown on its page. `pnpm --filter @knn/whop sandbox-check` replays
+  the Whop flow against the real sandbox (13 checks, including that a deleted campaign reads as `not_found` and leaves the list).
+- **Not known until real delivery** (`OPEN_QUESTIONS.md` #15): Whop's minimum budget and the exact payment-method and
+  agreement refusal texts (the sandbox business has no payment method, which is also what stops a real launch there); video
+  creatives; how long Meta's review takes and what a rejection message says; whether a server event is attributed.
+- **Not done on purpose:** no automatic re-drive of `BATCHED` campaigns on this branch (a manual launch is the retry; the
+  automatic, capped one is D31 on another branch, see the merge note); Whop country / hour breakdowns are not pulled;
+  webhooks and a payment-retry button are phase 4.
+- **Merge note for D31** (the `BATCHED` re-drive sweep, worktree `clever-elion-46b8d7`, not merged here): it picks `BATCHED`
+  campaigns with `fbCampaignId` null in auto-launch companies and calls `POST /api/internal/launch/:id`. A Whop campaign
+  always matches, and that is fine, even good: the call goes through `launchCampaign`, which routes by provider, and a Whop
+  launch is resumable and claim-guarded, so a re-drive never duplicates anything (D31's own "known gap", an unresumable
+  Facebook build, does not exist for Whop). Keep its eligibility free of `fbCampaignId != null` meaning "launched", and expect
+  a textual conflict in `apps/worker/src/index.ts` (both branches add crons) and `launch-trigger.ts` (its comment).

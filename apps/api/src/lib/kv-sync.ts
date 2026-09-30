@@ -31,8 +31,9 @@ export interface RedirectConfigPayload {
    * Whop Ads campaigns only (D32): the Whop business this link belongs to. Makes the edge Worker recognise
    * a click on a Whop ad, record Whop's click parameters beside the click, and tag the non-paid landing
    * with a signed scope so that page carries the business's pixel. Absent for Facebook. Mirrors
-   * `apps/redirect/src/resolve.ts#RedirectConfig.whop`. Both config builders in launch.service.ts must
-   * emit it for a Whop campaign, or the next resync silently drops it.
+   * `apps/redirect/src/resolve.ts#RedirectConfig.whop`. A Whop campaign's config is built ONLY by
+   * `syncCampaignRedirectConfigs` (launch-routing.ts), which emits it, and never carries `expectedAdId`
+   * (Whop hides the Meta ad id); the inline builder in `launchCampaign` is Facebook only.
    */
   whop?: { bizId: string };
 }

@@ -77,6 +77,66 @@ export function sumInputs(rows: readonly MetricInputs[]): MetricInputs {
   return t;
 }
 
+/**
+ * Columns that come from the ad network are labelled by source (D32): "(FB)" for Facebook rows, "(Whop)" for Whop rows,
+ * "(FB/Whop)" when the rows in view are a mix, so a buyer never reads Whop's numbers under a "Facebook" heading. The
+ * registry below keeps its Facebook wording (one definition per metric); this relabels it at render time, and leaves
+ * the text untouched when every row is Facebook, which is how it always read.
+ */
+export type NetworkTag = 'FB' | 'Whop' | 'FB/Whop';
+
+export function networkTag(providers: Iterable<'FACEBOOK' | 'WHOP'>): NetworkTag {
+  const seen = new Set(providers);
+  if (seen.has('WHOP') && seen.has('FACEBOOK')) return 'FB/Whop';
+  return seen.has('WHOP') ? 'Whop' : 'FB';
+}
+
+export function relabel(text: string, tag: NetworkTag): string {
+  if (tag === 'FB') return text;
+  const word = tag === 'Whop' ? 'Whop' : 'Facebook/Whop';
+  return text.replace(/\bFB\b/g, tag).replace(/\bFacebook\b/g, word);
+}
+
+/**
+ * Where the Facebook wording, merely relabelled, would say something FALSE about Whop rows, the text is written out per
+ * network. A Whop ad's "conversions" are OUR OWN recorded ad clicks (Whop's own count only on a day we recorded none), not the
+ * ad network's count of its pixel event, and revenue is weighed by them; "clicked the ad on Whop" is not where Meta shows it.
+ * Keyed by column key; the ads / countries / hours breakdown uses the same keys (`detail:revenue` is its own, because the main
+ * table's Revenue column says something else).
+ */
+const NETWORK_TEXT: Record<string, { whop: string; mixed: string }> = {
+  conv: {
+    whop: "The ad clicks we recorded for the ad (the same event as Ad clicks; Whop's own count only on a day we recorded none). Revenue is split across a campaign's ads by it.",
+    mixed: "Facebook rows: Facebook's count of the same ad-click event (its pixel 'Search' event). Whop rows: the ad clicks we recorded (Whop's own count only on a day we recorded none).",
+  },
+  cpa: {
+    whop: 'Spend ÷ Conv (Whop) — what each recorded ad click cost.',
+    mixed: "Spend ÷ Conv — what each ad click cost (Facebook's count for Facebook rows, ours for Whop rows).",
+  },
+  cvrFb: {
+    whop: 'Conv (Whop) ÷ Whop clicks — recorded ad clicks per link click.',
+    mixed: "Conv ÷ link clicks — the ad-click rate (Facebook's count for Facebook rows, ours for Whop rows).",
+  },
+  fbClicks: {
+    whop: "Whop's link clicks — people who clicked the ad.",
+    mixed: "Link clicks reported by the ad network (Facebook's or Whop's) — people who clicked the ad.",
+  },
+  'detail:revenue': {
+    whop: "Estimated — Google reports revenue per campaign, so it is split by each ad's recorded ad clicks.",
+    mixed: "Estimated — Google reports revenue per campaign, so it is split by ad clicks (Facebook's count for Facebook ads, our recorded count for Whop ads).",
+  },
+  'group:facebook': {
+    whop: "Whop's own numbers: its impressions, link clicks and cost per click, plus the ad clicks we recorded per ad.",
+    mixed: "The ad network's own numbers (Facebook's or Whop's): impressions, link clicks and cost per click, plus each network's conversion count.",
+  },
+};
+
+/** A column's (or group's) description for the rows in view: written out per network where relabelling would be false, else relabelled. */
+export function infoFor(key: string, info: string, tag: NetworkTag): string {
+  if (tag === 'FB') return info;
+  return NETWORK_TEXT[key]?.[tag === 'Whop' ? 'whop' : 'mixed'] ?? relabel(info, tag);
+}
+
 export type GroupKey = 'results' | 'unit' | 'traffic' | 'facebook' | 'controls';
 
 export const GROUPS: Record<GroupKey, { label: string; info: string }> = {

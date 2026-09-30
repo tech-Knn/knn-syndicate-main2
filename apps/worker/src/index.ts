@@ -15,6 +15,7 @@ import {
 } from './channel-pool/channel.service.js';
 import { sweepDomainHealth } from './jobs/domain-health.js';
 import { reconcileCampaigns } from './jobs/meta-rejection.js';
+import { reconcileWhopCampaigns } from './jobs/whop-reconcile.js';
 import { SYNC_KEYS, markSyncRun } from './lib/sync-state.js';
 import { refreshFbTokens } from './jobs/token-refresh.js';
 import { type FbLaunchJob, learnRcTermsNow, resyncOffersToKv, runFbLaunch, syncAllFbConnections, triggerAutoLaunch } from './launch-trigger.js';
@@ -162,9 +163,22 @@ async function main(): Promise<void> {
   const metaRejectionWorker = new Worker(
     QUEUES.META_REJECTION_CHECK,
     async () => {
-      const result = await reconcileCampaigns();
+      // Facebook and Whop (D32) are reconciled independently: neither's failure may keep the other from running.
+      // A Facebook failure still fails the job (as before); a Whop failure is logged and surfaces in the result.
+      let facebook: Awaited<ReturnType<typeof reconcileCampaigns>> | undefined;
+      let facebookError: unknown;
+      try {
+        facebook = await reconcileCampaigns();
+      } catch (err) {
+        facebookError = err;
+      }
+      const whop = await reconcileWhopCampaigns().catch((err: unknown) => {
+        console.error('[worker] Whop reconcile failed:', err instanceof Error ? err.message : String(err));
+        return { error: err instanceof Error ? err.message : String(err) };
+      });
+      if (facebookError) throw facebookError;
       await markSyncRun(SYNC_KEYS.FB_STATUS); // freshness signal for the Analytics "last updated" indicator
-      return result;
+      return { ...facebook, whop };
     },
     { connection, concurrency: 1 },
   );

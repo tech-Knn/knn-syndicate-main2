@@ -8,6 +8,9 @@ import {
   AGE_BOUND_MIN,
   ATTRIBUTION_WINDOWS,
   BID_STRATEGIES,
+  WHOP_CTAS,
+  WHOP_PLACEMENT,
+  WHOP_SPECIAL_CATEGORY,
   ALL_COUNTRY_CODES,
   COUNTRIES,
   CTA_OPTIONS,
@@ -17,6 +20,7 @@ import {
   PLACEMENT_OPTIONS,
   SELECTABLE_OBJECTIVES,
   SPECIAL_AD_CATEGORIES,
+  type AdProvider,
   type AttributionWindow,
   type BidStrategy,
   type CampaignDraftInput,
@@ -36,9 +40,11 @@ import {
   isValidPerformanceGoal,
   racValueIssues,
   rcBlockedMessage,
+  whopLaunchProblems,
+  whopUnsupportedProblems,
 } from '@knn/shared';
-import { ApiError, auth, campaigns as campaignsApi, facebook, getStoredUser, uploads as uploadsApi } from '@/lib/api';
-import { type Campaign, type FbAccount, type FbPage, type FbPixel, type OfferDomainOption } from '@/lib/types';
+import { ApiError, auth, campaigns as campaignsApi, facebook, getStoredUser, uploads as uploadsApi, whop as whopApi } from '@/lib/api';
+import { type Campaign, type FbAccount, type FbPage, type FbPixel, type OfferDomainOption, type WhopConnection } from '@/lib/types';
 import { Banner, Button, Card, DateTimePicker, InfoTip, SearchSelect, Spinner } from './ui';
 import styles from './campaign-wizard.module.css';
 
@@ -153,8 +159,13 @@ interface CampaignForm {
   racValue: string;
   query: string;
   fallbackUrl: string;
+  /** Which ad network runs it (D32). Facebook unless the buyer switches to Whop. */
+  adProvider: AdProvider;
   adAccountId: string;
   pageId: string;
+  /** Whop only: the connected business, and the Facebook page its ads run under (`sacc_…`). */
+  whopConnectionId: string;
+  whopPageId: string;
   adSets: AdSetForm[];
 }
 
@@ -216,8 +227,11 @@ function toForm(c?: Campaign): CampaignForm {
       racValue: '',
       query: '',
       fallbackUrl: '',
+      adProvider: 'FACEBOOK',
       adAccountId: '',
       pageId: '',
+      whopConnectionId: '',
+      whopPageId: '',
       adSets: [emptyAdSet(1)],
     };
   }
@@ -233,8 +247,11 @@ function toForm(c?: Campaign): CampaignForm {
     racValue: c.racValue ?? '',
     query: c.query ?? '',
     fallbackUrl: c.fallbackUrl ?? '',
+    adProvider: c.adProvider ?? 'FACEBOOK',
     adAccountId: c.adAccountId ?? '',
     pageId: c.pageId ?? '',
+    whopConnectionId: c.whopConnectionId ?? '',
+    whopPageId: c.whopPageId ?? '',
     adSets: c.adSets.map((s) => ({
       key: uuid(),
       name: s.name,
@@ -283,6 +300,7 @@ function toForm(c?: Campaign): CampaignForm {
 
 function toDraft(form: CampaignForm, tz: string): CampaignDraftInput {
   const cbo = form.budgetMode === 'CAMPAIGN';
+  const whop = form.adProvider === 'WHOP';
   return {
     name: form.name.trim(),
     objective: form.objective,
@@ -295,8 +313,12 @@ function toDraft(form: CampaignForm, tz: string): CampaignDraftInput {
     racValue: form.racValue.trim() || undefined,
     query: form.query.trim() || undefined,
     fallbackUrl: form.fallbackUrl.trim() || undefined,
-    adAccountId: form.adAccountId || undefined,
-    pageId: form.pageId || undefined,
+    adProvider: form.adProvider,
+    // A Whop campaign has no Facebook ad account or page (and a Facebook one no Whop business): send only its own.
+    adAccountId: whop ? undefined : form.adAccountId || undefined,
+    pageId: whop ? undefined : form.pageId || undefined,
+    whopConnectionId: whop ? form.whopConnectionId || undefined : undefined,
+    whopPageId: whop ? form.whopPageId || undefined : undefined,
     adSets: form.adSets.map((s) => ({
       name: s.name.trim(),
       dailyBudgetCents: cbo ? undefined : centsOrUndef(s.dailyBudget),
@@ -312,13 +334,14 @@ function toDraft(form: CampaignForm, tz: string): CampaignDraftInput {
       placementMode: s.placementMode,
       placements: s.placementMode === 'manual' ? s.placements : [],
       optimizationGoal: s.optimizationGoal,
-      pixelId: s.pixelId || undefined,
+      // Whop owns the pixel, and has no value-bid target or attribution-window setting.
+      pixelId: whop ? undefined : s.pixelId || undefined,
       pxeEvent: s.pxeEvent,
       conversionType: s.conversionType,
       bidStrategy: s.bidStrategy || undefined,
       costCapCents: centsOrUndef(s.costCap),
-      roasFactor: s.roasFactor ? Number(s.roasFactor) : undefined,
-      attributionWindow: s.attributionWindow || undefined,
+      roasFactor: whop ? undefined : s.roasFactor ? Number(s.roasFactor) : undefined,
+      attributionWindow: whop ? undefined : s.attributionWindow || undefined,
       // The picker wall-clock is in the ad account's timezone → convert to the correct UTC instant
       // (DST-aware) for storage + the FB ad-set start_time/end_time. Persist the tz so an edit round-trips.
       startTime: s.startTime ? zonedToUtcIso(s.startTime, tz) : undefined,
@@ -341,26 +364,43 @@ function toDraft(form: CampaignForm, tz: string): CampaignDraftInput {
 }
 
 /**
+ * The smallest daily budget we let through, in cents. Facebook's floor is $2.00. A Whop campaign has no Facebook floor, but
+ * the draft schema (the same one Save draft runs through on the API) refuses anything under $1.00 for every network, so that
+ * is the floor here: a figure below it would pass the wizard and then fail the save with a bare "Validation failed". Whop
+ * states its own minimum at launch and the launch shows what it says when it is higher.
+ */
+const minBudgetCents = (form: CampaignForm): number => (form.adProvider === 'WHOP' ? 100 : 200);
+const minBudgetText = (form: CampaignForm): string => (form.adProvider === 'WHOP' ? '$1.00' : '$2.00');
+const budgetHint = (form: CampaignForm): string =>
+  form.adProvider === 'WHOP' ? '$1.00 daily minimum here. Whop applies its own and tells you at launch if it is higher.' : '$2.00 daily minimum (Facebook).';
+
+/**
  * Mandatory-field errors for ONE wizard step. Surfaced inline (banner) when the buyer clicks Next,
  * so a skipped required field is caught ON that step in context — not only at the final Review step.
  */
 function stepErrorsFor(step: number, form: CampaignForm, offers: OfferDraft[]): string[] {
   const e: string[] = [];
+  const whop = form.adProvider === 'WHOP';
   if (step === 0) {
     if (!form.name.trim()) e.push('Campaign name is required.');
     if (form.budgetMode === 'CAMPAIGN') {
       const c = centsOrUndef(form.dailyBudget);
-      if (c === undefined || c < 200) e.push('Campaign daily budget must be at least $2.00.');
+      if (c === undefined || c < minBudgetCents(form)) e.push(`Campaign daily budget must be at least ${minBudgetText(form)}.`);
     }
-    if (!form.adAccountId) e.push('Select a Facebook ad account.');
-    if (!form.pageId) e.push('Select a Facebook page.');
+    if (whop) {
+      if (!form.whopConnectionId) e.push('Select a Whop business.');
+      if (!form.whopPageId) e.push('Select the Facebook page your Whop ads run under.');
+    } else {
+      if (!form.adAccountId) e.push('Select a Facebook ad account.');
+      if (!form.pageId) e.push('Select a Facebook page.');
+    }
     if (offers.filter((o) => o.kind === 'PAID' && o.domainId).length === 0) e.push('Add at least one destination website.');
   } else if (step === 1) {
     form.adSets.forEach((s, i) => {
       if (!s.name.trim()) e.push(`Ad set ${i + 1}: name is required.`);
       if (form.budgetMode === 'AD_SET') {
         const c = centsOrUndef(s.dailyBudget);
-        if (c === undefined || c < 200) e.push(`Ad set ${i + 1}: daily budget must be at least $2.00.`);
+        if (c === undefined || c < minBudgetCents(form)) e.push(`Ad set ${i + 1}: daily budget must be at least ${minBudgetText(form)}.`);
       }
       if (s.ageMax < s.ageMin) e.push(`Ad set ${i + 1}: max age must be ≥ min age.`);
       if (s.countries.length === 0) e.push(`Ad set ${i + 1}: select at least one target country.`);
@@ -373,17 +413,23 @@ function stepErrorsFor(step: number, form: CampaignForm, offers: OfferDraft[]): 
 function hardErrors(form: CampaignForm): string[] {
   const errs: string[] = [];
   if (!form.name.trim()) errs.push('Campaign name is required.');
+  const whop = form.adProvider === 'WHOP';
+  const floorNote = whop ? '' : ' (Facebook minimum)';
   if (form.budgetMode === 'CAMPAIGN') {
     const c = centsOrUndef(form.dailyBudget);
-    if (c !== undefined && c < 200) errs.push('Campaign daily budget must be at least $2.00 (Facebook minimum).');
+    if (c !== undefined && c < minBudgetCents(form)) errs.push(`Campaign daily budget must be at least ${minBudgetText(form)}${floorNote}.`);
   }
   form.adSets.forEach((s, i) => {
     if (!s.name.trim()) errs.push(`Ad set ${i + 1}: name is required.`);
     if (form.budgetMode === 'AD_SET') {
       const c = centsOrUndef(s.dailyBudget);
-      if (c !== undefined && c < 200) errs.push(`Ad set ${i + 1}: daily budget must be at least $2.00 (Facebook minimum).`);
+      if (c !== undefined && c < minBudgetCents(form)) errs.push(`Ad set ${i + 1}: daily budget must be at least ${minBudgetText(form)}${floorNote}.`);
     }
     if (s.ageMax < s.ageMin) errs.push(`Ad set ${i + 1}: max age must be ≥ min age.`);
+    // The API's draft schema requires an ad name; without this the buyer only got a bare "Validation failed".
+    s.ads.forEach((a, j) => {
+      if (!a.name.trim()) errs.push(`Ad ${i + 1}.${j + 1}: name is required.`);
+    });
     // Headline + primary text are optional (FB doesn't require them) — no longer blocked here.
   });
   return errs;
@@ -406,28 +452,131 @@ function offerIssues(offers: OfferDraft[]): string[] {
   return issues;
 }
 
+/**
+ * Everything in a Whop campaign that Whop cannot express (an app-promotion objective, a placement it has no name
+ * for, a ROAS-goal bid strategy, ...), from the same shared table the server's submit gate uses, so the buyer is
+ * told while building instead of after submitting.
+ */
+function whopProblems(form: CampaignForm): string[] {
+  return whopLaunchProblems(
+    { name: form.name, objective: form.objective, specialAdCategories: form.specialAdCategories, budgetMode: form.budgetMode, dailyBudgetCents: centsOrUndef(form.dailyBudget) ?? null },
+    form.adSets.map((s) => ({
+      name: s.name,
+      dailyBudgetCents: centsOrUndef(s.dailyBudget) ?? null,
+      countries: s.countries,
+      excludeCountries: s.excludeCountries,
+      ageMin: s.ageMin,
+      ageMax: s.ageMax,
+      genders: s.genders,
+      advantageAudience: s.advantageAudience,
+      placementMode: s.placementMode,
+      placements: s.placements,
+      languages: s.languages,
+      devicePlatforms: s.devicePlatforms,
+      mobileOs: s.mobileOs,
+      bidStrategy: s.bidStrategy || null,
+      costCapCents: centsOrUndef(s.costCap) ?? null,
+      startTime: null,
+      endTime: null,
+      pxeEvent: s.pxeEvent,
+    })),
+  );
+}
+
+/** What Whop has no word for among the choices a form carries (objective, categories, placements, bid strategy): the shared table. */
+function whopUnsupported(form: CampaignForm): string[] {
+  return whopUnsupportedProblems(
+    { objective: form.objective, specialAdCategories: form.specialAdCategories },
+    form.adSets.map((s) => ({ name: s.name, placementMode: s.placementMode, placements: s.placements, bidStrategy: s.bidStrategy || null })),
+  );
+}
+
+/**
+ * The form after the buyer switches network. What belongs to the OTHER network is cleared: its account, page and pixel, the
+ * schedule (wall-clock time in the network's own zone would silently mean another moment), display links, and a call to action
+ * Whop has no name for (which becomes Learn more, as the launch does anyway). Choices that merely might not exist on the new
+ * network are KEPT: a special ad category is a compliance declaration and a placement or bid strategy shapes delivery, so
+ * dropping them silently would send the campaign out different from what was built. They stay visible and removable, and the
+ * shared table (`whopUnsupportedProblems`) reports them until the buyer removes them or switches back.
+ */
+function switchProvider(f: CampaignForm, adProvider: AdProvider): CampaignForm {
+  if (f.adProvider === adProvider) return f;
+  const whop = adProvider === 'WHOP';
+  return {
+    ...f,
+    adProvider,
+    adAccountId: '',
+    pageId: '',
+    whopConnectionId: '',
+    whopPageId: '',
+    adSets: f.adSets.map((set) => ({
+      ...set,
+      pixelId: undefined,
+      startTime: '',
+      endTime: '',
+      ...(whop ? { timezone: '' } : {}),
+      ads: set.ads.map((a) => (whop ? { ...a, displayLink: '', cta: WHOP_CTAS.includes(a.cta.toLowerCase()) ? a.cta : ('LEARN_MORE' as const) } : a)),
+    })),
+  };
+}
+
+/** What a switch did, in words: what was cleared, and what the new network cannot run (kept so it can be seen). Null when neither. */
+function switchNote(before: CampaignForm, after: CampaignForm): string | null {
+  if (before.adProvider === after.adProvider) return null;
+  const whop = after.adProvider === 'WHOP';
+  const cleared: string[] = [];
+  if (whop) {
+    if (before.adAccountId || before.pageId) cleared.push('the Facebook ad account and page');
+    if (before.adSets.some((s) => s.pixelId)) cleared.push('the pixel');
+    if (before.adSets.some((s) => s.ads.some((a) => a.displayLink.trim()))) cleared.push('display links');
+    if (before.adSets.some((s, i) => s.ads.some((a, j) => after.adSets[i]?.ads[j]?.cta !== a.cta))) cleared.push('a call to action Whop has no name for (now Learn more)');
+  } else if (before.whopConnectionId || before.whopPageId) {
+    cleared.push('the Whop business and page');
+  }
+  if (before.adSets.some((s) => s.startTime || s.endTime)) cleared.push('the start and end times');
+  const unsupported = whop ? whopUnsupported(after) : [];
+  if (cleared.length === 0 && unsupported.length === 0) return null;
+  const parts = [`Switched to ${whop ? 'Whop' : 'Facebook'}.`];
+  if (cleared.length) parts.push(`Cleared: ${cleared.join(', ')}.`);
+  if (unsupported.length) parts.push(`Whop cannot run part of what you set, so it is kept where you can see it: ${unsupported.join(' ')} Remove it, or switch back to Facebook.`);
+  return parts.join(' ');
+}
+
 /** Full completeness for submit — computed directly from the form (always specific). */
 function formIssues(form: CampaignForm): string[] {
   const issues = [...hardErrors(form)];
-  if (!form.adAccountId) issues.push('Select a Facebook ad account.');
-  if (!form.pageId) issues.push('Select a Facebook page.');
+  const whop = form.adProvider === 'WHOP';
+  if (whop) {
+    if (!form.whopConnectionId) issues.push('Select a Whop business.');
+    if (!form.whopPageId) issues.push('Select the Facebook page your Whop ads run under.');
+    issues.push(...whopProblems(form));
+  } else {
+    if (!form.adAccountId) issues.push('Select a Facebook ad account.');
+    if (!form.pageId) issues.push('Select a Facebook page.');
+  }
   if (form.keywords.length === 0) issues.push('Add at least one keyword.');
   if (!form.racValue.trim()) issues.push('Set the Referrer Ad Creative.');
   else issues.push(...racValueIssues(form.racValue, form.name));
-  if (form.budgetMode === 'CAMPAIGN' && !centsOrUndef(form.dailyBudget)) issues.push('Set the campaign daily budget.');
+  // For a Whop campaign the budget, country and placement rules are said once, by `whopProblems` above (the shared table the
+  // server's gate uses), so they are not repeated here in other words.
+  if (!whop && form.budgetMode === 'CAMPAIGN' && !centsOrUndef(form.dailyBudget)) issues.push('Set the campaign daily budget.');
   if (form.adSets.length === 0) issues.push('Add at least one ad set.');
   form.adSets.forEach((s, i) => {
     const L = `Ad set ${i + 1}`;
-    if (form.budgetMode === 'AD_SET' && !centsOrUndef(s.dailyBudget)) issues.push(`${L} needs a daily budget.`);
-    if (s.countries.length === 0) issues.push(`${L} needs at least one target country.`);
-    if (!isValidPerformanceGoal(form.objective, s.optimizationGoal)) {
+    if (!whop && form.budgetMode === 'AD_SET' && !centsOrUndef(s.dailyBudget)) issues.push(`${L} needs a daily budget.`);
+    if (!whop && s.countries.length === 0) issues.push(`${L} needs at least one target country.`);
+    // Facebook's performance-goal and pixel rules do not apply to Whop: it owns the pixel and optimizes the money event.
+    if (!whop && !isValidPerformanceGoal(form.objective, s.optimizationGoal)) {
       issues.push(`${L}: performance goal isn't valid for the ${form.objective.replace('OUTCOME_', '').toLowerCase()} objective.`);
     }
-    if (goalRequiresPixel(s.optimizationGoal) && !s.pixelId) issues.push(`${L} optimizes for conversions → needs a pixel.`);
-    if (s.placementMode === 'manual' && s.placements.length === 0) issues.push(`${L} needs at least one placement.`);
+    if (!whop && goalRequiresPixel(s.optimizationGoal) && !s.pixelId) issues.push(`${L} optimizes for conversions → needs a pixel.`);
+    if (!whop && s.placementMode === 'manual' && s.placements.length === 0) issues.push(`${L} needs at least one placement.`);
     if (s.ads.length === 0) issues.push(`${L} needs at least one ad.`);
     s.ads.forEach((a, j) => {
       if (!a.uploadId) issues.push(`Ad ${i + 1}.${j + 1} needs a creative.`);
+      // Facebook leaves the copy optional; a Whop ad cannot be created without a headline and primary text.
+      if (whop && !a.headline.trim()) issues.push(`Ad ${i + 1}.${j + 1} needs a headline.`);
+      if (whop && !a.primaryText.trim()) issues.push(`Ad ${i + 1}.${j + 1} needs primary text.`);
     });
   });
   return [...new Set(issues)];
@@ -458,7 +607,19 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
   const [accounts, setAccounts] = useState<FbAccount[]>([]);
   const [pages, setPages] = useState<FbPage[]>([]);
   const [pixels, setPixels] = useState<FbPixel[]>([]);
-  const [assetsLoading, setAssetsLoading] = useState(true);
+  const [fbAssetsLoading, setFbAssetsLoading] = useState(true);
+  // Whop Ads (D32): offered only when it is on for the buyer's company; otherwise the wizard is exactly as it was.
+  const [whopOn, setWhopOn] = useState(false);
+  const [connections, setConnections] = useState<WhopConnection[]>([]);
+  // Whether the Whop status and businesses have answered (or failed), so a list that has not arrived yet is never shown as
+  // "no business connected", and a failed load is said out loud instead of leaving empty pickers.
+  const [whopLoaded, setWhopLoaded] = useState(false);
+  const [whopLoadFailed, setWhopLoadFailed] = useState(false);
+  // What the last network switch cleared, and what the new network cannot run (kept in view, not dropped).
+  const [switchMessage, setSwitchMessage] = useState<string | null>(null);
+  // Only the campaign's own buyer sees its business in the lists below (they are the signed-in user's own): for anyone else
+  // (a company admin opening the draft), "not in the list" says nothing about the campaign.
+  const isOwner = !campaign || campaign.buyerId === getStoredUser()?.id;
 
   // Destination websites (the campaign's "offers") — where the ads send traffic.
   const [offerDomains, setOfferDomains] = useState<OfferDomainOption[]>([]);
@@ -478,11 +639,45 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
       .accounts()
       .then((acc) => active && setAccounts(acc))
       .catch(() => undefined)
-      .finally(() => active && setAssetsLoading(false));
+      .finally(() => active && setFbAssetsLoading(false));
     return () => {
       active = false;
     };
   }, []);
+  // A Whop draft waits for its businesses; a Facebook campaign (the default) never waits on Whop.
+  const assetsLoading = fbAssetsLoading || (form.adProvider === 'WHOP' && !whopLoaded);
+
+  useEffect(() => {
+    let active = true;
+    void whopApi
+      .status()
+      .then(async (st) => {
+        if (!active) return;
+        // A super admin is offered Whop by the status call (no company switch on the platform org), but a campaign needs the
+        // company's switch on, so the network choice would only end in a refusal at Save: it is not offered to them.
+        const on = st.enabled && getStoredUser()?.role !== 'SUPER_ADMIN';
+        setWhopOn(on);
+        if (on) setConnections(await whopApi.connections());
+      })
+      .catch(() => active && setWhopLoadFailed(true))
+      .finally(() => active && setWhopLoaded(true));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // A business disconnected since this draft was saved, or a page it no longer has, must not stay "selected" behind a picker
+  // that cannot show it (the review would name a business that is gone). Only a loaded, editable Whop form is touched.
+  useEffect(() => {
+    if (!whopLoaded || !whopOn || whopLoadFailed || readOnly || !isOwner) return;
+    setForm((f) => {
+      if (f.adProvider !== 'WHOP') return f;
+      const conn = connections.find((c) => c.id === f.whopConnectionId);
+      if (f.whopConnectionId && !conn) return { ...f, whopConnectionId: '', whopPageId: '' };
+      if (f.whopPageId && conn && !conn.pages.some((p) => p.id === f.whopPageId && p.platform === 'facebook')) return { ...f, whopPageId: '' };
+      return f;
+    });
+  }, [whopLoaded, whopOn, whopLoadFailed, readOnly, isOwner, connections]);
 
   // Destination websites the buyer can route to, + any offers already on the campaign.
   useEffect(() => {
@@ -512,6 +707,16 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
   }, [form.adAccountId]);
 
   const patch = useCallback((p: Partial<CampaignForm>) => setForm((f) => ({ ...f, ...p })), []);
+  // Switching network clears what belongs to the other one and KEEPS (visibly, flagged) what the new one cannot run: see `switchProvider`.
+  const changeProvider = useCallback(
+    (adProvider: AdProvider) => {
+      // What a failed submit said about the OTHER network no longer applies.
+      setServerIssues([]);
+      setSwitchMessage(switchNote(form, switchProvider(form, adProvider)));
+      setForm((f) => switchProvider(f, adProvider));
+    },
+    [form],
+  );
   // Changing the objective re-snaps each ad set's performance goal to one valid for it.
   const changeObjective = useCallback((objective: CampaignForm['objective']) => {
     setForm((f) => ({
@@ -536,8 +741,17 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
 
   const issues = useMemo(() => {
     const rcHits = findBlockedRcTerms(form.racValue, rcBlockedTerms);
-    return [...formIssues(form), ...offerIssues(offers), ...(rcHits.length ? [rcBlockedMessage(rcHits)] : [])];
-  }, [form, offers, rcBlockedTerms]);
+    // A connection whose key Whop rejected cannot launch anything: say so now rather than after a submit.
+    const conn = form.adProvider === 'WHOP' ? connections.find((c) => c.id === form.whopConnectionId) : undefined;
+    const why = conn?.lastError?.trim();
+    const brokenConnection =
+      conn?.status === 'BROKEN'
+        ? [`The Whop connection "${conn.label ?? conn.bizId}" needs attention: ${why ? `${why}${/[.!?]$/.test(why) ? '' : '.'}` : 'its key was rejected.'} Open the Whop tab to fix it.`]
+        : [];
+    // The company's Whop switch was turned off after this draft was made: it cannot be saved or launched on Whop.
+    const whopOff = form.adProvider === 'WHOP' && whopLoaded && !whopLoadFailed && !whopOn && isOwner ? ['Whop Ads is switched off for your company: switch this campaign back to Facebook, or ask your admin to turn Whop Ads on.'] : [];
+    return [...formIssues(form), ...brokenConnection, ...whopOff, ...offerIssues(offers), ...(rcHits.length ? [rcBlockedMessage(rcHits)] : [])];
+  }, [form, connections, offers, rcBlockedTerms, whopLoaded, whopLoadFailed, whopOn, isOwner]);
 
   async function uploadCreative(setKey: string, ad: AdForm, file: File) {
     setUploadingKey(ad.key);
@@ -567,7 +781,8 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
     setBannerError(null);
     setSuccess(null);
     try {
-      const acctTz = accounts.find((a) => a.id === form.adAccountId)?.timezone ?? '';
+      // Facebook schedules in the ad account's time zone; Whop has no such setting, so the browser's own zone applies.
+      const acctTz = form.adProvider === 'WHOP' ? '' : accounts.find((a) => a.id === form.adAccountId)?.timezone ?? '';
       const draft = toDraft(form, acctTz);
       const saved = savedId ? await campaignsApi.update(savedId, draft) : await campaignsApi.create(draft);
       if (!savedId) {
@@ -675,10 +890,20 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
           {success}
         </Banner>
       )}
+      {whopLoadFailed && form.adProvider === 'WHOP' && !readOnly && (
+        <Banner tone="error" role="alert">
+          Could not load your Whop businesses, so the business and page lists are empty. Reload the page to try again.
+        </Banner>
+      )}
+      {switchMessage && !readOnly && (
+        <Banner tone="info" role="status" onDismiss={() => setSwitchMessage(null)}>
+          {switchMessage}
+        </Banner>
+      )}
 
       <Card className={styles.card}>
         {readOnly ? (
-          <ReviewStep form={form} accounts={accounts} pages={pages} offers={offers} issues={[]} campaign={campaign} />
+          <ReviewStep form={form} accounts={accounts} pages={pages} connections={connections} whopOn={whopOn} offers={offers} issues={[]} campaign={campaign} />
         ) : assetsLoading ? (
           <div className={styles.center}>
             <Spinner />
@@ -688,6 +913,11 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
             form={form}
             patch={patch}
             onObjectiveChange={changeObjective}
+            onProviderChange={changeProvider}
+            whopOn={whopOn}
+            whopLoadFailed={whopLoadFailed}
+            isOwner={isOwner}
+            connections={connections}
             accounts={accounts}
             pages={pages}
             offers={offers}
@@ -698,9 +928,9 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
             rcBlockedTerms={rcBlockedTerms}
           />
         ) : step === 1 ? (
-          <AdSetsStep form={form} pixels={pixels} patchAdSet={patchAdSet} patchAd={patchAd} setForm={setForm} uploadingKey={uploadingKey} uploadCreative={uploadCreative} isCloaker={isCloaker} adAccountTz={accounts.find((a) => a.id === form.adAccountId)?.timezone ?? ''} />
+          <AdSetsStep form={form} pixels={pixels} patchAdSet={patchAdSet} patchAd={patchAd} setForm={setForm} uploadingKey={uploadingKey} uploadCreative={uploadCreative} isCloaker={isCloaker} adAccountTz={form.adProvider === 'WHOP' ? '' : accounts.find((a) => a.id === form.adAccountId)?.timezone ?? ''} />
         ) : (
-          <ReviewStep form={form} accounts={accounts} pages={pages} offers={offers} issues={[...serverIssues, ...issues]} campaign={campaign} />
+          <ReviewStep form={form} accounts={accounts} pages={pages} connections={connections} whopOn={whopOn} offers={offers} issues={[...serverIssues, ...issues]} campaign={campaign} />
         )}
       </Card>
 
@@ -737,9 +967,12 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
                   <Button variant="ghost" onClick={() => void onSaveDraft()} loading={saving}>
                     Save draft
                   </Button>
-                  <Button variant="ghost" onClick={() => void onTestLaunch()} loading={launching} disabled={issues.length > 0}>
-                    Test-launch (PAUSED)
-                  </Button>
+                  {/* Facebook only: Whop checks a campaign itself when its ads are created, and launches it from the campaign page. */}
+                  {form.adProvider === 'FACEBOOK' && (
+                    <Button variant="ghost" onClick={() => void onTestLaunch()} loading={launching} disabled={issues.length > 0}>
+                      Test-launch (PAUSED)
+                    </Button>
+                  )}
                 </div>
                 <Button onClick={() => void onSubmit()} loading={submitting} disabled={issues.length > 0}>
                   Submit for approval
@@ -875,6 +1108,11 @@ function OfferStep({
   form,
   patch,
   onObjectiveChange,
+  onProviderChange,
+  whopOn,
+  whopLoadFailed,
+  isOwner,
+  connections,
   accounts,
   pages,
   offers,
@@ -887,6 +1125,14 @@ function OfferStep({
   form: CampaignForm;
   patch: (p: Partial<CampaignForm>) => void;
   onObjectiveChange: (objective: CampaignForm['objective']) => void;
+  onProviderChange: (provider: AdProvider) => void;
+  /** Whop Ads is on for this buyer's company (D32). */
+  whopOn: boolean;
+  /** The Whop businesses could not be loaded: an empty list then means "unknown", never "none connected". */
+  whopLoadFailed: boolean;
+  /** The viewer is the campaign's own buyer (or it is new): only then do the viewer's company switch and business list apply to it. */
+  isOwner: boolean;
+  connections: WhopConnection[];
   accounts: FbAccount[];
   pages: FbPage[];
   offers: OfferDraft[];
@@ -930,13 +1176,31 @@ function OfferStep({
     setKeywordNote(dupes.length > 0 ? `Already added: ${dupes.join(', ')}.` : '');
   }
 
+  const whop = form.adProvider === 'WHOP';
+  const connection = connections.find((c) => c.id === form.whopConnectionId);
+  // Only a FACEBOOK page can host the ads: the server refuses an Instagram account as "not a Facebook page of that business".
+  const whopPages = (connection?.pages ?? []).filter((p) => p.platform === 'facebook');
   return (
     <div>
-      {accounts.length === 0 && (
+      {!whop && accounts.length === 0 && (
         <div className={styles.issues} role="status">
           <div className={styles.issuesTitle}>No Facebook ad accounts found</div>
           <div style={{ fontSize: '0.83rem' }}>
             <Link href="/dashboard/facebook">Connect Facebook</Link> first to pick an ad account, page, and pixel.
+          </div>
+        </div>
+      )}
+      {whop && !whopLoadFailed && !whopOn && isOwner && (
+        <div className={styles.issues} role="alert">
+          <div className={styles.issuesTitle}>Whop Ads is switched off for your company</div>
+          <div style={{ fontSize: '0.83rem' }}>This campaign is set to Whop, so it can&apos;t be saved or launched. Switch it back to Facebook, or ask your admin to turn Whop Ads on.</div>
+        </div>
+      )}
+      {whop && !whopLoadFailed && whopOn && connections.length === 0 && (
+        <div className={styles.issues} role="status">
+          <div className={styles.issuesTitle}>No Whop business connected</div>
+          <div style={{ fontSize: '0.83rem' }}>
+            <Link href="/dashboard/whop">Connect a Whop business</Link> first: you add its ID and an API key, and Whop runs the ads.
           </div>
         </div>
       )}
@@ -945,6 +1209,26 @@ function OfferStep({
           <label className={styles.label} htmlFor={fid('name')}>Campaign name<Req /></label>
           <input id={fid('name')} className={styles.input} value={form.name} onChange={(e) => patch({ name: e.target.value })} placeholder="e.g. Medicare Advantage — Q2" />
         </div>
+        {(whopOn || whop) && (
+          <div className={`${styles.field} ${styles.full}`}>
+            <span className={styles.label}>Ad network</span>
+            <div className={styles.toggle} role="group" aria-label="Ad network">
+              <button type="button" className={`${styles.toggleBtn} ${!whop ? styles.toggleOn : ''}`} aria-pressed={!whop} disabled={readOnly} onClick={() => onProviderChange('FACEBOOK')}>
+                {!whop && <span className={styles.toggleCheck} aria-hidden="true">✓ </span>}
+                Facebook
+              </button>
+              <button type="button" className={`${styles.toggleBtn} ${whop ? styles.toggleOn : ''}`} aria-pressed={whop} disabled={readOnly} onClick={() => onProviderChange('WHOP')}>
+                {whop && <span className={styles.toggleCheck} aria-hidden="true">✓ </span>}
+                Whop
+              </button>
+            </div>
+            <span className={styles.hint}>
+              {whop
+                ? 'Whop runs the Meta ads for you from its own ad account; you pay Whop. Switching network clears the account, page, pixel and schedule; anything Whop cannot run is kept and flagged so you can decide.'
+                : 'Your own Facebook ad account. Switching network clears the account, page, pixel and schedule.'}
+            </span>
+          </div>
+        )}
         <div className={styles.field}>
           <label className={styles.label} htmlFor={fid('objective')}>Objective</label>
           <select id={fid('objective')} className={styles.select} value={form.objective} onChange={(e) => onObjectiveChange(e.target.value as CampaignForm['objective'])}>
@@ -969,49 +1253,91 @@ function OfferStep({
           </div>
           <span className={styles.hint}>
             {form.budgetMode === 'CAMPAIGN'
-              ? 'CBO (Campaign Budget Optimization): one daily budget for the whole campaign — Facebook spreads it across ad sets automatically.'
+              ? `CBO (Campaign Budget Optimization): one daily budget for the whole campaign — ${whop ? 'Meta' : 'Facebook'} spreads it across ad sets automatically.`
               : 'ABO (Ad-set Budget Optimization): a separate daily budget you set for each ad set.'}
           </span>
         </div>
         {form.budgetMode === 'CAMPAIGN' && (
           <div className={styles.field}>
             <label className={styles.label} htmlFor={fid('cbo-budget')}>Campaign daily budget (USD)<Req /></label>
-            <input id={fid('cbo-budget')} className={styles.input} type="number" min="2" step="1" value={form.dailyBudget} onChange={(e) => patch({ dailyBudget: e.target.value })} aria-describedby={fid('cbo-budget-hint')} />
-            <span id={fid('cbo-budget-hint')} className={styles.hint}>$2.00 daily minimum (Facebook).</span>
+            <input id={fid('cbo-budget')} className={styles.input} type="number" min={whop ? '1' : '2'} step={whop ? '0.01' : '1'} value={form.dailyBudget} onChange={(e) => patch({ dailyBudget: e.target.value })} aria-describedby={fid('cbo-budget-hint')} />
+            <span id={fid('cbo-budget-hint')} className={styles.hint}>{budgetHint(form)}</span>
           </div>
         )}
         <div className={`${styles.field} ${styles.full}`}>
           <span className={styles.label}>Special ad categories</span>
           <ChipGroup
             ariaLabel="Special ad categories"
-            options={SPECIAL_AD_CATEGORIES.map((c) => ({ value: c, label: c.replace(/_/g, ' ').toLowerCase() }))}
+            options={SPECIAL_AD_CATEGORIES.filter((c) => !whop || WHOP_SPECIAL_CATEGORY[c] || form.specialAdCategories.includes(c)).map((c) => ({
+              value: c,
+              label: `${c.replace(/_/g, ' ').toLowerCase()}${whop && !WHOP_SPECIAL_CATEGORY[c] ? ' (not on Whop)' : ''}`,
+            }))}
             selected={form.specialAdCategories}
             onToggle={(v) => patch({ specialAdCategories: toggle(form.specialAdCategories, v) })}
             onClear={() => patch({ specialAdCategories: [] })}
             allLabel="None"
           />
-          <span className={styles.hint}>Required by Facebook for credit / employment / housing / social-issue offers.</span>
+          <span className={styles.hint}>Required by {whop ? 'Meta' : 'Facebook'} for credit / employment / housing / social-issue offers.</span>
+          {whop && form.specialAdCategories.some((c) => !WHOP_SPECIAL_CATEGORY[c]) && (
+            <span className={styles.hint} role="alert" style={{ color: 'var(--red-text)' }}>
+              Whop has no category for {form.specialAdCategories.filter((c) => !WHOP_SPECIAL_CATEGORY[c]).map((c) => `“${c.replace(/_/g, ' ').toLowerCase()}”`).join(', ')}. A campaign cannot go out without a category it needs: deselect it only if it does not apply, or switch this campaign back to Facebook.
+            </span>
+          )}
         </div>
-        <div className={styles.field} role="group" aria-label="Ad account">
-          <span className={styles.label}>Ad account<Req /></span>
-          <SearchSelect
-            value={form.adAccountId}
-            onChange={(v) => patch({ adAccountId: v, pageId: '' })}
-            placeholder="Search ad accounts…"
-            options={accounts.map((a) => ({ value: a.id, label: a.name, sublabel: `${a.fbAccountId} · ${a.currency}` }))}
-          />
-        </div>
-        <div className={styles.field} role="group" aria-label="Page">
-          <span className={styles.label}>Page<Req /></span>
-          <SearchSelect
-            value={form.pageId}
-            onChange={(v) => patch({ pageId: v })}
-            disabled={!form.adAccountId}
-            placeholder={form.adAccountId ? 'Search pages…' : 'Pick an ad account first'}
-            options={pages.map((p) => ({ value: p.id, label: p.name, sublabel: p.fbPageId }))}
-            emptyText="No Pages found for this profile. Make sure your Facebook profile/Business manages a Page, then click Re-sync on the Facebook tab."
-          />
-        </div>
+        {whop ? (
+          <>
+            <div className={styles.field} role="group" aria-label="Whop business">
+              <span className={styles.label}>Whop business<Req /></span>
+              <SearchSelect
+                value={form.whopConnectionId}
+                onChange={(v) => patch({ whopConnectionId: v, whopPageId: '' })}
+                disabled={readOnly}
+                placeholder="Search your Whop businesses…"
+                options={connections.map((c) => ({
+                  value: c.id,
+                  label: c.label ?? c.bizId,
+                  sublabel: `${c.bizId} · ${c.environment === 'SANDBOX' ? 'sandbox' : 'live'}${c.status === 'BROKEN' ? ' · needs attention' : ''}`,
+                }))}
+                emptyText="No Whop business is connected yet. Connect one on the Whop tab."
+              />
+            </div>
+            <div className={styles.field} role="group" aria-label="Facebook page">
+              <span className={styles.label}>Facebook page<Req /></span>
+              <SearchSelect
+                value={form.whopPageId}
+                onChange={(v) => patch({ whopPageId: v })}
+                disabled={readOnly || !form.whopConnectionId}
+                placeholder={form.whopConnectionId ? 'Search pages…' : 'Pick a Whop business first'}
+                options={whopPages.map((p) => ({ value: p.id, label: p.name ?? p.username ?? p.id, sublabel: p.error ? `${p.platform} · ${p.error}` : p.platform }))}
+                emptyText="This business has no Facebook page yet. Connect Meta or create a Whop-managed page on the Whop tab."
+              />
+              <span className={styles.hint}>The page your Whop ads run under.</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className={styles.field} role="group" aria-label="Ad account">
+              <span className={styles.label}>Ad account<Req /></span>
+              <SearchSelect
+                value={form.adAccountId}
+                onChange={(v) => patch({ adAccountId: v, pageId: '' })}
+                placeholder="Search ad accounts…"
+                options={accounts.map((a) => ({ value: a.id, label: a.name, sublabel: `${a.fbAccountId} · ${a.currency}` }))}
+              />
+            </div>
+            <div className={styles.field} role="group" aria-label="Page">
+              <span className={styles.label}>Page<Req /></span>
+              <SearchSelect
+                value={form.pageId}
+                onChange={(v) => patch({ pageId: v })}
+                disabled={!form.adAccountId}
+                placeholder={form.adAccountId ? 'Search pages…' : 'Pick an ad account first'}
+                options={pages.map((p) => ({ value: p.id, label: p.name, sublabel: p.fbPageId }))}
+                emptyText="No Pages found for this profile. Make sure your Facebook profile/Business manages a Page, then click Re-sync on the Facebook tab."
+              />
+            </div>
+          </>
+        )}
         <div className={`${styles.field} ${styles.full}`} role="group" aria-label="Destination websites">
           <span className={styles.label}>Destination website(s)<Req /></span>
           <span className={styles.hint}>Where the ads send traffic — the monetized article site(s). AFS revenue is attributed per site. Add one, or split traffic across several by weight.</span>
@@ -1196,12 +1522,16 @@ function AdSetsStep({
   adAccountTz: string;
 }) {
   const cbo = form.budgetMode === 'CAMPAIGN';
+  const whop = form.adProvider === 'WHOP';
   const hasAccount = Boolean(form.adAccountId);
-  const placementsByPlatform = useMemo(() => {
+  // Whop has no name for a few placements (e.g. Facebook video feeds, Messenger inbox): offer only what it can target, plus any the
+  // ad set already has selected (kept when the buyer switched network, marked, so they can be removed rather than silently lost).
+  const placementGroupsFor = (set: AdSetForm): Record<string, typeof PLACEMENT_OPTIONS[number][]> => {
     const groups: Record<string, typeof PLACEMENT_OPTIONS[number][]> = {};
-    for (const p of PLACEMENT_OPTIONS) (groups[p.platform] ??= []).push(p);
+    for (const p of PLACEMENT_OPTIONS) if (!whop || WHOP_PLACEMENT[p.key] || set.placements.includes(p.key)) (groups[p.platform] ??= []).push(p);
     return groups;
-  }, []);
+  };
+  const ctaOptions = useMemo(() => CTA_OPTIONS.filter((c) => !whop || WHOP_CTAS.includes(c.toLowerCase())), [whop]);
 
   // Collapse state for ad-set and ad cards (keyed by their stable `key`).
   // Default the 2nd+ ad set collapsed to reduce visual load on arrival.
@@ -1278,8 +1608,8 @@ function AdSetsStep({
             {!cbo && (
               <div className={styles.field}>
                 <label className={styles.label} htmlFor={`${set.key}-budget`}>Daily budget (USD)<Req /></label>
-                <input id={`${set.key}-budget`} className={styles.input} type="number" min="2" step="1" value={set.dailyBudget} onChange={(e) => patchAdSet(set.key, { dailyBudget: e.target.value })} aria-describedby={`${set.key}-budget-hint`} />
-                <span id={`${set.key}-budget-hint`} className={styles.hint}>$2.00 daily minimum (Facebook).</span>
+                <input id={`${set.key}-budget`} className={styles.input} type="number" min={whop ? '1' : '2'} step={whop ? '0.01' : '1'} value={set.dailyBudget} onChange={(e) => patchAdSet(set.key, { dailyBudget: e.target.value })} aria-describedby={`${set.key}-budget-hint`} />
+                <span id={`${set.key}-budget-hint`} className={styles.hint}>{budgetHint(form)}</span>
               </div>
             )}
           </div>
@@ -1352,7 +1682,7 @@ function AdSetsStep({
               </button>
             </div>
             {set.placementMode === 'manual' &&
-              Object.entries(placementsByPlatform).map(([platform, opts]) => (
+              Object.entries(placementGroupsFor(set)).map(([platform, opts]) => (
                 <div key={platform} style={{ marginTop: '0.7rem' }}>
                   <span className={styles.metaLabel}>{platform}</span>
                   <div className={styles.toggle} role="group" aria-label={`${platform} placements`} style={{ marginTop: '0.3rem' }}>
@@ -1362,12 +1692,18 @@ function AdSetsStep({
                         <button key={o.key} type="button" className={`${styles.toggleBtn} ${on ? styles.toggleOn : ''}`} aria-pressed={on} onClick={() => patchAdSet(set.key, { placements: toggle(set.placements, o.key) })}>
                           {on && <span className={styles.toggleCheck} aria-hidden="true">✓ </span>}
                           {o.label}
+                          {whop && !WHOP_PLACEMENT[o.key] ? ' (not on Whop)' : ''}
                         </button>
                       );
                     })}
                   </div>
                 </div>
               ))}
+            {whop && set.placementMode === 'manual' && set.placements.some((k) => !WHOP_PLACEMENT[k]) && (
+              <span className={styles.hint} role="alert" style={{ color: 'var(--red-text)', display: 'block', marginTop: '0.5rem' }}>
+                Whop cannot target the placements marked “not on Whop”. Deselect them, or switch this campaign back to Facebook.
+              </span>
+            )}
           </div>
 
           {/* Conversion tracking */}
@@ -1382,29 +1718,41 @@ function AdSetsStep({
                   Conversions
                 </div>
                 <span className={styles.hint}>
-                  Conversion location: Website. Optimized for the monetized ad click (Facebook “Search” event) — a pixel is required.
+                  {whop
+                    ? 'Conversion location: Website. Optimized for the monetized ad click (Whop “Submit application” event).'
+                    : 'Conversion location: Website. Optimized for the monetized ad click (Facebook “Search” event) — a pixel is required.'}
                 </span>
               </div>
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor={`${set.key}-pixel`}>
-                  Pixel
-                  <Req />
-                </label>
-                <select id={`${set.key}-pixel`} className={styles.select} value={set.pixelId ?? ''} onChange={(e) => patchAdSet(set.key, { pixelId: e.target.value || undefined })} disabled={!hasAccount}>
-                  <option value="">{hasAccount ? 'Select a pixel…' : 'Pick an ad account first'}</option>
-                  {pixels.map((px) => (
-                    <option key={px.id} value={px.id}>
-                      {px.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {!whop && (
+                <div className={styles.field}>
+                  <label className={styles.label} htmlFor={`${set.key}-pixel`}>
+                    Pixel
+                    <Req />
+                  </label>
+                  <select id={`${set.key}-pixel`} className={styles.select} value={set.pixelId ?? ''} onChange={(e) => patchAdSet(set.key, { pixelId: e.target.value || undefined })} disabled={!hasAccount}>
+                    <option value="">{hasAccount ? 'Select a pixel…' : 'Pick an ad account first'}</option>
+                    {pixels.map((px) => (
+                      <option key={px.id} value={px.id}>
+                        {px.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
-            <p className={styles.hint}>
-              The conversion funnel fires automatically: <strong>ViewContent</strong> (article view) →{' '}
-              <strong>AddToCart</strong> (search results) → <strong>Search</strong> (monetized ad click). Facebook optimizes
-              delivery toward the deepest one — the ad click.
-            </p>
+            {whop ? (
+              <p className={styles.hint}>
+                There is no pixel to pick: Whop owns it, and our funnel reports each step to Whop for you — <strong>View content</strong> (article
+                view) → <strong>Add to cart</strong> (search results) → <strong>Submit application</strong> (monetized ad click). Whop optimizes delivery
+                toward the deepest one — the ad click.
+              </p>
+            ) : (
+              <p className={styles.hint}>
+                The conversion funnel fires automatically: <strong>ViewContent</strong> (article view) →{' '}
+                <strong>AddToCart</strong> (search results) → <strong>Search</strong> (monetized ad click). Facebook optimizes
+                delivery toward the deepest one — the ad click.
+              </p>
+            )}
           </div>
 
           {/* Optimization & schedule */}
@@ -1417,33 +1765,43 @@ function AdSetsStep({
                 <label className={styles.label} htmlFor={`${set.key}-bid`}>Bid strategy</label>
                 <select id={`${set.key}-bid`} className={styles.select} value={set.bidStrategy} onChange={(e) => patchAdSet(set.key, { bidStrategy: e.target.value as BidStrategy | '' })}>
                   <option value="">Highest volume (default)</option>
-                  {BID_STRATEGIES.map((b) => (
+                  {BID_STRATEGIES.filter((b) => !whop || b !== 'LOWEST_COST_WITH_MIN_ROAS' || set.bidStrategy === b).map((b) => (
                     <option key={b} value={b}>
                       {b.replace(/_/g, ' ').toLowerCase()}
+                      {whop && b === 'LOWEST_COST_WITH_MIN_ROAS' ? ' (not on Whop)' : ''}
                     </option>
                   ))}
                 </select>
+                {whop && set.bidStrategy === 'LOWEST_COST_WITH_MIN_ROAS' && (
+                  <span className={styles.hint} role="alert" style={{ color: 'var(--red-text)' }}>
+                    Whop has no ROAS-goal bid strategy. Pick another, or switch this campaign back to Facebook.
+                  </span>
+                )}
               </div>
               <div className={styles.field}>
                 <label className={styles.label} htmlFor={`${set.key}-costcap`}>Cost cap (USD, optional)</label>
                 <input id={`${set.key}-costcap`} className={styles.input} type="number" min="0" step="0.01" value={set.costCap} onChange={(e) => patchAdSet(set.key, { costCap: e.target.value })} />
               </div>
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor={`${set.key}-roas`}>Min. return target (optional)</label>
-                <input id={`${set.key}-roas`} className={styles.input} type="number" min="0" step="0.1" value={set.roasFactor} onChange={(e) => patchAdSet(set.key, { roasFactor: e.target.value })} aria-describedby={`${set.key}-roas-hint`} />
-                <span id={`${set.key}-roas-hint`} className={styles.hint}>Facebook value-bid target, as a multiple of spend (e.g. 2 = aim for $2 back per $1). A bidding goal — not the ROI metric.</span>
-              </div>
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor={`${set.key}-attr`}>Attribution window</label>
-                <select id={`${set.key}-attr`} className={styles.select} value={set.attributionWindow} onChange={(e) => patchAdSet(set.key, { attributionWindow: e.target.value as AttributionWindow | '' })}>
-                  <option value="">Default</option>
-                  {ATTRIBUTION_WINDOWS.map((w) => (
-                    <option key={w} value={w}>
-                      {w.replace(/_/g, ' ')}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {!whop && (
+                <>
+                  <div className={styles.field}>
+                    <label className={styles.label} htmlFor={`${set.key}-roas`}>Min. return target (optional)</label>
+                    <input id={`${set.key}-roas`} className={styles.input} type="number" min="0" step="0.1" value={set.roasFactor} onChange={(e) => patchAdSet(set.key, { roasFactor: e.target.value })} aria-describedby={`${set.key}-roas-hint`} />
+                    <span id={`${set.key}-roas-hint`} className={styles.hint}>Facebook value-bid target, as a multiple of spend (e.g. 2 = aim for $2 back per $1). A bidding goal — not the ROI metric.</span>
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.label} htmlFor={`${set.key}-attr`}>Attribution window</label>
+                    <select id={`${set.key}-attr`} className={styles.select} value={set.attributionWindow} onChange={(e) => patchAdSet(set.key, { attributionWindow: e.target.value as AttributionWindow | '' })}>
+                      <option value="">Default</option>
+                      {ATTRIBUTION_WINDOWS.map((w) => (
+                        <option key={w} value={w}>
+                          {w.replace(/_/g, ' ')}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
               <div className={styles.field}>
                 <label className={styles.label}>Start (optional)</label>
                 <DateTimePicker
@@ -1502,7 +1860,7 @@ function AdSetsStep({
                 {adOpen && (
                 <div id={adPanelId} className={styles.grid}>
                   <div className={styles.field}>
-                    <label className={styles.label} htmlFor={`${ad.key}-name`}>Ad name</label>
+                    <label className={styles.label} htmlFor={`${ad.key}-name`}>Ad name<Req /></label>
                     <input id={`${ad.key}-name`} className={styles.input} value={ad.name} onChange={(e) => patchAd(set.key, ad.key, { name: e.target.value })} />
                   </div>
                   <div className={styles.field}>
@@ -1516,14 +1874,14 @@ function AdSetsStep({
                   <div className={styles.field}>
                     <label className={styles.label} htmlFor={`${ad.key}-cta`}>Call to action</label>
                     <select id={`${ad.key}-cta`} className={styles.select} value={ad.cta} onChange={(e) => patchAd(set.key, ad.key, { cta: e.target.value as CtaOption })}>
-                      {CTA_OPTIONS.map((c) => (
+                      {ctaOptions.map((c) => (
                         <option key={c} value={c}>
                           {c.replace(/_/g, ' ')}
                         </option>
                       ))}
                     </select>
                   </div>
-                  {!isCloaker && (
+                  {!isCloaker && !whop && (
                     <div className={styles.field}>
                       <label className={styles.label} htmlFor={`${ad.key}-displaylink`}>Display link</label>
                       <input
@@ -1580,28 +1938,54 @@ function AdSetsStep({
   );
 }
 
-function ReviewStep({ form, accounts, pages, offers, issues, campaign }: { form: CampaignForm; accounts: FbAccount[]; pages: FbPage[]; offers: OfferDraft[]; issues: string[]; campaign?: Campaign }) {
+function ReviewStep({ form, accounts, pages, connections, whopOn, offers, issues, campaign }: { form: CampaignForm; accounts: FbAccount[]; pages: FbPage[]; connections: WhopConnection[]; whopOn: boolean; offers: OfferDraft[]; issues: string[]; campaign?: Campaign }) {
+  const whop = form.adProvider === 'WHOP';
   // For a saved campaign, prefer the server-resolved labels (`campaign.adAccount` / `.page`) —
   // an admin reviewing another user's campaign won't have that user's FB assets in their own
   // `accounts` / `pages` lists, so the local lookup returns undefined and the row renders "—"
   // with a spurious "not selected" warning. The server sends the resolved name for both roles.
-  const accountName = campaign?.adAccount?.name ?? accounts.find((a) => a.id === form.adAccountId)?.name;
-  const pageName = campaign?.page?.name ?? pages.find((p) => p.id === form.pageId)?.name;
-  const accountSelected = Boolean(form.adAccountId) && (Boolean(campaign?.adAccount) || accounts.some((a) => a.id === form.adAccountId));
-  const pageSelected = Boolean(form.pageId) && (Boolean(campaign?.page) || pages.some((p) => p.id === form.pageId));
+  // The saved labels describe the SAVED choice only: after the buyer picks another account or page (or switches network and back),
+  // the live lists name what is selected now, never the old one.
+  const savedAccount = campaign && (campaign.adAccountId ?? '') === form.adAccountId ? campaign.adAccount : null;
+  const savedFbPage = campaign && (campaign.pageId ?? '') === form.pageId ? campaign.page : null;
+  const accountName = savedAccount?.name ?? accounts.find((a) => a.id === form.adAccountId)?.name;
+  const pageName = savedFbPage?.name ?? pages.find((p) => p.id === form.pageId)?.name;
+  const accountSelected = Boolean(form.adAccountId) && (Boolean(savedAccount) || accounts.some((a) => a.id === form.adAccountId));
+  const pageSelected = Boolean(form.pageId) && (Boolean(savedFbPage) || pages.some((p) => p.id === form.pageId));
   const totalAds = form.adSets.reduce((n, s) => n + s.ads.length, 0);
   const budget = form.budgetMode === 'CAMPAIGN' ? centsOrUndef(form.dailyBudget) ?? 0 : form.adSets.reduce((n, s) => n + (centsOrUndef(s.dailyBudget) ?? 0), 0);
 
-  // Pre-launch readiness — the things Facebook checks at launch, surfaced up front.
-  const checks: { label: string; ok: boolean }[] = [
-    { label: `Daily budget ≥ $2.00 (have ${MONEY(budget)})`, ok: budget >= 200 },
-    { label: 'Facebook ad account selected', ok: accountSelected },
-    { label: 'Facebook page selected', ok: pageSelected },
-    { label: 'At least one destination website', ok: offers.some((o) => o.kind === 'PAID' && o.domainId) },
-    { label: `Performance goals valid for the ${form.objective.replace('OUTCOME_', '').toLowerCase()} objective`, ok: form.adSets.every((s) => isValidPerformanceGoal(form.objective, s.optimizationGoal)) },
-    { label: 'Pixel assigned where the goal needs conversions', ok: form.adSets.every((s) => !goalRequiresPixel(s.optimizationGoal) || Boolean(s.pixelId)) },
-    { label: 'Every ad has a creative', ok: form.adSets.every((s) => s.ads.length > 0 && s.ads.every((a) => Boolean(a.uploadId))) },
-  ];
+  // Whop (D32): the business and page are the connected business's, labelled server-side so a reviewer sees them too. The saved
+  // labels describe the SAVED choice only: once the buyer picks another business or page, the live lists name it instead.
+  const connection = connections.find((c) => c.id === form.whopConnectionId);
+  const savedBusiness = campaign && campaign.whopConnectionId === form.whopConnectionId ? campaign.whopBusiness : null;
+  const savedPage = campaign && campaign.whopPageId === form.whopPageId ? campaign.whopPage : null;
+  const businessName = connection?.label ?? connection?.bizId ?? savedBusiness?.label ?? savedBusiness?.bizId;
+  const whopPageName = connection?.pages.find((p) => p.id === form.whopPageId)?.name ?? savedPage?.name ?? savedPage?.whopId;
+  const businessSelected = Boolean(form.whopConnectionId) && (Boolean(savedBusiness) || Boolean(connection));
+  const whopPageSelected = Boolean(form.whopPageId);
+
+  // Pre-launch readiness — the things the ad network checks at launch, surfaced up front.
+  const checks: { label: string; ok: boolean }[] = whop
+    ? [
+        { label: `Daily budget set (have ${MONEY(budget)})`, ok: budget >= minBudgetCents(form) },
+        { label: 'Whop business selected', ok: businessSelected },
+        // Only when the business is one the viewer can see (an admin reviewing a buyer's campaign cannot, and is told nothing wrong).
+        ...(connection ? [{ label: 'Whop connection working', ok: connection.status !== 'BROKEN' }] : []),
+        { label: 'Facebook page selected', ok: whopPageSelected },
+        { label: 'At least one destination website', ok: offers.some((o) => o.kind === 'PAID' && o.domainId) },
+        { label: 'Whop can run it as built (objective, categories, placements, bids, countries)', ok: whopProblems(form).length === 0 },
+        { label: 'Every ad has a creative, a headline and primary text', ok: form.adSets.every((s) => s.ads.length > 0 && s.ads.every((a) => Boolean(a.uploadId) && a.headline.trim() !== '' && a.primaryText.trim() !== '')) },
+      ]
+    : [
+        { label: `Daily budget ≥ $2.00 (have ${MONEY(budget)})`, ok: budget >= 200 },
+        { label: 'Facebook ad account selected', ok: accountSelected },
+        { label: 'Facebook page selected', ok: pageSelected },
+        { label: 'At least one destination website', ok: offers.some((o) => o.kind === 'PAID' && o.domainId) },
+        { label: `Performance goals valid for the ${form.objective.replace('OUTCOME_', '').toLowerCase()} objective`, ok: form.adSets.every((s) => isValidPerformanceGoal(form.objective, s.optimizationGoal)) },
+        { label: 'Pixel assigned where the goal needs conversions', ok: form.adSets.every((s) => !goalRequiresPixel(s.optimizationGoal) || Boolean(s.pixelId)) },
+        { label: 'Every ad has a creative', ok: form.adSets.every((s) => s.ads.length > 0 && s.ads.every((a) => Boolean(a.uploadId))) },
+      ];
 
   return (
     <div>
@@ -1634,13 +2018,19 @@ function ReviewStep({ form, accounts, pages, offers, issues, campaign }: { form:
           <span className={styles.summaryKey}>Campaign</span>
           <span className={styles.summaryVal}>{form.name || '—'}</span>
         </div>
+        {(whopOn || whop) && (
+          <div className={styles.summaryRow}>
+            <span className={styles.summaryKey}>Ad network</span>
+            <span className={styles.summaryVal}>{whop ? 'Whop' : 'Facebook'}</span>
+          </div>
+        )}
         <div className={styles.summaryRow}>
           <span className={styles.summaryKey}>Objective · budget</span>
           <span className={styles.summaryVal}>
             {form.objective.replace('OUTCOME_', '')} · {form.budgetMode === 'CAMPAIGN' ? 'CBO' : 'ABO'}
             <InfoTip>
               {form.budgetMode === 'CAMPAIGN'
-                ? 'CBO — one daily budget for the whole campaign; Facebook splits it across ad sets.'
+                ? `CBO — one daily budget for the whole campaign; ${whop ? 'Meta' : 'Facebook'} splits it across ad sets.`
                 : 'ABO — a separate daily budget for each ad set.'}
             </InfoTip>
           </span>
@@ -1652,9 +2042,9 @@ function ReviewStep({ form, accounts, pages, offers, issues, campaign }: { form:
           </div>
         )}
         <div className={styles.summaryRow}>
-          <span className={styles.summaryKey}>Ad account / Page</span>
+          <span className={styles.summaryKey}>{whop ? 'Whop business / Page' : 'Ad account / Page'}</span>
           <span className={styles.summaryVal}>
-            {accountName ?? '—'} · {pageName ?? '—'}
+            {whop ? `${businessName ?? '—'} · ${whopPageName ?? '—'}` : `${accountName ?? '—'} · ${pageName ?? '—'}`}
           </span>
         </div>
         <div className={styles.summaryRow}>

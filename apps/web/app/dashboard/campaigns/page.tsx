@@ -244,6 +244,7 @@ export default function CampaignsPage() {
                 <div className={styles.name}>
                   <span className={styles.nameMain}>{c.name}</span>
                   <span className={styles.nameSub}>
+                    {c.adProvider === 'WHOP' ? 'Whop · ' : ''}
                     {c.adSets.length} ad set{c.adSets.length === 1 ? '' : 's'} · {countAds(c)} ad
                     {countAds(c) === 1 ? '' : 's'}
                   </span>

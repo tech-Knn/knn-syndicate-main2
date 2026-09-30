@@ -80,6 +80,16 @@ export async function whopStatus(auth: AuthContext): Promise<WhopStatus> {
   return { enabled: Boolean(org?.whopEnabled), allowSandbox: env.WHOP_ALLOW_SANDBOX };
 }
 
+/**
+ * Is Whop Ads on for a company: the global flag AND its switch. For flows with no signed-in user (the internal
+ * launch runs as the buyer but the worker's status sync does not), where `whopStatus(auth)` cannot be used.
+ */
+export async function whopEnabledForOrg(orgId: string): Promise<boolean> {
+  if (!env.WHOP_ADS_ENABLED) return false;
+  const org = await withSystem((tx) => tx.organization.findUnique({ where: { id: orgId }, select: { whopEnabled: true } }));
+  return Boolean(org?.whopEnabled);
+}
+
 /** 404 (not 403) when off, so the feature is invisible rather than merely forbidden. */
 async function assertEnabled(auth: AuthContext): Promise<WhopStatus> {
   const status = await whopStatus(auth);
@@ -171,8 +181,19 @@ async function withWhop<T>(auth: AuthContext, conn: ConnectionRow, fn: (client: 
   }
 }
 
-async function markBroken(conn: { id: string; orgId: string; userId: string; bizId: string; label: string | null }, reason: string): Promise<void> {
-  await withSystem((tx) => tx.whopConnection.update({ where: { id: conn.id }, data: { status: WhopConnectionStatus.BROKEN, lastError: reason } }));
+/**
+ * Flip a connection to BROKEN and tell its owner, ONCE. Conditional on the connection still being ACTIVE and (when the caller
+ * knows it) on the key that just failed: a buyer who reconnected meanwhile has a new key, and an old key's late 401 must not
+ * break the connection they just fixed; two jobs failing at once must not notify twice.
+ */
+async function markBroken(conn: { id: string; orgId: string; userId: string; bizId: string; label: string | null; apiKeyEnc?: string }, reason: string): Promise<void> {
+  const res = await withSystem((tx) =>
+    tx.whopConnection.updateMany({
+      where: { id: conn.id, status: WhopConnectionStatus.ACTIVE, ...(conn.apiKeyEnc ? { apiKeyEnc: conn.apiKeyEnc } : {}) },
+      data: { status: WhopConnectionStatus.BROKEN, lastError: reason },
+    }),
+  );
+  if (res.count === 0) return;
   await notify({
     orgId: conn.orgId,
     userId: conn.userId,
@@ -282,10 +303,22 @@ export async function recheck(auth: AuthContext, id: string): Promise<WhopConnec
   return toView(await loadConnection(auth, id));
 }
 
-/** Disconnect: deletes the stored key and its pages. Campaigns already on Whop keep running there. */
+/**
+ * Disconnect: deletes the stored key and its pages. Refused while campaigns are LIVE on the business: once the key is
+ * gone they keep spending at Whop with no way to pause them from here (pause, budgets and the status sync all need it).
+ * Paused or finished campaigns do not block it: they cost nothing, and reconnecting the same business picks them up again.
+ */
 export async function disconnect(auth: AuthContext, id: string): Promise<void> {
   await assertEnabled(auth);
   const conn = await loadConnection(auth, id);
+  const live = await withSystem((tx) =>
+    tx.campaign.count({
+      where: { adProvider: 'WHOP', status: { in: ['ACTIVE', 'LAUNCHING'] }, OR: [{ whopConnectionId: id }, { whopBizId: conn.bizId, buyerId: conn.userId }] },
+    }),
+  );
+  if (live > 0) {
+    throw new AppError(409, `${live} campaign${live === 1 ? ' is' : 's are'} live on this business. Pause ${live === 1 ? 'it' : 'them'} first: without the key they would keep spending on Whop and could not be paused from here.`);
+  }
   await runScoped(auth, async (tx) => {
     await tx.whopConnection.delete({ where: { id } });
     await writeAudit(tx, { orgId: conn.orgId, actorId: auth.userId, action: 'whop.disconnected', entityType: 'whop_connection', entityId: id, details: { bizId: conn.bizId, environment: conn.environment } });
@@ -356,3 +389,6 @@ export async function checkPixel(auth: AuthContext, id: string, url?: string): P
     url: res.url ?? null,
   };
 }
+
+// Shared with the campaign launch and controls (apps/api/src/modules/campaigns/whop-*.ts).
+export { clientFor as whopClientFor, markBroken as markWhopConnectionBroken };

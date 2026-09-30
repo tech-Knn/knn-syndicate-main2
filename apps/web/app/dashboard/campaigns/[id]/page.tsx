@@ -1,12 +1,23 @@
 'use client';
 
 import { use, useCallback, useEffect, useState } from 'react';
+import { whopEffectiveStatus } from '@knn/shared';
 import { CampaignWizard } from '@/components/campaign-wizard';
+import { FbStatusBadge } from '@/components/fb-status-badge';
 import { ApiError, campaigns } from '@/lib/api';
 import { Banner, Button, Card, Spinner, useConfirm, useToast } from '@/components/ui';
 import { type Campaign, type CampaignAdSet } from '@/lib/types';
 import { GoogleSignalsEditor } from './google-signals-editor';
 import { OffersEditor } from './offers-editor';
+
+/** The ad network a campaign runs on, in words (D32). Every live control says it instead of assuming Facebook. */
+const networkName = (c: Pick<Campaign, 'adProvider'>): string => (c.adProvider === 'WHOP' ? 'Whop' : 'Facebook');
+/**
+ * The smallest daily budget the UI lets a buyer type, in cents. Facebook's floor is $2.00; Whop states its own and
+ * refuses anything below it in words, so for Whop only a non-budget (under one cent) is stopped here.
+ */
+const minBudgetCents = (c: Pick<Campaign, 'adProvider'>): number => (c.adProvider === 'WHOP' ? 1 : 200);
+const minBudgetMessage = (c: Pick<Campaign, 'adProvider'>): string => (c.adProvider === 'WHOP' ? 'Enter a daily budget of at least $0.01.' : 'Minimum daily budget is $2.00 (Facebook minimum).');
 
 /** The campaign's effective daily budget (cents) + whether it's live-editable here. CBO → the
  *  campaign budget; single-ad-set ABO → that ad set's budget; multi-ad-set ABO → edit per ad set. */
@@ -40,15 +51,15 @@ function LiveBudget({
 
   const commit = async (nextCents: number): Promise<void> => {
     const rounded = Math.round(nextCents);
-    if (!Number.isFinite(rounded) || rounded < 200) {
-      toast.error('Minimum daily budget is $2.00 (Facebook minimum).');
+    if (!Number.isFinite(rounded) || rounded < minBudgetCents(campaign)) {
+      toast.error(minBudgetMessage(campaign));
       return;
     }
     setBusy(true);
     try {
       const res = await campaigns.setBudget(campaign.id, rounded);
       onSaved({ cents: res.dailyBudgetCents });
-      toast.success(`Daily budget set to $${(res.dailyBudgetCents / 100).toFixed(2)} — live on Facebook.`);
+      toast.success(`Daily budget set to $${(res.dailyBudgetCents / 100).toFixed(2)} — live on ${networkName(campaign)}.`);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not update the budget.');
     } finally {
@@ -65,7 +76,7 @@ function LiveBudget({
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
           <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)' }}>DAILY BUDGET · PER AD SET</span>
           <span style={{ fontSize: '0.72rem', color: 'var(--muted-2)' }}>
-            Each ad set carries its own budget (ABO). Saving pushes to Facebook instantly — no channel release, no
+            Each ad set carries its own budget (ABO). Saving pushes to {networkName(campaign)} instantly — no channel release, no
             re-review.
           </span>
         </div>
@@ -74,6 +85,7 @@ function LiveBudget({
             <AdSetBudgetRow
               key={set.id}
               campaignId={campaign.id}
+              campaign={campaign}
               adSet={set}
               index={i}
               editable={rowsEditable}
@@ -103,19 +115,19 @@ function LiveBudget({
     );
   }
 
-  const bump = (factor: number): void => void commit(Math.max(200, (cents ?? 0) * factor));
+  const bump = (factor: number): void => void commit(Math.max(minBudgetCents(campaign), (cents ?? 0) * factor));
 
   return (
     <Card style={{ padding: '0.9rem 1.1rem', display: 'flex', alignItems: 'center', gap: '0.9rem', flexWrap: 'wrap' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
         <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)' }}>DAILY BUDGET</span>
-        <span style={{ fontSize: '0.72rem', color: 'var(--muted-2)' }}>Pushes to Facebook instantly — no channel release, no re-review.</span>
+        <span style={{ fontSize: '0.72rem', color: 'var(--muted-2)' }}>Pushes to {networkName(campaign)} instantly — no channel release, no re-review.</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
         <span style={{ color: 'var(--muted)' }}>$</span>
         <input
           type="number"
-          min={2}
+          min={campaign.adProvider === 'WHOP' ? 0.01 : 2}
           step="0.01"
           value={draft}
           disabled={!editable || busy}
@@ -138,15 +150,17 @@ function LiveBudget({
 }
 
 /** One ad set's live daily-budget editor (multi-ad-set ABO) — saves via the per-ad-set endpoint,
- *  which pushes to Facebook instantly without releasing the channel or re-queuing for approval. */
+ *  which pushes to the ad network instantly without releasing the channel or re-queuing for approval. */
 function AdSetBudgetRow({
   campaignId,
+  campaign,
   adSet,
   index,
   editable,
   onSaved,
 }: {
   campaignId: string;
+  campaign: Campaign;
   adSet: CampaignAdSet;
   index: number;
   editable: boolean;
@@ -164,16 +178,16 @@ function AdSetBudgetRow({
 
   const commit = async (nextCents: number): Promise<void> => {
     const rounded = Math.round(nextCents);
-    if (!Number.isFinite(rounded) || rounded < 200) {
-      toast.error('Minimum daily budget is $2.00 (Facebook minimum).');
+    if (!Number.isFinite(rounded) || rounded < minBudgetCents(campaign)) {
+      toast.error(minBudgetMessage(campaign));
       return;
     }
-    if (rounded === cents) return; // no-op — don't spend an FB write
+    if (rounded === cents) return; // no-op — don't spend a write at the ad network
     setBusy(true);
     try {
       const res = await campaigns.setAdSetBudget(campaignId, adSet.id, rounded);
       onSaved(res.dailyBudgetCents);
-      toast.success(`${label}: daily budget set to $${(res.dailyBudgetCents / 100).toFixed(2)} — live on Facebook.`);
+      toast.success(`${label}: daily budget set to $${(res.dailyBudgetCents / 100).toFixed(2)} — live on ${networkName(campaign)}.`);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not update the budget.');
     } finally {
@@ -181,7 +195,7 @@ function AdSetBudgetRow({
     }
   };
 
-  const bump = (factor: number): void => void commit(Math.max(200, (cents ?? 0) * factor));
+  const bump = (factor: number): void => void commit(Math.max(minBudgetCents(campaign), (cents ?? 0) * factor));
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -192,7 +206,7 @@ function AdSetBudgetRow({
         <span style={{ color: 'var(--muted)' }}>$</span>
         <input
           type="number"
-          min={2}
+          min={campaign.adProvider === 'WHOP' ? 0.01 : 2}
           step="0.01"
           value={draft}
           disabled={!editable || busy}
@@ -220,15 +234,58 @@ function AdSetBudgetRow({
   );
 }
 
-// Statuses where the campaign can be pushed live to Facebook (it has a channel). Manual
+/**
+ * What Whop reports about a Whop campaign (D32): its delivery state, and the issues on it, which is where Meta's ad
+ * review rejections arrive, in words. Also the reason a launch was stopped (payment method, page, pixel, ...), so a
+ * buyer whose auto-launch failed while they were away sees why without reading a log.
+ */
+function WhopStatus({ campaign }: { campaign: Campaign }) {
+  if (campaign.adProvider !== 'WHOP') return null;
+  const issues = campaign.whopIssues ?? [];
+  const launchError = issues.find((i) => i.id === 'knn-launch');
+  const reported = issues.filter((i) => i.id !== 'knn-launch');
+  const launched = campaign.status === 'ACTIVE' || campaign.status === 'PAUSED' || campaign.status === 'META_REJECTED';
+  const blocked = launchError && (campaign.status === 'PROCESSING' || campaign.status === 'BATCHED');
+  if (!blocked && !(launched && (campaign.whopDeliveryStatus || reported.length > 0))) return null;
+  return (
+    <>
+      {blocked && (
+        <Banner tone="warning" title="Whop did not launch this campaign">
+          {launchError.message.replace(/[.!?:]*\s*$/, '.')}
+          {/\blaunch again\b/i.test(launchError.message) ? '' : ' Fix that, then launch again.'} What Whop already holds is reused.
+        </Banner>
+      )}
+      {launched && (campaign.whopDeliveryStatus || reported.length > 0) && (
+        <Card style={{ padding: '0.9rem 1.1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)' }}>WHOP DELIVERY</span>
+            <FbStatusBadge status={whopEffectiveStatus(campaign.whopDeliveryStatus)} />
+            {campaign.whopDeliveryStatus && (
+              <span style={{ fontSize: '0.72rem', color: 'var(--muted-2)' }}>Whop says “{campaign.whopDeliveryStatus.replace(/_/g, ' ')}”. Refreshed every 30 minutes.</span>
+            )}
+          </div>
+          {reported.length > 0 && (
+            <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.85rem', color: 'var(--cream)' }}>
+              {reported.map((i) => (
+                <li key={i.id}>{i.message}</li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
+    </>
+  );
+}
+
+// Statuses where the campaign can be pushed live to its ad network (it has a channel). Manual
 // launch is available to the owning buyer + admins (the API owner-scopes it).
 const LAUNCHABLE = new Set(['PROCESSING', 'BATCHED']);
 // Pre-launch states that can be reopened to DRAFT to fix config (releases the channel).
-// Excludes LAUNCHING/ACTIVE/PAUSED (already on Facebook — pause first) and the review
+// Excludes LAUNCHING/ACTIVE/PAUSED (already at the ad network — pause first) and the review
 // states (DRAFT/PENDING/REJECTED already have their own withdraw/revise paths).
 const REOPENABLE = new Set(['PROCESSING', 'BATCHED', 'QUEUED_NO_CHANNEL']);
-// Live on Facebook → the owning buyer (or an admin) can pause/resume delivery. The API
-// owner-scopes it and flips the FB campaign status + ours (ACTIVE ↔ PAUSED).
+// Live at the ad network → the owning buyer (or an admin) can pause/resume delivery. The API
+// owner-scopes it and flips the network's campaign status + ours (ACTIVE ↔ PAUSED).
 const LIVE_TOGGLEABLE = new Set(['ACTIVE', 'PAUSED']);
 
 export default function EditCampaignPage({ params }: { params: Promise<{ id: string }> }) {
@@ -266,7 +323,14 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
     setNote(null);
     try {
       const res = await campaigns.launch(c.id);
-      setNote({ tone: 'success', text: res.fbCampaignId ? `Sent to Facebook — status: ${res.status}.` : `Launch queued — status: ${res.status}.` });
+      setNote({
+        tone: 'success',
+        text: res.fbCampaignId
+          ? `Sent to Facebook — status: ${res.status}.`
+          : res.whopCampaignId
+            ? `Sent to Whop — status: ${res.status}. Meta reviews new ads first, so delivery can take a while to start.`
+            : `Launch queued — status: ${res.status}.`,
+      });
       load();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Launch failed.');
@@ -278,7 +342,10 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
   const reopen = async (): Promise<void> => {
     const ok = await confirm({
       title: 'Reopen for editing?',
-      body: 'This returns the campaign to a draft and releases its assigned channel back to the pool. You can resubmit when you are done.',
+      body:
+        c.adProvider === 'WHOP' && c.whopCampaignId
+          ? 'This returns the campaign to a draft, releases its assigned channel back to the pool, and deletes the half-built campaign on Whop (nothing has spent). You can resubmit when you are done.'
+          : 'This returns the campaign to a draft and releases its assigned channel back to the pool. You can resubmit when you are done.',
       confirmLabel: 'Reopen',
     });
     if (!ok) return;
@@ -301,7 +368,7 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
     if (!active) {
       const ok = await confirm({
         title: 'Pause this campaign?',
-        body: 'Pausing stops live delivery on Facebook and halts ad spend. You can resume anytime.',
+        body: `Pausing stops live delivery on ${networkName(c)} and halts ad spend. You can resume anytime.`,
         confirmLabel: 'Pause campaign',
         tone: 'danger',
       });
@@ -312,7 +379,7 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
     try {
       const res = active ? await campaigns.resume(c.id) : await campaigns.pause(c.id);
       setCampaign({ ...c, status: res.status as Campaign['status'] });
-      setNote({ tone: 'success', text: active ? 'Campaign resumed — ads are live on Facebook again.' : 'Campaign paused — ad delivery (and spend) is stopped. Resume anytime.' });
+      setNote({ tone: 'success', text: active ? `Campaign resumed — ads are live on ${networkName(c)} again.` : 'Campaign paused — ad delivery (and spend) is stopped. Resume anytime.' });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not change campaign status.');
     } finally {
@@ -326,7 +393,7 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
         (c.status === 'ACTIVE' ? (
           <Banner
             tone="info"
-            title="Live on Facebook"
+            title={`Live on ${networkName(c)}`}
             action={
               <Button variant="danger" onClick={() => void toggleActive(false)} loading={toggling}>
                 {toggling ? 'Pausing…' : 'Pause campaign'}
@@ -345,7 +412,7 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
               </Button>
             }
           >
-            Ads are not delivering on Facebook. Resume to put them back live.
+            Ads are not delivering on {networkName(c)}. Resume to put them back live.
           </Banner>
         ))}
       {REOPENABLE.has(c.status) && (
@@ -367,7 +434,7 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
                   the API owner-scopes it. Approval stays admin-only; launch ≠ approval. */}
               {LAUNCHABLE.has(c.status) && (
                 <Button onClick={() => void launch()} loading={launching} disabled={reopening}>
-                  {launching ? 'Launching…' : 'Launch to Facebook'}
+                  {launching ? 'Launching…' : `Launch to ${networkName(c)}`}
                 </Button>
               )}
             </div>
@@ -375,7 +442,7 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
         >
           {c.status === 'QUEUED_NO_CHANNEL'
             ? 'No AdSense channel is free for this campaign yet. Reopen to edit it, or leave it queued.'
-            : 'A channel is assigned. Launching generates the article, wires the redirect, and creates the ads on Facebook. Need to fix something first? Reopen to edit.'}
+            : `A channel is assigned. Launching generates the article, wires the redirect, and creates the ads on ${networkName(c)}. Need to fix something first? Reopen to edit.`}
         </Banner>
       )}
       {note && (
@@ -383,6 +450,7 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
           {note.text}
         </Banner>
       )}
+      <WhopStatus campaign={c} />
       {LIVE_TOGGLEABLE.has(c.status) && (
         <LiveBudget
           campaign={c}

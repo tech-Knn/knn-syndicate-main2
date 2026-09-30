@@ -109,11 +109,12 @@ describe('runWhopHealthCheck', () => {
     expect(page.actions?.map((a) => a.kind)).toEqual(['refresh_page', 'connect_meta']);
   });
 
-  it('treats an unseen pixel as a launch blocker, not a draft blocker', async () => {
+  it('never treats an unseen pixel as a blocker: Whop checks the pixel per ad, when the ad is created', async () => {
     mock.addBusiness({ bizId: 'biz_AAAAAA', apiKey: 'k1', pixel: { installed: false, last_seen_days: null, last_fired_days: {}, firing_data_ok: true } });
     const h = await check('k1', 'biz_AAAAAA');
-    expect(item(h, 'pixel')).toMatchObject({ status: 'todo' });
-    expect(h.checklist).toMatchObject({ canDraft: true, canLaunch: false });
+    expect(item(h, 'pixel')).toMatchObject({ status: 'unknown', detail: expect.stringContaining('expected before your first launch') });
+    expect(item(h, 'pixel').actions).toBeUndefined(); // nothing for the buyer to do about it
+    expect(h.checklist).toMatchObject({ canDraft: true, canLaunch: true });
   });
 
   it('describes how recently the pixel fired', async () => {

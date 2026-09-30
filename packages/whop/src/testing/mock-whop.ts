@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { WhopAccountPreferences, WhopEventInput, WhopPaymentMethod, WhopPixelValidation, WhopSocialAccount } from '../api.js';
+import { type MockAdsState, MockAdsError, addAdStats, handleAdsRoute, newAdsState, settleCampaign } from './mock-ads.js';
 
 /**
  * An in-process stand-in for the slice of Whop's API we use. Tests and local browser checks talk to it
@@ -31,8 +32,16 @@ export interface MockBusiness {
   pixel: WhopPixelValidation;
   /** A scripted `validate_pixel` answer for one exact `url`, for tests that do not host a page. Otherwise the mock fetches the URL. */
   pixelByUrl?: Record<string, WhopPixelValidation>;
+  /**
+   * A scripted pixel-check answer for EVERY url (both `validate_pixel` and the check an ad creation runs), for tests
+   * whose destination URLs are not known in advance (a launch builds them from our own redirect ids). An exact
+   * `pixelByUrl` entry still wins; with neither, the mock fetches the URL.
+   */
+  pixelForAnyUrl?: WhopPixelValidation;
   /** Server events received, in arrival order (deduplicated by event_name + event_id like Whop). */
   events: MockEvent[];
+  /** Campaigns, ad groups, ads and files (see mock-ads.ts). */
+  ads: MockAdsState;
 }
 
 export interface MockEvent {
@@ -57,6 +66,19 @@ export interface MockWhop {
   failures: MockFailure[];
   /** What `POST /social_accounts/connect` returns as `authorize_url`. */
   authorizeUrl: string;
+  /** How many `GET /files/:id` a finished upload answers `processing` before `ready` (default 0). */
+  fileProcessingPolls: number;
+  /** Make the presigned storage PUT answer this status instead of accepting the bytes (403 = an expired link). */
+  uploadFailureStatus: number | null;
+  /**
+   * Faults of the nastiest kind: the mock PROCESSES the next matching ads request (the change is real) and then drops the
+   * connection without answering, so the caller cannot tell whether Whop acted. Each entry is used once, in order.
+   */
+  loseResponses: { method: string; path: string | RegExp; /** Runs right after the answer is dropped (a test scripts what goes wrong next). */ after?: () => void }[];
+  /** Move a launched campaign (and its groups and ads) to a delivery state, as Whop / Meta would later. */
+  settle(bizId: string, campaignId: string, state: { delivery_status: string; status?: string; issues?: { message: string; resource_type?: 'ad_campaign' | 'ad_group' | 'ad' }[] }): void;
+  /** Record what an ad delivered at an instant; Whop's bulk ad reads report it inside a stats window that contains it. */
+  setStats(bizId: string, adId: string, s: { at: string | Date; spend: number; clicks?: number; link_clicks?: number; impressions?: number; results?: number | null; result_event?: string | null; submitted_applications?: number; spend_currency?: string }): void;
   addBusiness(b: Partial<MockBusiness> & { bizId: string; apiKey: string }): MockBusiness;
   close(): Promise<void>;
 }
@@ -108,10 +130,13 @@ async function inspectPage(url: string): Promise<WhopPixelValidation> {
   }
 }
 
-async function readBody(req: IncomingMessage): Promise<unknown> {
+async function readRaw(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
-  const text = Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks);
+}
+function parseBody(raw: Buffer): unknown {
+  const text = raw.toString('utf8');
   if (!text) return undefined;
   try {
     return JSON.parse(text);
@@ -133,9 +158,29 @@ export async function startMockWhop(opts: { port?: number } = {}): Promise<MockW
       const all = url.searchParams.getAll(key);
       query[key] = all.length > 1 ? all : (all[0] ?? '');
     }
-    const body = await readBody(req);
+    const raw = await readRaw(req);
     const method = (req.method ?? 'GET').toUpperCase();
+    const isUpload = method === 'PUT' && path.startsWith('/_upload/');
+    const body = isUpload ? `<binary ${raw.byteLength} bytes>` : parseBody(raw);
     requests.push({ method, path, query, headers: req.headers, body });
+
+    // The presigned storage PUT carries NO Whop credentials: its authority is baked into the URL. Refusing an
+    // Authorization header here is what proves our client never sends the API key to storage.
+    if (isUpload) {
+      if (req.headers.authorization) return error(res, 400, 'bad_request', 'The upload must not carry an Authorization header.');
+      if (mock.uploadFailureStatus) {
+        res.writeHead(mock.uploadFailureStatus, { 'content-type': 'application/xml' });
+        return void res.end('<Error><Code>AccessDenied</Code></Error>');
+      }
+      const id = decodeURIComponent(path.slice('/_upload/'.length));
+      const file = [...businesses.values()].map((b) => b.ads.files.get(id)).find(Boolean);
+      if (!file) return error(res, 404, 'not_found', 'Unknown upload.');
+      file.received = new Uint8Array(raw);
+      file.upload_status = 'processing';
+      file.processingPolls = mock.fileProcessingPolls;
+      res.writeHead(200, { etag: `"mock-${id}"` });
+      return void res.end();
+    }
 
     const scripted = failures.shift();
     if (scripted) {
@@ -165,9 +210,9 @@ export async function startMockWhop(opts: { port?: number } = {}): Promise<MockW
       if (!need(['company:balance:read'])) return;
       return json(res, 200, { id: biz.bizId, title: biz.title, route: biz.title.toLowerCase().replace(/\W+/g, '-'), status: 'approved' });
     }
-    if (method === 'GET' && path === '/ad_campaigns') {
-      if (!need(['ad_campaign:basic:read']) || !sameAccount(accountParam)) return;
-      return json(res, 200, { data: [], page_info: { end_cursor: null, has_next_page: false, has_previous_page: false, start_cursor: null } });
+    if (method === 'GET' && (path === '/ad_campaigns' || path === '/ads')) {
+      // Listing is the ads module's job (see mock-ads.ts); here we only enforce the account match.
+      if (!sameAccount(accountParam)) return;
     }
     const prefs = /^\/accounts\/([^/]+)\/preferences$/.exec(path);
     if (method === 'GET' && prefs) {
@@ -206,7 +251,7 @@ export async function startMockWhop(opts: { port?: number } = {}): Promise<MockW
     if (method === 'POST' && path === '/events/validate_pixel') {
       if (!need(PIXEL_ANY) || !sameAccount(accountParam)) return;
       const url = (body as { url?: string } | undefined)?.url;
-      return json(res, 200, url ? (biz.pixelByUrl?.[url] ?? (await inspectPage(url))) : biz.pixel);
+      return json(res, 200, url ? (biz.pixelByUrl?.[url] ?? biz.pixelForAnyUrl ?? (await inspectPage(url))) : biz.pixel);
     }
     if (method === 'POST' && path === '/events') {
       if (!need(['event:create']) || !sameAccount(accountParam)) return;
@@ -231,6 +276,40 @@ export async function startMockWhop(opts: { port?: number } = {}): Promise<MockW
         page_info: { end_cursor: null, has_next_page: false, has_previous_page: false, start_cursor: null },
       });
     }
+    // Campaigns, ad groups, ads and files.
+    if (/^\/(ad_campaigns|ad_groups|ads|files)(\/|$)/.test(path)) {
+      const replayKey = method === 'POST' ? String(req.headers['idempotency-key'] ?? '') : '';
+      const replayId = replayKey ? `${biz.bizId}|${path}|${replayKey}` : '';
+      const seen = replayId ? biz.ads.replay.get(replayId) : undefined;
+      if (seen) return json(res, seen.status, seen.body);
+      try {
+        const reply = await handleAdsRoute({
+          method,
+          path,
+          query,
+          body: (body && typeof body === 'object' ? body : {}) as Record<string, unknown>,
+          headers: req.headers,
+          ads: biz.ads,
+          biz: { bizId: biz.bizId, payment: biz.payment, agreement: biz.agreement, pages: biz.pages },
+          baseUrl: mock.baseUrl,
+          inspect: async (url) => biz.pixelByUrl?.[url] ?? biz.pixelForAnyUrl ?? (await inspectPage(url)),
+          need,
+        });
+        if (!reply) return; // a permission refusal was already written
+        if (replayId) biz.ads.replay.set(replayId, reply);
+        const lose = mock.loseResponses[0];
+        if (lose && lose.method === method && (typeof lose.path === 'string' ? lose.path === path : lose.path.test(path))) {
+          mock.loseResponses.shift();
+          req.socket.destroy(); // acted on, never answered
+          lose.after?.();
+          return;
+        }
+        return json(res, reply.status, reply.body);
+      } catch (err) {
+        if (err instanceof MockAdsError) return error(res, err.status, err.type, err.message);
+        throw err;
+      }
+    }
     return error(res, 404, 'not_found', `No mock route for ${method} ${path}`);
   });
 
@@ -243,6 +322,19 @@ export async function startMockWhop(opts: { port?: number } = {}): Promise<MockW
     requests,
     failures,
     authorizeUrl: 'https://mock.whop.test/connect/meta',
+    fileProcessingPolls: 0,
+    uploadFailureStatus: null,
+    loseResponses: [],
+    settle(bizId, campaignId, state) {
+      const b = businesses.get(bizId);
+      if (!b) throw new Error(`mock: no business ${bizId}`);
+      settleCampaign(b.ads, campaignId, state);
+    },
+    setStats(bizId, adId, stats) {
+      const b = businesses.get(bizId);
+      if (!b) throw new Error(`mock: no business ${bizId}`);
+      addAdStats(b.ads, adId, stats);
+    },
     addBusiness(b) {
       const full: MockBusiness = {
         title: 'Mock Business',
@@ -253,6 +345,7 @@ export async function startMockWhop(opts: { port?: number } = {}): Promise<MockW
         pages: [{ id: 'sacc_MockPage1', platform: 'facebook', name: 'Mock Page', username: 'mockpage', external_id: '1001', url: 'https://facebook.com/mockpage', verified: true, error: null }],
         pixel: { installed: true, last_seen_days: 0, last_fired_days: {}, firing_data_ok: true },
         events: [],
+        ads: newAdsState(),
         ...b,
       };
       businesses.set(full.bizId, full);
