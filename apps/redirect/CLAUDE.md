@@ -22,6 +22,12 @@ through-synced from the origin (Postgres = source of truth) on launch/update. Ho
 
 ## Invariants
 
+- **`wrangler deploy` applies `wrangler.toml` over whatever was set in the Cloudflare dashboard.** Anything that exists
+  only in the dashboard is overwritten, so keep every setting the live Worker relies on in the file: `[vars]` (incl.
+  `CLOAK_VERIFY_MODE`; the live value must match the file before a deploy) and `[observability]` (Workers Logs: the
+  D33 go-live deploy switched them off until the block was added). Secrets are not touched by a deploy (set them with
+  `wrangler secret put`). Wrangler lists what differs and asks before it uploads: read that list, don't just say yes.
+  `wrangler deploy --dry-run` shows the variables that would be applied without uploading anything.
 - This service is publicly exposed on its OWN domain (`go.*`) for cloaking hygiene — keep the
   `articles.*` domain clean for AdSense. Don't couple it to the API.
 - **Cache aggressively**: `redirect:{redirect_id}` in Redis (5-min TTL), invalidated on ad
