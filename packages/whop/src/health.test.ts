@@ -86,7 +86,8 @@ describe('runWhopHealthCheck', () => {
     mock.addBusiness({ bizId: 'biz_AAAAAA', apiKey: 'k1', agreement: 'pending_signature', payment: null });
     const h = await check('k1', 'biz_AAAAAA');
     expect(item(h, 'agreement')).toMatchObject({ status: 'todo' });
-    expect(item(h, 'agreement').actions?.[0]).toMatchObject({ kind: 'open_whop', url: 'https://sandbox.whop.com/dashboard/biz_AAAAAA' });
+    // The signing page itself (the link Whop's own launch error gives), not the business's dashboard home.
+    expect(item(h, 'agreement').actions?.[0]).toMatchObject({ kind: 'open_whop', url: 'https://sandbox.whop.com/dashboard/biz_AAAAAA/ads/sign-agreement/' });
     expect(item(h, 'payment')).toMatchObject({ status: 'todo', detail: expect.stringContaining('Launching needs it') });
     expect(h.checklist).toMatchObject({ canDraft: true, canLaunch: false });
   });
