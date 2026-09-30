@@ -143,7 +143,7 @@ export async function runWhopHealthCheck(
     const status = prefs.value.ads_agreement?.status;
     items.push(
       status === 'pending_signature'
-        ? { key: 'agreement', label: 'Whop Ads agreement', status: 'todo', detail: 'The account owner must sign the Whop Ads agreement in Whop before any campaign can launch.', actions: [openWhop(`/dashboard/${bizId}`, 'Open Whop dashboard'), { kind: 'recheck', label: 'Check again' }] }
+        ? { key: 'agreement', label: 'Whop Ads agreement', status: 'todo', detail: 'The account owner must sign the Whop Ads agreement in Whop before any campaign can launch.', actions: [openWhop(`/dashboard/${bizId}/ads/sign-agreement/`, 'Sign the agreement in Whop'), { kind: 'recheck', label: 'Check again' }] }
         : { key: 'agreement', label: 'Whop Ads agreement', status: 'ok', detail: status === 'signed' ? 'Signed.' : 'No signature needed.' },
     );
 
