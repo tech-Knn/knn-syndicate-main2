@@ -58,8 +58,9 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
   the Whop twins of the Facebook reconcile and insights pull, run inside the same crons (`META_REJECTION_CHECK` and
   `ATTRIBUTION`: no new queue; each provider runs independently, so one's failure never stops the other).
   - **Sync:** one bulk `listCampaigns` per business, `listAds` only for the campaigns it listed (a batch Whop refuses is
-    re-read campaign by campaign; a campaign whose ads cannot be read is skipped, never decided on). Then: rejection →
-    `META_REJECTED` (pause at Whop best-effort, `stopRouting`, notify), pause / resume mirrored (if the edge resync fails the
+    re-read campaign by campaign; a campaign whose ads cannot be read is skipped, never decided on). Then: EVERY ad rejected (or Whop's
+    `all_ads_rejected`) → `META_REJECTED` (pause at Whop best-effort, `stopRouting`, notify); SOME ads rejected → the campaign keeps
+    running and the buyer is told once per ad (`campaign.ads_rejected`; unlike Facebook's D14), pause / resume mirrored (if the edge resync fails the
     status is given back and nothing is announced), deleted-in-Whop →
     `ARCHIVED` only on the **second consecutive** tick whose direct read says 404 (the first leaves `not_found` in
     `whop_delivery_status`; any real answer clears it), billing failure notified once per episode (`payment_failed` is stored

@@ -11,12 +11,24 @@ describe('whopSyncTarget', () => {
     expect(whopSyncTarget(c('active', 'scheduled'), [])).toBe('ACTIVE');
   });
 
-  it('treats Meta\'s rejection as a rejection however Whop words it, and it beats a pause', () => {
+  it('rejects the campaign when Meta rejected ALL its ads, however Whop words it, and that beats a pause', () => {
     expect(whopSyncTarget(c('active', 'all_ads_rejected'), [])).toBe('META_REJECTED');
-    expect(whopSyncTarget(c('active', 'in_appeal'), [])).toBe('META_REJECTED');
-    expect(whopSyncTarget(c('active', 'active'), [{ status: 'active', delivery_status: 'rejected' }])).toBe('META_REJECTED');
-    // One disapproved ad among healthy ones stops the campaign, exactly as a Facebook DISAPPROVED ad does.
-    expect(whopSyncTarget(c('paused', 'paused'), [{ status: 'active', delivery_status: 'active' }, { status: 'rejected', delivery_status: 'rejected' }])).toBe('META_REJECTED');
+    const rejected = { status: 'rejected', delivery_status: 'rejected' };
+    expect(whopSyncTarget(c('active', 'active'), [rejected])).toBe('META_REJECTED');
+    expect(whopSyncTarget(c('paused', 'paused'), [rejected, { status: 'active', delivery_status: 'in_appeal' }])).toBe('META_REJECTED');
+  });
+
+  it('does NOT reject a campaign for SOME rejected ads: the rest keep running', () => {
+    const ok = { status: 'active', delivery_status: 'active' };
+    const rejected = { status: 'rejected', delivery_status: 'rejected' };
+    expect(whopSyncTarget(c('active', 'active'), [ok, rejected])).toBe('ACTIVE');
+    // ads still in review count as not rejected; 2 of 12 rejected is the case that paused a live campaign
+    const inReview = { status: 'in_review', delivery_status: 'in_review' };
+    expect(whopSyncTarget(c('active', 'active'), [rejected, rejected, inReview, ok])).toBe('ACTIVE');
+    // a campaign paused in Whop with one rejected ad stays a paused campaign, not a rejected one
+    expect(whopSyncTarget(c('paused', 'paused'), [ok, rejected])).toBe('PAUSED');
+    // a campaign-level appeal with no ads to judge by is not acted on
+    expect(whopSyncTarget(c('active', 'in_appeal'), [])).toBe('ACTIVE');
   });
 
   it('leaves alone what it cannot be sure of: drafts and lifecycles we do not know', () => {
