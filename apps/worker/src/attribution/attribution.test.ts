@@ -371,6 +371,55 @@ describe('attribution — per-offer revenue across multiple AFS accounts (Phase 
   });
 });
 
+describe('attribution — a reused channel credits each day to that day\'s holder', () => {
+  it('writes per-offer rows only for days the offer\'s campaign held the channel, and heals rows written against the wrong one', async () => {
+    const D0 = '2026-05-17'; // nobody held the channel
+    const D1 = '2026-05-18'; // the earlier campaign
+    const D2 = '2026-05-19'; // the earlier campaign
+    const D3 = '2026-05-20'; // the current campaign
+    const ids = await withSystem(async (tx) => {
+      const chId = `ch-${suffix}-${chCounter++}`;
+      const channel = await tx.channel.create({ data: { channelId: chId, domainId: domAId, status: 'ASSIGNED' } });
+      const mk = async (name: string): Promise<{ campaignId: string; offerId: string }> => {
+        const c = await tx.campaign.create({ data: { orgId, buyerId, name: `${name} ${Math.random()}`, status: 'ACTIVE', keywords: [] } });
+        const o = await tx.offer.create({ data: { orgId, campaignId: c.id, domainId: domAId, weightPct: 100, kind: 'PAID', channelRef: channel.id } });
+        return { campaignId: c.id, offerId: o.id };
+      };
+      const a = await mk('earlier');
+      const b = await mk('current');
+      for (const d of [D1, D2]) await tx.channelAssignment.create({ data: { orgId, channelRef: channel.id, campaignId: a.campaignId, forDay: d } });
+      await tx.channelAssignment.create({ data: { orgId, channelRef: channel.id, campaignId: b.campaignId, forDay: D3 } });
+      // What an earlier version wrote: the CURRENT offer credited with a day it did not hold.
+      for (const d of [D1]) {
+        await tx.offerRevenueDaily.create({ data: { orgId, offerId: b.offerId, campaignId: b.campaignId, channelRef: channel.id, day: d, afsClicks: 5, revenueMinor: 900, revenueUsdMinor: 900, currency: 'USD', suppressed: false } });
+      }
+      return { chId, channelRef: channel.id, a, b };
+    });
+    const deps: AttributionDeps = {
+      fetchInsights: async (): Promise<FbAdInsightRow[]> => [],
+      fetchAdsense: async (): Promise<ChannelDayRevenue[]> =>
+        [D0, D1, D2, D3].map((day, i) => ({ channelId: ids.chId, day, revenueMinor: 100 * (i + 1), currency: 'USD', afsClicks: 10 })),
+      getRate: getUsdRate,
+    };
+    await runAttribution([D0, D1, D2, D3], deps);
+
+    const who = (campaignId: string): string => (campaignId === ids.a.campaignId ? 'earlier' : 'current');
+    const offerRows = await withSystem((tx) => tx.offerRevenueDaily.findMany({ where: { channelRef: ids.channelRef }, orderBy: { day: 'asc' } }));
+    // D0 (no holder) gets no row; D1/D2 are the earlier campaign's; D3 the current one's. The $9 row on D1 is gone.
+    expect(offerRows.map((r) => [who(r.campaignId), r.day, r.revenueUsdMinor])).toEqual([
+      ['earlier', D1, 200],
+      ['earlier', D2, 300],
+      ['current', D3, 400],
+    ]);
+    const campRows = await withSystem((tx) => tx.campaignRevenueDaily.findMany({ where: { channelRef: ids.channelRef }, orderBy: { day: 'asc' } }));
+    expect(campRows.map((r) => [who(r.campaignId), r.day, r.revenueUsdMinor])).toEqual([
+      ['earlier', D1, 200],
+      ['earlier', D2, 300],
+      ['current', D3, 400],
+    ]);
+  });
+});
+
 describe('recentDays', () => {
   it('returns the trailing window inclusive of the end day, in order', () => {
     expect(recentDays('2026-05-20', 3)).toEqual(['2026-05-18', '2026-05-19', '2026-05-20']);

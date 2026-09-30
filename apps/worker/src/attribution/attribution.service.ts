@@ -330,9 +330,23 @@ export async function pullAdsenseRevenue(
         const revenueUsdMinor = toUsdMinor(r.revenueMinor, rate);
         const suppressed = r.afsClicks < AFS_CLICK_SUPPRESSION_THRESHOLD;
 
-        // Per-offer: the offer that holds this channel (if any).
         const fill = { afsRequests: r.requests ?? 0, afsMatchedRequests: r.matchedRequests ?? 0, afsImpressions: r.impressions ?? 0 };
-        const offer = await tx.offer.findFirst({ where: { channelRef }, select: { id: true, orgId: true, campaignId: true } });
+
+        // WHO earned this day: the campaign holding the channel on `r.day` (the span, D7). A channel is reused by many
+        // campaigns over months and the re-pull window covers several days, so a day belongs to THAT day's holder, never
+        // to whichever offer holds the channel now (that once credited a new campaign with the channel's whole previous week).
+        const span = await tx.channelAssignment.findFirst({
+          where: { channelRef, forDay: r.day },
+          orderBy: { assignedAt: 'desc' },
+          select: { campaignId: true, orgId: true },
+        });
+
+        if (!span) continue; // nobody held the channel that day: no holder to credit
+        // Heal rows an earlier version wrote for this channel and day against a campaign that did not hold it.
+        await tx.offerRevenueDaily.deleteMany({ where: { channelRef, day: r.day, campaignId: { not: span.campaignId } } });
+
+        // Per-offer: that holder's offer on this channel (if any).
+        const offer = await tx.offer.findFirst({ where: { channelRef, campaignId: span.campaignId }, select: { id: true, orgId: true, campaignId: true } });
         if (offer) {
           await tx.offerRevenueDaily.upsert({
             where: { offerId_day: { offerId: offer.id, day: r.day } },
@@ -342,13 +356,7 @@ export async function pullAdsenseRevenue(
           offerRows += 1;
         }
 
-        // Campaign rollup: the campaign holding this channel on day `r.day` (the span, D7).
-        const span = await tx.channelAssignment.findFirst({
-          where: { channelRef, forDay: r.day },
-          orderBy: { assignedAt: 'desc' },
-          select: { campaignId: true, orgId: true },
-        });
-        if (!span) continue;
+        // Campaign rollup: the same holder.
         const key = `${span.campaignId}|${r.day}`;
         const cur = rollup.get(key);
         if (cur) {

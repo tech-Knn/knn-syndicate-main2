@@ -42,6 +42,9 @@ beforeAll(async () => {
       ],
     });
     await tx.offerRevenueDaily.create({ data: { orgId, offerId: offer.id, campaignId, channelRef: channel.id, day: '2026-05-29', revenueUsdMinor: 1234, afsClicks: 5 } });
+    // A row stored for a day BEFORE this campaign held the channel (a channel is reused; an earlier version credited the
+    // current offer with the previous holders' days). It must never count toward the article's earnings.
+    await tx.offerRevenueDaily.create({ data: { orgId, offerId: offer.id, campaignId, channelRef: channel.id, day: '2026-05-20', revenueUsdMinor: 927, afsClicks: 30 } });
   });
 });
 
@@ -110,6 +113,13 @@ describe('getArticleUsage', () => {
     expect(ch.lastDay).toBe('2026-05-31'); // overall window across spans
     expect(ch.revenueUsd).toBe(12.34);
     expect(ch.rpc).toBeCloseTo(2.468, 3); // 12.34 / 5 clicks
+  });
+
+  it('counts only the days the campaign held the channel, not revenue stored for earlier days', async () => {
+    const u = await getArticleUsage(buyerAuth(), articleId);
+    // $12.34 on the 29th (held) — the $9.27 / 30 clicks stored for 2026-05-20 (not held) is ignored.
+    expect(u!.totalRevenueUsd).toBe(12.34);
+    expect(u!.campaigns[0]!.channels[0]!.afsClicks).toBe(5);
   });
 
   it('returns null for an unknown article', async () => {
