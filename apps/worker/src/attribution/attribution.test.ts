@@ -7,6 +7,7 @@ import { ROLES, USER_STATUS } from '@knn/shared';
 import {
   type AttributionDeps,
   allocateRevenueForCampaignDay,
+  lateWhopDay,
   recentDays,
   runAttribution,
 } from './attribution.service.js';
@@ -417,6 +418,18 @@ describe('attribution — a reused channel credits each day to that day\'s holde
       ['earlier', D2, 300],
       ['current', D3, 400],
     ]);
+  });
+});
+
+describe('lateWhopDay: yesterday Whop spend is re-read hourly early in the day', () => {
+  it('names yesterday through the first 6 hours after midnight IST, and nothing after', () => {
+    // IST = UTC+5:30, so 00:15 IST on Oct 1 is 18:45 UTC on Sep 30.
+    expect(lateWhopDay(new Date('2026-09-30T18:45:00Z'))).toBe('2026-09-30');
+    expect(lateWhopDay(new Date('2026-09-30T18:30:00Z'))).toBe('2026-09-30'); // the first minute of Oct 1 IST
+    expect(lateWhopDay(new Date('2026-10-01T00:29:00Z'))).toBe('2026-09-30'); // 05:59 IST
+    expect(lateWhopDay(new Date('2026-10-01T00:30:00Z'))).toBeNull(); // 06:00 IST: the finalization pass covers it
+    expect(lateWhopDay(new Date('2026-10-01T09:00:00Z'))).toBeNull();
+    expect(lateWhopDay(new Date('2026-09-30T18:29:59Z'))).toBeNull(); // still Sep 30 IST, 23:59
   });
 });
 
