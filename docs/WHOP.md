@@ -82,6 +82,8 @@ address must be on `WEB_DOMAIN`, never an arbitrary URL.
 
 ## Build and launch a campaign (phase 2)
 
+**Two things every Whop launch sends that the wizard does not expose.** `multi_advertiser_ads: false` on every ad: Whop defaults it to ON, which lets Meta show the ad beside other advertisers' and crop the creative, and Facebook ads from this tool never do that. And a campaign's special ad categories are sent as `special_ad_categories` (Housing, Employment, Credit / Financial products and Issues, elections or politics map to Whop's `housing`, `employment`, `financial_products`, `politics`; online gambling has no Whop name, so such a campaign cannot be submitted).
+
 In the campaign wizard, **Ad network** appears under the campaign name when Whop Ads is on for the buyer's company;
 Facebook stays the default. Choosing **Whop** swaps the Facebook ad account, page and pixel for a **Whop business** and
 the **Facebook page** its ads run under. Destination websites, keywords, the referrer ad creative, ads and creatives

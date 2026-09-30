@@ -129,6 +129,9 @@ export function whopAdBody(
     call_to_action: whopCta(ad.cta),
     ...(ctx.fileId ? { creatives: [{ id: ctx.fileId }] } : {}),
     ...(ctx.pageId ? { social_accounts: [{ id: ctx.pageId }] } : {}),
+    // Whop defaults this to ON, which lets Meta crop the creative and show the ad beside other advertisers'.
+    // We launch with it OFF, like our Facebook ads.
+    multi_advertiser_ads: false,
     idempotencyKey,
   };
 }
