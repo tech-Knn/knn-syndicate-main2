@@ -1,10 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { IconCheck, IconCopy, IconImage, IconMore } from '@/components/icons';
+import { Component, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { IconAlert, IconCheck, IconCopy, IconImage, IconMore } from '@/components/icons';
 import { uploads } from '@/lib/api';
-import { Spinner } from '@/components/ui';
+import { Button, Spinner, useToast } from '@/components/ui';
 import styles from './campaign.module.css';
 import type { StatusMeta, Tone } from './status';
 
@@ -28,21 +28,45 @@ export function Chip({ icon, children, mono, title }: { icon?: ReactNode; childr
   );
 }
 
-/** Copy to the clipboard, with a check mark for a moment. Falls back to selecting nothing quietly if the browser refuses. */
+/** Copy text. The async clipboard needs a secure page and permission; the old selection trick covers the rest. */
+async function copyText(value: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    /* blocked or unavailable: try the old way */
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Copy to the clipboard, with a check mark for a moment. When the browser refuses, it says so instead of staying silent. */
 export function CopyButton({ value, label }: { value: string; label: string }) {
+  const toast = useToast();
   const [done, setDone] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
   const copy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(value);
+    if (await copyText(value)) {
       setDone(true);
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => setDone(false), 1600);
-    } catch {
-      /* clipboard blocked: nothing useful to do */
+    } else {
+      toast.error(`Could not copy the ${label}. Select it and copy it by hand.`);
     }
-  }, [value]);
+  }, [value, label, toast]);
   return (
     <button type="button" className={styles.copyBtn} data-done={done} onClick={() => void copy()} aria-label={done ? `${label} copied` : `Copy ${label}`} title={done ? 'Copied' : `Copy ${label}`}>
       {done ? <IconCheck size={15} /> : <IconCopy size={15} />}
@@ -78,6 +102,19 @@ export interface MenuEntry {
 export function Menu({ entries, label = 'More actions' }: { entries: MenuEntry[]; label?: string }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement | null>(null);
+  const button = useRef<HTMLButtonElement | null>(null);
+
+  // Closing from the keyboard or by choosing an item hands focus back to the button; an outside click does not steal it.
+  const closeAndRefocus = useCallback((): void => {
+    setOpen(false);
+    button.current?.focus();
+  }, []);
+
+  // Opening puts focus on the first item, so the arrow keys work straight away.
+  useEffect(() => {
+    if (!open) return;
+    wrap.current?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus();
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -85,7 +122,7 @@ export function Menu({ entries, label = 'More actions' }: { entries: MenuEntry[]
       if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') closeAndRefocus();
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
@@ -93,7 +130,7 @@ export function Menu({ entries, label = 'More actions' }: { entries: MenuEntry[]
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
     };
-  }, [open]);
+  }, [open, closeAndRefocus]);
 
   const move = (dir: 1 | -1): void => {
     const items = Array.from(wrap.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? []);
@@ -105,6 +142,7 @@ export function Menu({ entries, label = 'More actions' }: { entries: MenuEntry[]
   return (
     <div className={styles.menuWrap} ref={wrap}>
       <button
+        ref={button}
         type="button"
         className={styles.menuBtn}
         aria-haspopup="menu"
@@ -150,7 +188,7 @@ export function Menu({ entries, label = 'More actions' }: { entries: MenuEntry[]
                   role="menuitem"
                   disabled={m.disabled}
                   onClick={() => {
-                    setOpen(false);
+                    closeAndRefocus();
                     m.onSelect?.();
                   }}
                 >
@@ -247,7 +285,7 @@ export function Creative({ uploadId, kind, alt }: { uploadId: string | null; kin
   }, [uploadId, kind]);
 
   if (src) {
-    return <img src={src} alt={alt} loading="lazy" />;
+    return <img src={src} alt={alt} loading="lazy" onError={() => setSrc(null)} />;
   }
   return (
     <div className={styles.adMediaEmpty}>
@@ -255,4 +293,35 @@ export function Creative({ uploadId, kind, alt }: { uploadId: string | null; kin
       <span>{src === undefined ? 'Loading creative' : kind === 'VIDEO' ? 'Video creative' : 'No preview'}</span>
     </div>
   );
+}
+
+/* --------------------------------------------------------------- Boundary */
+
+/**
+ * One section failing to draw (an unexpected shape in old data, say) must not take the whole dashboard with it: the
+ * header, the status and the other tabs keep working, and this section offers a retry.
+ */
+export class SectionBoundary extends Component<{ label: string; children: ReactNode }, { failed: boolean }> {
+  override state = { failed: false };
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+  override componentDidCatch(err: unknown): void {
+    console.error(`[campaign page] ${this.props.label} failed to render`, err);
+  }
+  override render(): ReactNode {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <section className={styles.panel}>
+        <div className={styles.empty}>
+          <IconAlert size={24} />
+          <strong>{this.props.label} could not be shown</strong>
+          <span>The rest of the page still works. If it keeps happening, tell us which campaign it was.</span>
+          <Button variant="secondary" onClick={() => this.setState({ failed: false })}>
+            Try again
+          </Button>
+        </div>
+      </section>
+    );
+  }
 }

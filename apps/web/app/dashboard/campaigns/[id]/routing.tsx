@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { IconAlert, IconGlobe } from '@/components/icons';
-import { Badge, Skeleton } from '@/components/ui';
+import { Badge, Button, Skeleton } from '@/components/ui';
 import { campaigns, publicSite, type PublicSiteConfig } from '@/lib/api';
 import type { Campaign, OfferRow } from '@/lib/types';
 import styles from './campaign.module.css';
 import { CopyField, toneClass } from './parts';
 import { useAuth } from '../../../providers';
-import { funnelOf, goLink, networkName, routingVisibility } from './status';
+import { HAS_DELIVERY, funnelOf, goLink, networkName, routingVisibility } from './status';
 
 /** One offer (a money website) with the publisher id and style its landing page really uses. */
 interface MoneySite {
@@ -16,12 +16,14 @@ interface MoneySite {
   config: PublicSiteConfig | null;
 }
 
-function useMoneySites(campaignId: string, enabled: boolean, withConfig: boolean): { sites: MoneySite[] | null; failed: boolean } {
+function useMoneySites(campaignId: string, enabled: boolean, withConfig: boolean): { sites: MoneySite[] | null; failed: boolean; retry: () => void } {
   const [sites, setSites] = useState<MoneySite[] | null>(null);
   const [failed, setFailed] = useState(false);
+  const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!enabled) return;
     let alive = true;
+    setFailed(false);
     void campaigns
       .offers(campaignId)
       .then(async (offers) => {
@@ -33,8 +35,8 @@ function useMoneySites(campaignId: string, enabled: boolean, withConfig: boolean
     return () => {
       alive = false;
     };
-  }, [campaignId, enabled, withConfig]);
-  return { sites, failed };
+  }, [campaignId, enabled, withConfig, tick]);
+  return { sites, failed, retry: () => setTick((t) => t + 1) };
 }
 
 /** Where every click goes, written out: the go-link, the money page (with its channel and style) and the white page. */
@@ -42,14 +44,16 @@ export function RoutingTab({ campaign: c }: { campaign: Campaign }) {
   const { user } = useAuth();
   const see = routingVisibility(user?.role);
   const launched = Boolean(c.redirectDomainHost);
+  // A campaign that ran before routing details were recorded has no go-link host or white domain on file.
+  const legacy = !launched && HAS_DELIVERY.has(c.status);
   const funnel = funnelOf(c);
   const net = networkName(c);
-  const { sites, failed } = useMoneySites(c.id, launched, see.publisherAndStyle);
+  const { sites, failed, retry } = useMoneySites(c.id, launched || legacy, see.publisherAndStyle);
   const paid = sites?.filter((s) => s.offer.kind === 'PAID') ?? [];
   const organic = sites?.find((s) => s.offer.kind === 'ORGANIC');
   const ads = c.adSets.flatMap((s) => s.ads);
 
-  if (!launched) {
+  if (!launched && !legacy) {
     return (
       <section className={styles.panel}>
         <div className={styles.empty}>
@@ -64,6 +68,15 @@ export function RoutingTab({ campaign: c }: { campaign: Campaign }) {
   const main = paid[0];
   return (
     <div className={styles.stack}>
+      {legacy && (
+        <div className={`${styles.note} ${toneClass('brand')}`}>
+          <IconAlert size={16} />
+          <span>
+            <strong>This campaign ran before routing details were recorded,</strong> so its go-link host and white page are not on file and are not shown. The websites it sends paid clicks to are below.
+          </span>
+        </div>
+      )}
+      {!legacy && (
       <section className={styles.panel}>
         <div className={styles.panelHead}>
           <div>
@@ -89,7 +102,7 @@ export function RoutingTab({ campaign: c }: { campaign: Campaign }) {
               <span className={styles.laneTag}>Paid click</span>
               <div className={`${styles.node} ${styles.nodeAccent}`}>
                 <span className={styles.nodeLabel}>Money page</span>
-                {!sites ? (
+                {!sites && !failed ? (
                   <Skeleton className={styles.skel} />
                 ) : main ? (
                   <>
@@ -101,7 +114,7 @@ export function RoutingTab({ campaign: c }: { campaign: Campaign }) {
                     </span>
                   </>
                 ) : (
-                  <span className={styles.nodeSub}>{failed ? 'Could not load the landing site.' : 'No paid website set.'}</span>
+                  <span className={styles.nodeSub}>{failed ? 'Could not load the landing site.' : 'No paid website set: the default article site is used.'}</span>
                 )}
               </div>
             </div>
@@ -122,8 +135,9 @@ export function RoutingTab({ campaign: c }: { campaign: Campaign }) {
           </div>
         </div>
       </section>
+      )}
 
-      {c.adProvider === 'WHOP' && see.cloakNote && (
+      {c.adProvider === 'WHOP' && see.cloakNote && !legacy && (
         <div className={`${styles.note} ${toneClass('warning')}`}>
           <IconAlert size={16} />
           <span>
@@ -133,7 +147,8 @@ export function RoutingTab({ campaign: c }: { campaign: Campaign }) {
         </div>
       )}
 
-      <div className={styles.twoCol}>
+      <div className={legacy ? styles.stack : styles.twoCol}>
+        {!legacy && (
         <section className={styles.panel}>
           <div className={styles.panelHead}>
             <div>
@@ -150,6 +165,7 @@ export function RoutingTab({ campaign: c }: { campaign: Campaign }) {
             ))}
           </div>
         </section>
+        )}
 
         <section className={styles.panel}>
           <div className={styles.panelHead}>
@@ -158,11 +174,23 @@ export function RoutingTab({ campaign: c }: { campaign: Campaign }) {
               <p className={styles.panelSub}>The sites paid clicks land on{see.publisherAndStyle ? ', with the Google settings each one really uses' : ''}.</p>
             </div>
           </div>
-          {!sites ? (
+          {!sites && !failed ? (
             <Skeleton className={styles.skel} />
-          ) : sites.length === 0 ? (
+          ) : !sites || sites.length === 0 ? (
             <div className={styles.empty}>
-              <span>{failed ? 'Could not load the websites.' : 'No websites are attached yet.'}</span>
+              {failed ? (
+                <>
+                  <strong>Could not load the websites</strong>
+                  <Button variant="secondary" onClick={retry}>
+                    Try again
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <strong>No websites are attached to this campaign’s offers</strong>
+                  <span>It sends paid clicks to the default article site.</span>
+                </>
+              )}
             </div>
           ) : (
             <div className={styles.stack}>

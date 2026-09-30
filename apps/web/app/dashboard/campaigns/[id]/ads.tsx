@@ -4,11 +4,11 @@ import { formatUsd } from '@knn/shared';
 import { FbStatusBadge } from '@/components/fb-status-badge';
 import type { Campaign, CampaignAd } from '@/lib/types';
 import styles from './campaign.module.css';
+import { bigCount as big, count, money, safe } from './format';
 import { Chip, CopyField, Creative } from './parts';
 import { goLink } from './status';
 import type { CampaignStats } from './use-stats';
 
-const count = (n: number): string => new Intl.NumberFormat('en-US').format(n);
 const cta = (s: string): string => s.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 
 function AdCard({ ad, host, perf, status }: { ad: CampaignAd; host: string | null; perf?: { spendUsd: number; clicks: number; conversions: number }; status?: string | null }) {
@@ -35,15 +35,15 @@ function AdCard({ ad, host, perf, status }: { ad: CampaignAd; host: string | nul
           <div className={styles.adFoot}>
             <div className={styles.mini}>
               <span>Spend</span>
-              <strong>{formatUsd(perf.spendUsd)}</strong>
+              <strong title={formatUsd(safe(perf.spendUsd))}>{money(perf.spendUsd)}</strong>
             </div>
             <div className={styles.mini}>
               <span>Clicks</span>
-              <strong>{count(perf.clicks)}</strong>
+              <strong title={count(perf.clicks)}>{big(perf.clicks)}</strong>
             </div>
             <div className={styles.mini}>
               <span>Conv.</span>
-              <strong>{count(perf.conversions)}</strong>
+              <strong title={count(perf.conversions)}>{big(perf.conversions)}</strong>
             </div>
           </div>
         )}
@@ -55,6 +55,16 @@ function AdCard({ ad, host, perf, status }: { ad: CampaignAd; host: string | nul
 /** Every ad with its creative, words, go-link and (when there is delivery) its own numbers. */
 export function AdsTab({ campaign: c, stats }: { campaign: Campaign; stats: CampaignStats }) {
   const perAd = new Map((stats.data?.adSets ?? []).flatMap((s) => s.ads).map((a) => [a.id, a]));
+  if (c.adSets.every((s) => (s.ads ?? []).length === 0)) {
+    return (
+      <section className={styles.panel}>
+        <div className={styles.empty}>
+          <strong>No ads on this campaign</strong>
+          <span>There is nothing to show here.</span>
+        </div>
+      </section>
+    );
+  }
   return (
     <div className={styles.stack}>
       {c.adSets.map((set, i) => (
@@ -64,13 +74,13 @@ export function AdsTab({ campaign: c, stats }: { campaign: Campaign; stats: Camp
               <div>
                 <h3 className={styles.sectionTitle}>{set.name || `Ad set ${i + 1}`}</h3>
                 <p className={styles.sectionSub}>
-                  {set.ads.length} ad{set.ads.length === 1 ? '' : 's'}
+                  {(set.ads ?? []).length} ad{(set.ads ?? []).length === 1 ? '' : 's'}
                 </p>
               </div>
             </div>
           )}
           <div className={styles.adGrid}>
-            {set.ads.map((ad) => {
+            {(set.ads ?? []).map((ad) => {
               const p = perAd.get(ad.id);
               return <AdCard key={ad.id} ad={ad} host={c.redirectDomainHost} perf={p} status={p?.effectiveStatus ?? null} />;
             })}

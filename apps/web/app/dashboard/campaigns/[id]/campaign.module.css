@@ -401,6 +401,28 @@
   grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
   gap: var(--space-3);
 }
+.linkBtn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--rust);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.linkBtn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.linkBtn:disabled {
+  color: var(--muted-2);
+  cursor: default;
+}
+.kpiGrid > * {
+  min-width: 0;
+}
+.kpiGrid [class*='statValue'] {
+  overflow-wrap: anywhere;
+}
 .kpiSkel {
   height: 104px;
   border-radius: var(--radius);
@@ -497,6 +519,9 @@
   color: var(--amber);
   font-size: 12px;
   font-weight: 600;
+}
+.tabPanel[hidden] {
+  display: none;
 }
 .tabPanel {
   display: flex;
@@ -621,10 +646,18 @@
   text-align: right;
 }
 .cellName {
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
 }
 .cellSub {
+  max-width: 210px;
   margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
   font-weight: 400;
   color: var(--muted-2);
@@ -689,9 +722,15 @@
   gap: 10px;
   flex-wrap: wrap;
 }
-.budgetName {
-  flex: 1 1 140px;
+.budgetSet {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   min-width: 0;
+}
+.budgetName {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 13.5px;
   font-weight: 600;
   color: var(--cream);
@@ -722,6 +761,11 @@
   font-size: 1.05rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+.fieldError {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--red-text);
 }
 .quick {
   display: flex;

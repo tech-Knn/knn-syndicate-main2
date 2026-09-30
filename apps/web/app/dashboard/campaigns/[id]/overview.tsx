@@ -7,11 +7,11 @@ import { Skeleton } from '@/components/ui';
 import type { Campaign, CampaignAdSet } from '@/lib/types';
 import { LiveBudget } from './budget';
 import styles from './campaign.module.css';
+import { bigCount as big, budgetText, count, money, safe, scheduleText } from './format';
 import { HAS_DELIVERY, networkName } from './status';
 import { LIVE_TOGGLEABLE } from './status-card';
 import type { CampaignStats } from './use-stats';
 
-const count = (n: number): string => new Intl.NumberFormat('en-US').format(n);
 const human = (s: string): string => s.replace(/^OUTCOME_/, '').replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 
 
@@ -66,7 +66,12 @@ function PerformanceByAd({ stats }: { stats: CampaignStats }) {
           <p className={styles.panelSub}>Spend and clicks come from the ad network. Revenue is Google’s, shared across the ads by conversions, so per ad it is an estimate.</p>
         </div>
       </div>
-      {!stats.data ? (
+      {stats.failed && !stats.data ? (
+        // The Performance strip above already says so and offers the retry: don't shout it twice.
+        <div className={styles.empty}>
+          <span>The numbers are not available right now.</span>
+        </div>
+      ) : !stats.data ? (
         <>
           <Skeleton className={styles.skel} />
           <div style={{ height: 8 }} />
@@ -95,18 +100,20 @@ function PerformanceByAd({ stats }: { stats: CampaignStats }) {
               {rows.map((a) => (
                 <tr key={a.id}>
                   <td>
-                    <div className={styles.cellName}>{a.name}</div>
-                    <div className={styles.cellSub}>
+                    <div className={styles.cellName} title={a.name}>
+                      {a.name}
+                    </div>
+                    <div className={styles.cellSub} title={a.multi ? a.adSet : undefined}>
                       {a.multi ? `${a.adSet} · ` : ''}
                       <FbStatusBadge status={a.effectiveStatus} />
                     </div>
                   </td>
-                  <td className={styles.num}>{formatUsd(a.spendUsd)}</td>
-                  <td className={styles.num}>{formatUsd(a.revenueUsd)}</td>
-                  <td className={`${styles.num} ${a.profitUsd > 0 ? styles.pos : a.profitUsd < 0 ? styles.neg : ''}`}>{formatUsd(a.profitUsd)}</td>
-                  <td className={`${styles.num} ${a.roi > 0 ? styles.pos : a.roi < 0 ? styles.neg : ''}`}>{formatRoi(a.roi)}</td>
-                  <td className={styles.num}>{count(a.clicks)}</td>
-                  <td className={styles.num}>{count(a.conversions)}</td>
+                  <td className={styles.num} title={formatUsd(safe(a.spendUsd))}>{money(a.spendUsd)}</td>
+                  <td className={styles.num} title={formatUsd(safe(a.revenueUsd))}>{money(a.revenueUsd)}</td>
+                  <td className={`${styles.num} ${safe(a.profitUsd) > 0 ? styles.pos : safe(a.profitUsd) < 0 ? styles.neg : ''}`}>{money(a.profitUsd)}</td>
+                  <td className={`${styles.num} ${safe(a.roi) > 0 ? styles.pos : safe(a.roi) < 0 ? styles.neg : ''}`}>{formatRoi(safe(a.roi))}</td>
+                  <td className={styles.num} title={count(a.clicks)}>{big(a.clicks)}</td>
+                  <td className={styles.num} title={count(a.conversions)}>{big(a.conversions)}</td>
                 </tr>
               ))}
             </tbody>
@@ -114,12 +121,12 @@ function PerformanceByAd({ stats }: { stats: CampaignStats }) {
               <tfoot>
                 <tr className={styles.tfoot}>
                   <td>Total</td>
-                  <td className={styles.num}>{formatUsd(t.spendUsd)}</td>
-                  <td className={styles.num}>{formatUsd(t.revenueUsd)}</td>
-                  <td className={`${styles.num} ${t.profitUsd > 0 ? styles.pos : t.profitUsd < 0 ? styles.neg : ''}`}>{formatUsd(t.profitUsd)}</td>
+                  <td className={styles.num} title={formatUsd(safe(t.spendUsd))}>{money(t.spendUsd)}</td>
+                  <td className={styles.num} title={formatUsd(safe(t.revenueUsd))}>{money(t.revenueUsd)}</td>
+                  <td className={`${styles.num} ${t.profitUsd > 0 ? styles.pos : t.profitUsd < 0 ? styles.neg : ''}`}>{money(t.profitUsd)}</td>
                   <td className={`${styles.num} ${t.roi > 0 ? styles.pos : t.roi < 0 ? styles.neg : ''}`}>{formatRoi(t.roi)}</td>
-                  <td className={styles.num}>{count(t.clicks)}</td>
-                  <td className={styles.num}>{count(t.conversions)}</td>
+                  <td className={styles.num} title={count(t.clicks)}>{big(t.clicks)}</td>
+                  <td className={styles.num} title={count(t.conversions)}>{big(t.conversions)}</td>
                 </tr>
               </tfoot>
             )}
@@ -131,30 +138,44 @@ function PerformanceByAd({ stats }: { stats: CampaignStats }) {
 }
 
 function AdSetFacts({ campaign: c, set }: { campaign: Campaign; set: CampaignAdSet }) {
-  const gender = set.genders.length === 0 ? 'All genders' : set.genders.map(human).join(', ');
-  const schedule = set.startTime || set.endTime ? `${set.startTime ? new Date(set.startTime).toLocaleString() : 'Now'} to ${set.endTime ? new Date(set.endTime).toLocaleString() : 'until paused'}` : 'Runs until paused';
+  // Old rows can miss a list entirely: read every list defensively so one odd ad set never blanks the page.
+  const countries = set.countries ?? [];
+  const excluded = set.excludeCountries ?? [];
+  const genders = set.genders ?? [];
+  const placements = set.placements ?? [];
+  const gender = genders.length === 0 ? 'All genders' : genders.map(human).join(', ');
   return (
     <dl className={styles.facts}>
       <dt>Countries</dt>
       <dd>
         <div className={styles.chipList}>
-          {set.countries.length ? set.countries.map((x) => <span key={x} className={styles.tag}>{x}</span>) : 'Everywhere'}
+          {countries.length ? countries.map((x) => <span key={x} className={styles.tag}>{x}</span>) : 'Everywhere'}
         </div>
       </dd>
+      {excluded.length > 0 && (
+        <>
+          <dt>Excluding</dt>
+          <dd>
+            <div className={styles.chipList}>
+              {excluded.map((x) => <span key={x} className={styles.tag}>{x}</span>)}
+            </div>
+          </dd>
+        </>
+      )}
       <dt>Audience</dt>
       <dd>
         {set.ageMin}–{set.ageMax} · {gender}
       </dd>
       <dt>Placements</dt>
-      <dd>{set.placementMode === 'manual' && set.placements.length ? set.placements.map(human).join(', ') : 'Automatic (all placements)'}</dd>
+      <dd>{set.placementMode === 'manual' && placements.length ? placements.map(human).join(', ') : 'Automatic (all placements)'}</dd>
       <dt>Optimized for</dt>
-      <dd>{set.pxeEvent === 'adclick' ? 'Google ad click' : human(set.pxeEvent)}</dd>
+      <dd>{set.pxeEvent === 'adclick' ? 'Google ad click' : human(set.pxeEvent ?? '')}</dd>
       <dt>Schedule</dt>
-      <dd>{schedule}</dd>
+      <dd>{scheduleText(set)}</dd>
       {c.budgetMode === 'AD_SET' && set.dailyBudgetCents != null && (
         <>
           <dt>Daily budget</dt>
-          <dd>{formatUsd(set.dailyBudgetCents / 100)}</dd>
+          <dd>{formatUsd(safe(set.dailyBudgetCents) / 100)}</dd>
         </>
       )}
     </dl>
@@ -192,9 +213,7 @@ export function OverviewTab({ campaign: c, stats, onBudgetSaved }: { campaign: C
             </div>
             <dl className={styles.facts}>
               <dt>{c.budgetMode === 'CAMPAIGN' ? 'Campaign' : 'Total'}</dt>
-              <dd>
-                {formatUsd(((c.budgetMode === 'CAMPAIGN' ? c.dailyBudgetCents : c.adSets.reduce((n, s) => n + (s.dailyBudgetCents ?? 0), 0)) ?? 0) / 100)} a day
-              </dd>
+              <dd>{budgetText(c)}</dd>
             </dl>
           </section>
         )}
@@ -208,6 +227,7 @@ export function OverviewTab({ campaign: c, stats, onBudgetSaved }: { campaign: C
             </div>
           </div>
           <div className={styles.stack}>
+            {c.adSets.length === 0 && <span className={styles.panelSub}>No ad sets on this campaign.</span>}
             {c.adSets.map((s, i) => (
               <div key={s.id}>
                 {c.adSets.length > 1 && <h4 className={styles.panelTitle} style={{ marginBottom: 10 }}>{s.name || `Ad set ${i + 1}`}</h4>}

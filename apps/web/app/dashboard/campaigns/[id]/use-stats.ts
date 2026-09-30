@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { type CampaignBreakdown, addBusinessDays, currentBusinessDay } from '@knn/shared';
 import { stats } from '@/lib/api';
 
@@ -12,6 +12,8 @@ export const RANGES: { label: string; value: RangeKey }[] = [
   { label: '30 days', value: '30d' },
 ];
 
+const REFRESH_MS = 5 * 60_000;
+const VISIBLE_STALE_MS = 60_000;
 const DAYS: Record<RangeKey, number> = { today: 1, '7d': 7, '30d': 30 };
 
 /** An inclusive run of IST business days ending today (the same day the rest of the dashboard uses). */
@@ -41,6 +43,7 @@ export function useCampaignStats(id: string, enabled: boolean, range: RangeKey):
   const [failed, setFailed] = useState(false);
   const [sync, setSync] = useState<SyncInfo | null>(null);
   const [tick, setTick] = useState(0);
+  const loadedAt = useRef(0);
 
   useEffect(() => {
     if (!enabled) {
@@ -55,6 +58,7 @@ export function useCampaignStats(id: string, enabled: boolean, range: RangeKey):
         if (!alive) return;
         setData(d);
         setSync(s?.metrics ?? null);
+        loadedAt.current = Date.now();
       })
       .catch(() => alive && setFailed(true))
       .finally(() => alive && setLoading(false));
@@ -62,6 +66,24 @@ export function useCampaignStats(id: string, enabled: boolean, range: RangeKey):
       alive = false;
     };
   }, [id, enabled, range, tick]);
+
+  // The numbers move hourly, so a page left open should not go stale: re-read every few minutes while it is visible, and
+  // when a hidden tab comes back after a while (also the one way a page kept open across the IST midnight notices it).
+  useEffect(() => {
+    if (!enabled) return;
+    const refresh = (): void => {
+      if (!document.hidden) setTick((t) => t + 1);
+    };
+    const timer = setInterval(refresh, REFRESH_MS);
+    const onVisible = (): void => {
+      if (!document.hidden && Date.now() - loadedAt.current > VISIBLE_STALE_MS) setTick((t) => t + 1);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [enabled]);
 
   const reload = useCallback(() => setTick((t) => t + 1), []);
   return { data, loading, failed, sync, reload };

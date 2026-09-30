@@ -1,9 +1,10 @@
 'use client';
 
-import { use, useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { type ReactNode, use, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CampaignWizard } from '@/components/campaign-wizard';
-import { IconAnalytics, IconCopy, IconExternal } from '@/components/icons';
+import { IconAlert, IconAnalytics, IconCopy, IconExternal } from '@/components/icons';
 import { Banner, Button, Skeleton, useConfirm, useToast } from '@/components/ui';
 import { ApiError, campaigns } from '@/lib/api';
 import type { Campaign } from '@/lib/types';
@@ -14,15 +15,16 @@ import { CampaignHeader } from './header';
 import { KpiStrip } from './kpis';
 import { OffersEditor } from './offers-editor';
 import { OverviewTab } from './overview';
-import { type MenuEntry, StatusPill, Tabs, type TabDef } from './parts';
+import { type MenuEntry, SectionBoundary, StatusPill, type TabDef, Tabs } from './parts';
 import { RoutingTab } from './routing';
 import { HAS_DELIVERY, networkName, statusMeta } from './status';
 import { LAUNCHABLE, StatusCard } from './status-card';
 import { type RangeKey, useCampaignStats } from './use-stats';
 
 type TabId = 'overview' | 'ads' | 'monetization' | 'routing' | 'setup';
-
 const TAB_IDS: TabId[] = ['overview', 'ads', 'monetization', 'routing', 'setup'];
+const TAB_LABEL: Record<TabId, string> = { overview: 'Overview', ads: 'Ads', monetization: 'Monetization', routing: 'Routing', setup: 'Setup' };
+const POLL_MS = 8000;
 
 function PageSkeleton() {
   return (
@@ -39,43 +41,105 @@ function PageSkeleton() {
   );
 }
 
+/** "Not found" (gone, or not yours) and "could not load" (a network or server problem) are different: only the second is worth a retry. */
+function LoadProblem({ kind, onRetry }: { kind: 'missing' | 'failed'; onRetry: () => void }) {
+  return (
+    <section className={styles.panel} role="alert">
+      <div className={styles.empty}>
+        <IconAlert size={26} />
+        <strong>{kind === 'missing' ? 'Campaign not found' : 'We couldn’t load this campaign'}</strong>
+        <span>
+          {kind === 'missing'
+            ? 'It may have been deleted, or you may not have access to it.'
+            : 'That looks like a network or server problem, not a problem with the campaign. Nothing has changed.'}
+        </span>
+        <div className={styles.inlineRow}>
+          {kind === 'failed' && <Button onClick={onRetry}>Try again</Button>}
+          <Link href="/dashboard/campaigns" className={styles.linkBtn}>
+            Back to campaigns
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function CampaignPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  // Keyed by id: moving from one campaign to another starts clean instead of showing the last one until the new one loads.
+  return <CampaignView key={id} id={id} />;
+}
+
+function CampaignView({ id }: { id: string }) {
   const router = useRouter();
   const toast = useToast();
   const confirm = useConfirm();
-  const [campaign, setCampaign] = useState<Campaign | null | 'error'>(null);
+  const [campaign, setCampaign] = useState<Campaign | null>(null);
+  const [problem, setProblem] = useState<'missing' | 'failed' | null>(null);
   const [launching, setLaunching] = useState(false);
   const [reopening, setReopening] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [cloning, setCloning] = useState(false);
   const [note, setNote] = useState<{ tone: 'success' | 'info'; text: string } | null>(null);
   const [tab, setTab] = useState<TabId>('overview');
+  // Tabs already opened stay mounted (hidden), so what someone has typed in one is not lost by looking at another.
+  const [opened, setOpened] = useState<Set<TabId>>(() => new Set<TabId>(['overview']));
   const [range, setRange] = useState<RangeKey>('7d');
+  const loaded = useRef(false);
 
   const load = useCallback(() => {
     void campaigns
       .get(id)
-      .then((c) => setCampaign(c))
-      .catch(() => setCampaign('error'));
+      .then((c) => {
+        loaded.current = true;
+        setCampaign(c);
+        setProblem(null);
+      })
+      .catch((err: unknown) => {
+        // A refresh that fails (a network blip while polling) must not replace a page that is already showing.
+        if (loaded.current) return;
+        setProblem(err instanceof ApiError && [400, 403, 404].includes(err.status) ? 'missing' : 'failed');
+      });
   }, [id]);
   useEffect(() => load(), [load]);
 
-  // A launch takes a moment and finishes on the server: follow it until the status changes.
-  const status = campaign && campaign !== 'error' ? campaign.status : null;
+  // A launch takes a moment and finishes on the server: follow it until the status changes (not while the tab is hidden).
+  const status = campaign ? campaign.status : null;
   useEffect(() => {
     if (status !== 'LAUNCHING') return;
-    const t = setInterval(load, 8000);
+    const t = setInterval(() => {
+      if (!document.hidden) load();
+    }, POLL_MS);
     return () => clearInterval(t);
   }, [status, load]);
 
-  // The open tab lives in the address (#ads), so a link or a reload lands where it was.
+  // The campaign's name in the browser tab and the history, so ten open campaigns are not ten identical tabs.
+  const name = campaign?.name;
   useEffect(() => {
-    const fromHash = window.location.hash.replace('#', '') as TabId;
-    if (TAB_IDS.includes(fromHash)) setTab(fromHash);
+    if (!name) return;
+    const before = document.title;
+    document.title = `${name} · KNN Syndicate`;
+    return () => {
+      document.title = before;
+    };
+  }, [name]);
+
+  // The open tab lives in the address (#ads): a link, a reload, and the back button all land where they should.
+  useEffect(() => {
+    const fromHash = (): void => {
+      const h = window.location.hash.replace('#', '') as TabId;
+      if (TAB_IDS.includes(h)) {
+        setTab(h);
+        setOpened((o) => (o.has(h) ? o : new Set(o).add(h)));
+      }
+    };
+    fromHash();
+    window.addEventListener('hashchange', fromHash);
+    return () => window.removeEventListener('hashchange', fromHash);
   }, []);
   const pickTab = (t: TabId): void => {
     setTab(t);
+    setOpened((o) => (o.has(t) ? o : new Set(o).add(t)));
     window.history.replaceState(null, '', `#${t}`);
   };
 
@@ -90,16 +154,37 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
     return () => io.disconnect();
   }, [status]);
 
-  const c = campaign && campaign !== 'error' ? campaign : null;
+  const c = campaign;
   const stats = useCampaignStats(id, c != null && HAS_DELIVERY.has(c.status), range);
 
-  if (campaign === 'error') {
-    return <Banner tone="error" title="Campaign not found">We couldn’t load this campaign. It may have been deleted or you don’t have access.</Banner>;
+  if (problem && !c) {
+    return (
+      <LoadProblem
+        kind={problem}
+        onRetry={() => {
+          setProblem(null);
+          load();
+        }}
+      />
+    );
   }
   if (!c) return <PageSkeleton />;
 
-  // A draft is still being built: the wizard is the page.
-  if (c.status === 'DRAFT') return <CampaignWizard campaign={c} />;
+  const noteBanner = note && (
+    <Banner tone={note.tone} onDismiss={() => setNote(null)}>
+      {note.text}
+    </Banner>
+  );
+
+  // A draft is still being built: the wizard is the page (with the note, so "reopened" is still acknowledged).
+  if (c.status === 'DRAFT') {
+    return (
+      <div className={styles.page}>
+        {noteBanner}
+        <CampaignWizard campaign={c} />
+      </div>
+    );
+  }
 
   const net = networkName(c);
 
@@ -164,7 +249,7 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
     setNote(null);
     try {
       const res = active ? await campaigns.resume(c.id) : await campaigns.pause(c.id);
-      setCampaign({ ...c, status: res.status as Campaign['status'] });
+      setCampaign((prev) => (prev ? { ...prev, status: res.status as Campaign['status'] } : prev));
       setNote({ tone: 'success', text: active ? `Campaign resumed — ads are live on ${net} again.` : 'Campaign paused — ad delivery (and spend) is stopped. Resume anytime.' });
       stats.reload();
     } catch (err) {
@@ -189,7 +274,7 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
 
   const onBudgetSaved = (next: { adSetId?: string; cents: number }): void =>
     setCampaign((prev) => {
-      if (!prev || prev === 'error') return prev;
+      if (!prev) return prev;
       if (next.adSetId) return { ...prev, adSets: prev.adSets.map((s) => (s.id === next.adSetId ? { ...s, dailyBudgetCents: next.cents } : s)) };
       return prev.budgetMode === 'CAMPAIGN'
         ? { ...prev, dailyBudgetCents: next.cents }
@@ -222,29 +307,44 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
     </>
   );
 
-  const adTotal = c.adSets.reduce((n, s) => n + s.ads.length, 0);
-  const tabs: TabDef<TabId>[] = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'ads', label: 'Ads', count: adTotal },
-    { id: 'monetization', label: 'Monetization' },
-    { id: 'routing', label: 'Routing' },
-    { id: 'setup', label: 'Setup' },
-  ];
+  const adTotal = c.adSets.reduce((n, s) => n + (s.ads ?? []).length, 0);
+  const tabs: TabDef<TabId>[] = TAB_IDS.map((tid) => ({ id: tid, label: TAB_LABEL[tid], ...(tid === 'ads' ? { count: adTotal } : {}) }));
 
   const menu: MenuEntry[] = [
-    { key: 'analytics', label: 'Open in Analytics', href: '/dashboard/analytics', icon: <IconAnalytics size={16} /> },
+    { key: 'analytics', label: 'Open in Analytics', href: `/dashboard/analytics?campaign=${c.id}`, icon: <IconAnalytics size={16} /> },
     { key: 'clone', label: cloning ? 'Cloning…' : 'Clone campaign', icon: <IconCopy size={16} />, onSelect: () => void clone(), disabled: cloning },
     {
       key: 'copy-id',
       label: 'Copy campaign ID',
       icon: <IconCopy size={16} />,
-      onSelect: () => void navigator.clipboard?.writeText(c.id).then(() => toast.success('Campaign ID copied.')).catch(() => undefined),
+      onSelect: () => void navigator.clipboard?.writeText(c.id).then(() => toast.success('Campaign ID copied.')).catch(() => toast.error('Could not copy. The ID is in the address bar.')),
       separatorBefore: true,
     },
     ...(c.adProvider === 'WHOP' && c.whopBizId
       ? [{ key: 'whop', label: 'Open Whop Ads', href: `https://whop.com/dashboard/${c.whopBizId}/ads/`, external: true, icon: <IconExternal size={16} /> }]
       : []),
   ];
+
+  const panel = (tid: TabId): ReactNode => {
+    switch (tid) {
+      case 'overview':
+        return <OverviewTab campaign={c} stats={stats} onBudgetSaved={onBudgetSaved} />;
+      case 'ads':
+        return <AdsTab campaign={c} stats={stats} />;
+      case 'monetization':
+        return (
+          <>
+            {/* D27: what paid clicks send Google (per-ad rc + keywords), editable live without approval. */}
+            <GoogleSignalsEditor campaignId={c.id} onCampaignRacChange={(racValue) => setCampaign((prev) => (prev ? { ...prev, racValue } : prev))} />
+            <OffersEditor campaignId={c.id} status={c.status} />
+          </>
+        );
+      case 'routing':
+        return <RoutingTab campaign={c} />;
+      case 'setup':
+        return <CampaignWizard campaign={c} embedded />;
+    }
+  };
 
   return (
     <div className={styles.page}>
@@ -253,18 +353,14 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
         menu={menu}
         actions={
           HAS_DELIVERY.has(c.status) ? (
-            <Button variant="secondary" onClick={() => router.push('/dashboard/analytics')}>
+            <Button variant="secondary" onClick={() => router.push(`/dashboard/analytics?campaign=${c.id}`)}>
               <IconAnalytics size={16} /> Analytics
             </Button>
           ) : undefined
         }
       />
 
-      {note && (
-        <Banner tone={note.tone} onDismiss={() => setNote(null)}>
-          {note.text}
-        </Banner>
-      )}
+      {noteBanner}
 
       <div ref={statusRef}>
         <StatusCard
@@ -287,19 +383,11 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
       {/* No wrapper: a sticky bar can only travel inside its parent, and the page is the parent it needs. */}
       <Tabs tabs={tabs} value={tab} onChange={pickTab} idPrefix="campaign" trailing={statusInView ? undefined : compact} />
 
-      <div key={tab} id={`campaign-panel-${tab}`} role="tabpanel" aria-labelledby={`campaign-tab-${tab}`} className={styles.tabPanel}>
-        {tab === 'overview' && <OverviewTab campaign={c} stats={stats} onBudgetSaved={onBudgetSaved} />}
-        {tab === 'ads' && <AdsTab campaign={c} stats={stats} />}
-        {tab === 'monetization' && (
-          <>
-            {/* D27: what paid clicks send Google (per-ad rc + keywords), editable live without approval. */}
-            <GoogleSignalsEditor campaignId={c.id} onCampaignRacChange={(racValue) => setCampaign((prev) => (prev && prev !== 'error' ? { ...prev, racValue } : prev))} />
-            <OffersEditor campaignId={c.id} status={c.status} />
-          </>
-        )}
-        {tab === 'routing' && <RoutingTab campaign={c} />}
-        {tab === 'setup' && <CampaignWizard campaign={c} embedded />}
-      </div>
+      {TAB_IDS.filter((tid) => opened.has(tid)).map((tid) => (
+        <div key={tid} id={`campaign-panel-${tid}`} role="tabpanel" aria-labelledby={`campaign-tab-${tid}`} className={styles.tabPanel} hidden={tid !== tab}>
+          <SectionBoundary label={TAB_LABEL[tid]}>{panel(tid)}</SectionBoundary>
+        </div>
+      ))}
     </div>
   );
 }

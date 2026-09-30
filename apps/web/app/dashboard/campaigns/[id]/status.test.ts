@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Campaign } from '@/lib/types';
 import { HAS_DELIVERY, funnelOf, goLink, minBudgetCents, minBudgetMessage, networkName, routingVisibility, statusMeta, timeAgo } from './status';
+import { STUCK_LAUNCH_MS, bigCount, budgetText, count, formatWhen, launchStuck, money, safe, scheduleText, totalBudgetCents } from './format';
 import { rangeFor } from './use-stats';
 
 type Status = Campaign['status'];
@@ -96,5 +97,79 @@ describe('routingVisibility (what the Routing tab may show)', () => {
   it('hides it all until the role is known (a page that has not loaded the user yet leaks nothing)', () => {
     expect(routingVisibility(null)).toEqual({ publisherAndStyle: false, whiteHost: false, cloakNote: false });
     expect(routingVisibility(undefined)).toEqual({ publisherAndStyle: false, whiteHost: false, cloakNote: false });
+  });
+});
+
+describe('safe', () => {
+  it('turns anything that is not a finite number into 0', () => {
+    expect([safe(3.5), safe(0), safe(-2)]).toEqual([3.5, 0, -2]);
+    for (const bad of [null, undefined, NaN, Infinity, -Infinity, '12', {}]) expect(safe(bad)).toBe(0);
+  });
+});
+
+describe('formatWhen / scheduleText', () => {
+  const at = '2026-10-01T09:00:00Z';
+  it('writes a moment in the ad set timezone', () => {
+    expect(formatWhen(at, 'Asia/Kolkata')).toMatch(/1 Oct.*14:30/);
+    expect(formatWhen(at, 'UTC')).toMatch(/1 Oct.*09:00/);
+  });
+  it('does not blow up on an unknown timezone name, or a bad date', () => {
+    expect(() => formatWhen(at, 'Mars/Phobos')).not.toThrow();
+    expect(formatWhen(at, 'Mars/Phobos')).toMatch(/14:30/); // falls back to the business timezone
+    expect(formatWhen('not a date', 'UTC')).toBe('an unknown time');
+    expect(formatWhen(at, null)).toMatch(/14:30/);
+  });
+  it('reads as a schedule', () => {
+    expect(scheduleText({ startTime: null, endTime: null, timezone: null })).toBe('Runs until paused');
+    expect(scheduleText({ startTime: at, endTime: null, timezone: 'UTC' })).toMatch(/^1 Oct.* to until paused$/);
+    expect(scheduleText({ startTime: null, endTime: at, timezone: 'UTC' })).toMatch(/^now to 1 Oct/);
+  });
+});
+
+describe('budgets', () => {
+  const sets = (...cents: (number | null)[]): Pick<Campaign, 'adSets'>['adSets'] => cents.map((c) => ({ dailyBudgetCents: c }) as never);
+  it('adds the ad sets up for ABO and uses the campaign figure for CBO', () => {
+    expect(totalBudgetCents({ budgetMode: 'AD_SET', dailyBudgetCents: null, adSets: sets(2500, 1000) })).toBe(3500);
+    expect(totalBudgetCents({ budgetMode: 'CAMPAIGN', dailyBudgetCents: 4000, adSets: sets(1, 1) })).toBe(4000);
+  });
+  it('says "Not set" instead of $0.00 when nothing is set', () => {
+    expect(budgetText({ budgetMode: 'AD_SET', dailyBudgetCents: null, adSets: sets(null) })).toBe('Not set');
+    expect(budgetText({ budgetMode: 'CAMPAIGN', dailyBudgetCents: null, adSets: [] })).toBe('Not set');
+    expect(budgetText({ budgetMode: 'CAMPAIGN', dailyBudgetCents: 2500, adSets: [] })).toBe('$25.00 a day');
+  });
+});
+
+describe('launchStuck', () => {
+  const now = Date.parse('2026-10-01T12:00:00Z');
+  const ago = (ms: number): string => new Date(now - ms).toISOString();
+  it('only a launching campaign that has been silent past the limit is stuck', () => {
+    expect(launchStuck({ status: 'LAUNCHING', updatedAt: ago(STUCK_LAUNCH_MS + 1000) }, now)).toBe(true);
+    expect(launchStuck({ status: 'LAUNCHING', updatedAt: ago(60_000) }, now)).toBe(false);
+    expect(launchStuck({ status: 'ACTIVE', updatedAt: ago(STUCK_LAUNCH_MS * 10) }, now)).toBe(false);
+    expect(launchStuck({ status: 'LAUNCHING', updatedAt: 'garbage' }, now)).toBe(false);
+  });
+});
+
+describe('money / bigCount / count (figures that must fit a tile)', () => {
+  it('is exact to the cent below a million dollars', () => {
+    expect(money(0)).toBe('$0.00');
+    expect(money(1234.5)).toBe('$1,234.50');
+    expect(money(-999_999.99)).toBe('-$999,999.99');
+  });
+  it('goes compact from a million, for gains and losses alike', () => {
+    expect(money(22_222_042.02)).toBe('$22.2M');
+    expect(money(-4_777_737.15)).toBe('-$4.8M');
+  });
+  it('never prints NaN, whatever the API sent', () => {
+    for (const bad of [null, undefined, NaN, Infinity]) {
+      expect(money(bad as never), String(bad)).toBe('$0.00');
+      expect(count(bad as never), String(bad)).toBe('0');
+      expect(bigCount(bad as never), String(bad)).toBe('0');
+    }
+  });
+  it('counts are exact to ten million, then compact', () => {
+    expect(count(3627)).toBe('3,627');
+    expect(bigCount(9_999_999)).toBe('9,999,999');
+    expect(bigCount(222_222_186)).toBe('222.2M');
   });
 });

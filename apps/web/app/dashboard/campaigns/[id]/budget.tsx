@@ -53,7 +53,13 @@ function BudgetEditor({
   };
   const bump = (factor: number): void => void commit(Math.max(minBudgetCents(campaign), (cents ?? 0) * factor));
 
+  // What is typed, read the way Save will read it: anything that is not a usable amount stops here, with the reason.
+  const typed = Math.round(Number(draft) * 100);
+  const invalid = draft.trim() === '' || !Number.isFinite(typed) || typed < minBudgetCents(campaign);
+  const unchanged = typed === cents;
+
   return (
+    <>
     <div className={styles.budgetRow}>
       <div className={styles.moneyInput}>
         <span aria-hidden>$</span>
@@ -64,11 +70,12 @@ function BudgetEditor({
           value={draft}
           disabled={!editable || busy}
           onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && void commit(Math.round(Number(draft) * 100))}
+          onKeyDown={(e) => e.key === 'Enter' && !invalid && void commit(typed)}
           aria-label={`Daily budget${label ? ` for ${label}` : ''} in dollars`}
+          aria-invalid={invalid && draft !== dollars(cents) ? true : undefined}
         />
       </div>
-      <Button onClick={() => void commit(Math.round(Number(draft) * 100))} loading={busy} disabled={!editable || Math.round(Number(draft) * 100) === cents}>
+      <Button onClick={() => void commit(typed)} loading={busy} disabled={!editable || invalid || unchanged}>
         Save
       </Button>
       <div className={styles.quick} role="group" aria-label={`Quick budget scaling${label ? ` for ${label}` : ''}`}>
@@ -83,6 +90,12 @@ function BudgetEditor({
         </Button>
       </div>
     </div>
+    {editable && invalid && draft !== dollars(cents) && (
+      <p className={styles.fieldError} role="alert">
+        {minBudgetMessage(campaign)}
+      </p>
+    )}
+    </>
   );
 }
 
@@ -112,7 +125,7 @@ export function LiveBudget({ campaign, onSaved }: { campaign: Campaign; onSaved:
           {sets.map((set, i) => {
             const label = set.name || `Ad set ${i + 1}`;
             return (
-              <div key={set.id} className={styles.budget}>
+              <div key={set.id} className={styles.budgetSet}>
                 <span className={styles.budgetName}>{label}</span>
                 <BudgetEditor
                   campaign={campaign}

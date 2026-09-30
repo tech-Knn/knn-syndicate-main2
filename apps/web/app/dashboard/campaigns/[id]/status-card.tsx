@@ -7,6 +7,7 @@ import { IconAlert, IconBolt, IconCheck, IconClock, IconFlag, IconPause, IconRoc
 import { Button, Spinner } from '@/components/ui';
 import type { Campaign } from '@/lib/types';
 import styles from './campaign.module.css';
+import { NO_REASON_TEXT, launchStuck } from './format';
 import { toneClass } from './parts';
 import { networkName, statusMeta } from './status';
 
@@ -146,7 +147,10 @@ export function StatusCard({ campaign: c, actions }: { campaign: Campaign; actio
     case 'LAUNCHING':
       icon = <Spinner />;
       title = `Launching on ${net}`;
-      text = `Building the campaign, its ads and the redirect. This page updates by itself when it finishes.`;
+      text = launchStuck(c)
+        ? `This is taking longer than usual: nothing has moved for over 15 minutes. ${c.adProvider === 'WHOP' ? 'A Whop launch that goes quiet is settled automatically from Whop’s side.' : 'Nothing is lost, and it can be reopened.'} This page keeps checking.`
+        : `Building the campaign, its ads and the redirect. This page updates by itself when it finishes.`;
+      tone = launchStuck(c) ? 'warning' : tone;
       break;
     case 'PENDING_APPROVAL':
       icon = <IconClock size={20} />;
@@ -167,16 +171,15 @@ export function StatusCard({ campaign: c, actions }: { campaign: Campaign; actio
           Clone to fix
         </Button>
       );
-      if (reported.length > 0 || c.rejectionReason) {
-        extra = (
-          <ul className={`${styles.issues} ${toneClass('danger')}`}>
-            {reported.map((i) => (
-              <li key={i.id}>{i.message}</li>
-            ))}
-            {reported.length === 0 && c.rejectionReason && <li>{c.rejectionReason}</li>}
-          </ul>
-        );
-      }
+      // Always say something: a rejection with no readable reason still needs to tell the buyer what to do next.
+      extra = (
+        <ul className={`${styles.issues} ${toneClass('danger')}`}>
+          {reported.map((i) => (
+            <li key={i.id}>{i.message}</li>
+          ))}
+          {reported.length === 0 && <li>{c.rejectionReason && c.rejectionReason !== 'Meta review rejected the ad' ? c.rejectionReason : NO_REASON_TEXT}</li>}
+        </ul>
+      );
       break;
     case 'REJECTED':
       icon = <IconAlert size={20} />;
