@@ -577,6 +577,13 @@ export async function reopenCampaign(
     if (!canTransitionCampaign(campaign.status, CAMPAIGN_STATUS.DRAFT)) {
       throw new AppError(409, `Cannot reopen a campaign in ${campaign.status} state`);
     }
+    // A launch that was interrupted mid-build left objects on Facebook (recorded in
+    // `fb_pending_campaign_id` + the ad set / ad ids). Reopening would let the buyer edit the config and
+    // a later launch RESUME those stale objects — so the caller must pause + forget them first, which is
+    // what `reopenCampaignForEdit` (launch.service) does before it calls this. Fail closed.
+    if (campaign.fbPendingCampaignId) {
+      throw new AppError(409, 'This campaign has an unfinished launch on Facebook — reopen it from its campaign page so the unfinished Facebook campaign is paused first.');
+    }
     if (campaign.channelId) channelIds.push(campaign.channelId);
     const offers = await tx.offer.findMany({ where: { campaignId: id }, select: { channelRef: true } });
     for (const o of offers) if (o.channelRef) channelIds.push(o.channelRef);
