@@ -23,7 +23,7 @@ import {
   uploadFbAdImage,
   uploadFbAdVideo,
 } from '@knn/fb';
-import { CAMPAIGN_STATUS, type FunnelMode, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, effectiveFunnelMode, effectiveRac, goalRequiresPixel, normalizeCustomTerms, pxeToCustomEventType } from '@knn/shared';
+import { CAMPAIGN_STATUS, type FunnelMode, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, canTransitionCampaign, effectiveFunnelMode, effectiveRac, goalRequiresPixel, normalizeCustomTerms, pxeToCustomEventType } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { KvNotConfiguredError, type RedirectConfigPayload, writeRedirectConfigs } from '../../lib/kv-sync.js';
@@ -32,7 +32,7 @@ import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 import { markConnectionBroken } from '../facebook/facebook.service.js';
 import { generateArticleForCampaign } from '../articles/articles.service.js';
-import { type CampaignWithChildren, campaignInclude, toDraft } from './campaigns.service.js';
+import { type CampaignWithChildren, campaignInclude, reopenCampaign, toDraft } from './campaigns.service.js';
 
 /**
  * Decrypt a stored FB connection token, mapping an undecryptable value (rotated
@@ -132,6 +132,20 @@ export interface FbStructureResult {
   redirectDomainHost?: string;
 }
 export type TestLaunchResult = FbStructureResult;
+
+/**
+ * Progress hooks for a REAL launch. Each Facebook object is recorded the moment it exists — before
+ * the next Graph call — so a build interrupted by a rate limit (or any later failure) is RESUMED by
+ * the next attempt instead of rebuilt from scratch. `campaigns.fb_campaign_id` is deliberately NOT
+ * touched here: it keeps meaning "fully built" for every reader, so the in-progress campaign goes in
+ * `fb_pending_campaign_id` and only becomes `fb_campaign_id` when the whole structure is done.
+ * Omitted by the test launch, which always builds a fresh PAUSED structure.
+ */
+interface FbBuildRecorder {
+  campaign(p: { fbCampaignId: string; redirectDomainHost: string }): Promise<void>;
+  adSet(p: { adSetId: string; fbAdSetId: string }): Promise<void>;
+  ad(p: { adId: string; fbAdId: string }): Promise<void>;
+}
 
 type StoredAdSet = CampaignWithChildren['adSets'][number];
 
@@ -546,8 +560,17 @@ async function resolveBuyerFunnelMode(orgId: string, buyerId: string): Promise<F
  * already on it) so a flagged domain has minimal blast radius. Falls back to the legacy default, then
  * env `REDIRECT_DOMAIN`, so launches never break before the super-admin has populated the pool.
  * Returns both the base URL and the bare host (recorded on the campaign).
+ *
+ * `keepHost`: when RESUMING an unfinished build, the ads already created on Facebook link to that
+ * host — so the rest of the build stays on it while it is still eligible. Otherwise the ranking
+ * shifts between attempts (exactly when rate limits hit, under load) and one campaign ends up with
+ * creatives on several hosts while only the last one is recorded for blast-radius reporting.
  */
-async function resolveRedirectBase(mode: FunnelMode, orgId: string): Promise<{ base: string; host: string }> {
+async function resolveRedirectBase(
+  mode: FunnelMode,
+  orgId: string,
+  keepHost?: string | null,
+): Promise<{ base: string; host: string }> {
   const eligible = await withSystem((tx) =>
     tx.redirectDomain.findMany({
       where: { mode, isActive: true, healthy: true, OR: [{ ownerOrgId: orgId }, { ownerOrgId: null }] },
@@ -557,6 +580,7 @@ async function resolveRedirectBase(mode: FunnelMode, orgId: string): Promise<{ b
   const exclusive = eligible.filter((d) => d.ownerOrgId === orgId);
   const pool = (exclusive.length ? exclusive : eligible).map((d) => d.host);
   if (pool.length > 0) {
+    if (keepHost && pool.includes(keepHost)) return { base: `https://${keepHost}`, host: keepHost };
     // Least-loaded rotation: spread campaigns evenly so one flagged host affects the fewest.
     const loads = await withSystem((tx) =>
       tx.campaign.groupBy({ by: ['redirectDomainHost'], where: { redirectDomainHost: { in: pool } }, _count: { _all: true } }),
@@ -583,11 +607,14 @@ async function resolveRedirectBase(mode: FunnelMode, orgId: string): Promise<{ b
  * Pick a white domain from the active + healthy pool, rotating LEAST-LOADED (fewest campaigns already
  * on it) so cloaker ads spread across the pool instead of all sharing one display URL. Returns the
  * host, or undefined when the pool is empty → no white auto-fill (the buyer's own display/fallback stand).
+ * `keepHost`: RESUMING an unfinished build keeps the white domain its earlier ads already display
+ * (their FB display link can't change), while it is still in the pool.
  */
-async function pickWhiteDomain(): Promise<string | undefined> {
+async function pickWhiteDomain(keepHost?: string | null): Promise<string | undefined> {
   const pool = await withSystem((tx) => tx.whiteDomain.findMany({ where: { isActive: true, healthy: true }, select: { host: true } }));
   const hosts = pool.map((d) => d.host);
   if (hosts.length === 0) return undefined;
+  if (keepHost && hosts.includes(keepHost)) return keepHost;
   const loads = await withSystem((tx) =>
     tx.campaign.groupBy({ by: ['whiteDomainHost'], where: { whiteDomainHost: { in: hosts } }, _count: { _all: true } }),
   );
@@ -644,53 +671,93 @@ async function pollForVideoThumbnail(
   return null;
 }
 
-async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'): Promise<FbStructureResult> {
+async function createFbStructure(
+  plan: LaunchPlan,
+  status: 'PAUSED' | 'ACTIVE',
+  recorder?: FbBuildRecorder,
+): Promise<FbStructureResult> {
   const { campaign, token, appKind, fbAccountId, fbPageId } = plan;
   const cbo = campaign.budgetMode === 'CAMPAIGN';
+  // RESUME POINT: an unfinished build's Facebook campaign. Only a real launch (it has a recorder)
+  // picks one up; a test launch always builds a fresh structure and ignores whatever is recorded.
+  const resumeCampaignId = recorder ? campaign.fbPendingCampaignId : null;
   // Audit which FB app published this campaign (DATA vs the LAUNCH app) — so every launch
   // is verifiable from the logs without inspecting tokens.
-  console.log(`[launch] building FB structure for campaign ${campaign.id} via the ${appKind} app (act_${fbAccountId})`);
+  console.log(
+    resumeCampaignId
+      ? `[launch] resuming FB structure ${resumeCampaignId} for campaign ${campaign.id} via the ${appKind} app (act_${fbAccountId}) — skipping what is already on Facebook`
+      : `[launch] building FB structure for campaign ${campaign.id} via the ${appKind} app (act_${fbAccountId})`,
+  );
   // Catch a launch-app asset-grant gap BEFORE creating any FB objects (no orphans).
   await assertLaunchAssetsAccessible(plan);
   // Rotate onto a redirect domain from the buyer's eligible pool (mode-segregated, company-isolated).
+  // A resumed build stays on the host its already-created ads link to.
   const funnelMode = await resolveBuyerFunnelMode(campaign.orgId, campaign.buyerId);
-  const { base: redirectBase, host: redirectDomainHost } = await resolveRedirectBase(funnelMode, campaign.orgId);
+  const { base: redirectBase, host: redirectDomainHost } = await resolveRedirectBase(
+    funnelMode,
+    campaign.orgId,
+    resumeCampaignId ? campaign.redirectDomainHost : null,
+  );
+  if (resumeCampaignId && campaign.redirectDomainHost && redirectDomainHost !== campaign.redirectDomainHost) {
+    // The host the earlier ads link to left its pool (retired / flagged) mid-build. The rest of the build
+    // uses a fresh one, and only that one is recorded — say so, so the split is visible.
+    console.warn(`[launch] resumed campaign ${campaign.id}: redirect host ${campaign.redirectDomainHost} is no longer eligible — the remaining ads link to ${redirectDomainHost}; the ads already created still link to the old host`);
+  }
 
   // Automatic bidding (no cap → no bid_amount needed). The bid strategy lives at the
   // budget level: on the CAMPAIGN for CBO, on the AD SET for ABO — never both.
-  const fbCampaign = await createFbCampaign(fbAccountId, token, {
-    name: campaign.name,
-    objective: campaign.objective,
-    specialAdCategories: campaign.specialAdCategories,
-    status,
-    dailyBudgetCents: cbo ? campaign.dailyBudgetCents ?? undefined : undefined,
-    bidStrategy: cbo ? 'LOWEST_COST_WITHOUT_CAP' : undefined,
-  }, appKind);
+  let fbCampaignId = resumeCampaignId;
+  if (!fbCampaignId) {
+    const fbCampaign = await createFbCampaign(fbAccountId, token, {
+      name: campaign.name,
+      objective: campaign.objective,
+      specialAdCategories: campaign.specialAdCategories,
+      status,
+      dailyBudgetCents: cbo ? campaign.dailyBudgetCents ?? undefined : undefined,
+      bidStrategy: cbo ? 'LOWEST_COST_WITHOUT_CAP' : undefined,
+    }, appKind);
+    fbCampaignId = fbCampaign.id;
+    await recorder?.campaign({ fbCampaignId, redirectDomainHost });
+  }
 
   const adSets: FbStructureResult['adSets'] = [];
   for (const { set, fbPixelId, ads } of plan.adSets) {
-    // ODAX: a website conversion-location ad set carries destination_type WEBSITE; the
-    // pixel promoted_object is sent ONLY for conversion goals that require it.
-    const fbAdSet = await createFbAdSet(fbAccountId, token, {
-      name: set.name,
-      campaignId: fbCampaign.id,
-      optimizationGoal: set.optimizationGoal,
-      billingEvent: set.billingEvent,
-      dailyBudgetCents: cbo ? undefined : set.dailyBudgetCents ?? undefined,
-      bidStrategy: cbo ? undefined : 'LOWEST_COST_WITHOUT_CAP',
-      destinationType: WEBSITE_DESTINATION_GOALS.has(set.optimizationGoal) ? 'WEBSITE' : undefined,
-      promotedObject:
-        goalRequiresPixel(set.optimizationGoal) && fbPixelId
-          ? { pixel_id: fbPixelId, custom_event_type: pxeToCustomEventType(set.pxeEvent) }
-          : undefined,
-      targeting: buildTargeting(set),
-      startTime: set.startTime?.toISOString(),
-      endTime: set.endTime?.toISOString(),
-      status,
-    }, appKind);
+    // A recorded ad set is only meaningful under the Facebook campaign it was created in, i.e. when
+    // resuming: under a brand-new campaign it would belong to some other one and must be recreated.
+    let fbAdSetId = resumeCampaignId ? set.fbAdSetId : null;
+    const adSetResumed = fbAdSetId != null;
+    if (!fbAdSetId) {
+      // ODAX: a website conversion-location ad set carries destination_type WEBSITE; the
+      // pixel promoted_object is sent ONLY for conversion goals that require it.
+      const fbAdSet = await createFbAdSet(fbAccountId, token, {
+        name: set.name,
+        campaignId: fbCampaignId,
+        optimizationGoal: set.optimizationGoal,
+        billingEvent: set.billingEvent,
+        dailyBudgetCents: cbo ? undefined : set.dailyBudgetCents ?? undefined,
+        bidStrategy: cbo ? undefined : 'LOWEST_COST_WITHOUT_CAP',
+        destinationType: WEBSITE_DESTINATION_GOALS.has(set.optimizationGoal) ? 'WEBSITE' : undefined,
+        promotedObject:
+          goalRequiresPixel(set.optimizationGoal) && fbPixelId
+            ? { pixel_id: fbPixelId, custom_event_type: pxeToCustomEventType(set.pxeEvent) }
+            : undefined,
+        targeting: buildTargeting(set),
+        startTime: set.startTime?.toISOString(),
+        endTime: set.endTime?.toISOString(),
+        status,
+      }, appKind);
+      fbAdSetId = fbAdSet.id;
+      await recorder?.adSet({ adSetId: set.id, fbAdSetId });
+    }
 
     const adResults: { id: string; fbAdId: string }[] = [];
     for (const { ad, storageKey, creativeKind, mimeType, filename } of ads) {
+      // Already on Facebook from an earlier attempt (and its ad set was reused too): nothing to
+      // read, upload or create — this is what makes a re-drive free of duplicates.
+      if (adSetResumed && ad.fbAdId) {
+        adResults.push({ id: ad.id, fbAdId: ad.fbAdId });
+        continue;
+      }
       if (!storageKey) throw new AppError(400, `Ad "${ad.name}" has no creative file`);
       const creativeNoun = creativeKind === 'VIDEO' ? 'video' : 'image';
       let bytes: Buffer;
@@ -783,27 +850,73 @@ async function createFbStructure(plan: LaunchPlan, status: 'PAUSED' | 'ACTIVE'):
       }, appKind);
       const fbAd = await createFbAd(fbAccountId, token, {
         name: ad.name,
-        adSetId: fbAdSet.id,
+        adSetId: fbAdSetId,
         creativeId: creative.id,
         status,
       }, appKind);
+      await recorder?.ad({ adId: ad.id, fbAdId: fbAd.id });
       adResults.push({ id: ad.id, fbAdId: fbAd.id });
     }
-    adSets.push({ id: set.id, fbAdSetId: fbAdSet.id, ads: adResults });
+    adSets.push({ id: set.id, fbAdSetId, ads: adResults });
   }
 
-  return { fbCampaignId: fbCampaign.id, fbAccountId, adSets, redirectDomainHost };
+  return { fbCampaignId, fbAccountId, adSets, redirectDomainHost };
+}
+
+/**
+ * The recorder for a real launch: writes each Facebook id to its row in its own small transaction,
+ * right after the Graph call that created it. This is the ONLY window that can still orphan an
+ * object (Facebook created it but the write failed — a DB outage), so it logs the id loudly before
+ * rethrowing: an operator can then pause it by hand instead of it being lost.
+ */
+function fbBuildRecorder(auth: AuthContext, campaignId: string, fbAccountId: string): FbBuildRecorder {
+  const record = async (what: string, fbId: string, write: (tx: TxClient) => Promise<unknown>): Promise<void> => {
+    try {
+      await runScoped(auth, write);
+    } catch (err) {
+      console.error(
+        `[launch] ORPHAN RISK: created FB ${what} ${fbId} (act_${fbAccountId}) for campaign ${campaignId} but could not record it: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      throw err;
+    }
+  };
+  return {
+    campaign: ({ fbCampaignId, redirectDomainHost }) =>
+      record('campaign', fbCampaignId, async (tx) => {
+        await tx.campaign.update({ where: { id: campaignId }, data: { fbPendingCampaignId: fbCampaignId, fbAccountId, redirectDomainHost } });
+        // A brand-new Facebook campaign cannot own ad sets/ads that were recorded against another one.
+        await tx.adSet.updateMany({ where: { campaignId, fbAdSetId: { not: null } }, data: { fbAdSetId: null } });
+        await tx.ad.updateMany({ where: { adSet: { campaignId }, fbAdId: { not: null } }, data: { fbAdId: null } });
+      }),
+    adSet: ({ adSetId, fbAdSetId }) =>
+      record('ad set', fbAdSetId, async (tx) => {
+        await tx.adSet.update({ where: { id: adSetId }, data: { fbAdSetId } });
+        await tx.ad.updateMany({ where: { adSetId, fbAdId: { not: null } }, data: { fbAdId: null } }); // same reason, one level down
+      }),
+    ad: ({ adId, fbAdId }) => record('ad', fbAdId, (tx) => tx.ad.update({ where: { id: adId }, data: { fbAdId } })),
+  };
+}
+
+/**
+ * Write a finished structure's ids in one go: `fb_campaign_id` (the "fully built" marker), every ad
+ * set / ad id, and the in-progress `fb_pending_campaign_id` cleared. Used by the TEST launch, which has
+ * no recorder; a real launch has already committed each child id as it was created, so it writes only
+ * the campaign-level marker (together with the status) in its completion commit.
+ */
+async function writeFbIds(tx: TxClient, campaignId: string, result: FbStructureResult): Promise<void> {
+  await tx.campaign.update({
+    where: { id: campaignId },
+    data: { fbCampaignId: result.fbCampaignId, fbAccountId: result.fbAccountId, fbPendingCampaignId: null },
+  });
+  for (const s of result.adSets) {
+    await tx.adSet.update({ where: { id: s.id }, data: { fbAdSetId: s.fbAdSetId } });
+    for (const a of s.ads) await tx.ad.update({ where: { id: a.id }, data: { fbAdId: a.fbAdId } });
+  }
 }
 
 /** Persist the returned FB ids onto the campaign/adsets/ads. */
 async function persistFbIds(auth: AuthContext, campaignId: string, result: FbStructureResult): Promise<void> {
-  await runScoped(auth, async (tx) => {
-    await tx.campaign.update({ where: { id: campaignId }, data: { fbCampaignId: result.fbCampaignId, fbAccountId: result.fbAccountId } });
-    for (const s of result.adSets) {
-      await tx.adSet.update({ where: { id: s.id }, data: { fbAdSetId: s.fbAdSetId } });
-      for (const a of s.ads) await tx.ad.update({ where: { id: a.id }, data: { fbAdId: a.fbAdId } });
-    }
-  });
+  await runScoped(auth, (tx) => writeFbIds(tx, campaignId, result));
 }
 
 /**
@@ -812,6 +925,11 @@ async function persistFbIds(auth: AuthContext, campaignId: string, result: FbStr
  */
 export async function testLaunchCampaign(auth: AuthContext, campaignId: string): Promise<TestLaunchResult> {
   const plan = await resolveLaunchPlan(auth, campaignId);
+  // A real launch left objects on Facebook that this campaign still owns: a fresh PAUSED test structure
+  // would take over `fb_campaign_id` and orphan them (live, spending). Finish or discard that build first.
+  if (plan.campaign.fbPendingCampaignId) {
+    throw new AppError(409, 'This campaign has an unfinished launch on Facebook — finish it (Launch) or reopen the campaign before running a test launch.');
+  }
   const result = await createFbStructure(plan, 'PAUSED');
   await persistFbIds(auth, campaignId, result);
   return result;
@@ -946,8 +1064,16 @@ export async function syncCampaignRedirectConfigs(
  * channel (Phase 6): ensure its article (Phase 5) → write each ad's redirect config
  * to edge KV (Phase 7) → create the Campaign→AdSet→Ad on Facebook **ACTIVE** through
  * the rate-limited client (D12) → ACTIVE + notify. An FB rate-limit parks it in
- * BATCHED for a later retry. Idempotent-ish: a campaign already launched (fbCampaignId)
+ * BATCHED for a later retry. Idempotent: a campaign already launched (fbCampaignId)
  * is returned as ACTIVE.
+ *
+ * RESUMABLE: the build records every Facebook id the moment its object exists
+ * (`fb_pending_campaign_id`, `ad_sets.fb_ad_set_id`, `ads.fb_ad_id`), and the next attempt — the
+ * buyer's manual Launch, auto-launch, or the BATCHED re-drive — skips what is already on Facebook
+ * and creates only the rest. So a rate limit (or any failure) part-way through never leaves live
+ * objects with no id, and a retry never duplicates. `fb_campaign_id` is written only when the whole
+ * structure is built, in the same commit that flips the status to ACTIVE. A failure that is NOT a
+ * rate limit is still never retried automatically (D19): it reverts to PROCESSING for a human.
  */
 export async function launchCampaign(
   auth: AuthContext,
@@ -1032,7 +1158,14 @@ export async function launchCampaign(
   // page that organic/bot/reviewer traffic sees. The buyer never sets these. Recorded on the campaign
   // so the post-launch resync AND the FB creative (createFbStructure) read the SAME white host.
   const funnelMode = await resolveBuyerFunnelMode(campaign.orgId, campaign.buyerId);
-  const whiteHost = funnelMode === 'CLOAKER' ? await pickWhiteDomain() : undefined;
+  // Resuming an unfinished build: keep the white domain its already-created ads display (their FB
+  // display link can't change), so the visible ad URL still matches the fallback page.
+  const whiteHost = funnelMode === 'CLOAKER'
+    ? await pickWhiteDomain(campaign.fbPendingCampaignId ? campaign.whiteDomainHost : null)
+    : undefined;
+  if (campaign.fbPendingCampaignId && campaign.whiteDomainHost && whiteHost !== campaign.whiteDomainHost) {
+    console.warn(`[launch] resumed campaign ${campaignId}: white domain ${campaign.whiteDomainHost} is no longer in the pool — the remaining ads display ${whiteHost ?? 'no white domain'}; the ads already created still display the old one`);
+  }
   const whiteFallbackUrl = whiteHost ? `https://${whiteHost}/a/${slug}` : undefined;
   await runScoped(auth, (tx) => tx.campaign.update({ where: { id: campaignId }, data: { whiteDomainHost: whiteHost ?? null } }));
 
@@ -1092,12 +1225,20 @@ export async function launchCampaign(
   let plan: LaunchPlan | undefined;
   try {
     plan = await resolveLaunchPlan(auth, campaignId);
-    const result = await createFbStructure(plan, 'ACTIVE');
-    await persistFbIds(auth, campaignId, result);
+    const resumed = Boolean(plan.campaign.fbPendingCampaignId); // continuing an earlier, interrupted build
+    const result = await createFbStructure(plan, 'ACTIVE', fbBuildRecorder(auth, campaignId, plan.fbAccountId));
+    // ONE commit: the structure is complete → record it as such (`fb_campaign_id` ← the campaign, pending
+    // cleared) and go ACTIVE. The ad set / ad ids need no rewrite — the recorder committed each one as it was created.
     await runScoped(auth, async (tx) => {
       await tx.campaign.update({
         where: { id: campaignId },
-        data: { status: CAMPAIGN_STATUS.ACTIVE, redirectDomainHost: result.redirectDomainHost ?? undefined },
+        data: {
+          fbCampaignId: result.fbCampaignId,
+          fbAccountId: result.fbAccountId,
+          fbPendingCampaignId: null,
+          status: CAMPAIGN_STATUS.ACTIVE,
+          redirectDomainHost: result.redirectDomainHost ?? undefined,
+        },
       });
       await writeAudit(tx, {
         orgId: campaign.orgId,
@@ -1105,7 +1246,7 @@ export async function launchCampaign(
         action: 'campaign.launched',
         entityType: 'campaign',
         entityId: campaignId,
-        details: { fbCampaignId: result.fbCampaignId },
+        details: { fbCampaignId: result.fbCampaignId, resumed },
       });
     });
     // RE-SYNC the redirect configs now that the ad ids exist. Step 3 (above) wrote them BEFORE the FB
@@ -1141,6 +1282,8 @@ export async function launchCampaign(
       await runScoped(auth, (tx) =>
         tx.campaign.update({ where: { id: campaignId }, data: { status: CAMPAIGN_STATUS.BATCHED } }),
       );
+      // Everything created before the limit hit is already recorded — the next attempt resumes it.
+      console.warn(`[launch] Facebook rate-limited campaign ${campaignId} mid-build — parked in BATCHED; what is already on Facebook is recorded and the next attempt resumes it`);
       return { status: 'BATCHED' };
     }
 
@@ -1203,51 +1346,204 @@ export async function launchCampaign(
   }
 }
 
+/** Where + how to talk to Facebook about a campaign's ad account: its Meta id and the WRITE credential. */
+interface FbWriteTarget {
+  fbAccountId: string;
+  token: string;
+  appKind: FbAppKind;
+  connectionId: string;
+}
+
+/**
+ * Resolve the FB write target for a campaign's ad account, inside the caller's transaction. The
+ * credential is `resolveWriteAuth`'s — the owner's LAUNCH-app token when they have one (a DATA-token
+ * write can trip the very checkpoint the LAUNCH app exists to clear), else DATA/VERIFY — and it throws
+ * the usual actionable 409 when the connection is broken or expired. `null` when the ad account is no
+ * longer connected (its row is gone): there is nothing to sign a call with.
+ */
+async function resolveFbWriteTarget(tx: TxClient, adAccountId: string | null): Promise<FbWriteTarget | null> {
+  if (!adAccountId) return null;
+  const acc = await tx.fbAdAccount.findUnique({
+    where: { id: adAccountId },
+    select: {
+      fbAccountId: true,
+      connection: { select: { id: true, userId: true, fbUserId: true, accessTokenEnc: true, status: true, appKind: true, tokenExpiresAt: true } },
+    },
+  });
+  if (!acc) return null;
+  const writeAuth = await resolveWriteAuth(tx, acc.connection);
+  return { fbAccountId: acc.fbAccountId, token: writeAuth.token, appKind: writeAuth.appKind, connectionId: writeAuth.connectionId };
+}
+
+/** The previous Facebook campaign could not be paused: tell the buyer its id, so a live campaign is never left behind unnoticed. */
+async function notifyFbCampaignNotPaused(
+  c: { orgId: string; buyerId: string; name: string },
+  fbCampaignId: string,
+  what: 'reopened for editing' | 'relaunched',
+): Promise<void> {
+  await notify({
+    orgId: c.orgId,
+    userId: c.buyerId,
+    type: 'campaign.fb_build_not_paused',
+    title: 'A Facebook campaign may still be running',
+    body: `"${c.name}" was ${what}, but its previous Facebook campaign (${fbCampaignId}) could not be paused automatically. Pause it in Ads Manager so it stops spending.`,
+  });
+}
+
 /**
  * Force a relaunch of an already-launched campaign: pause the existing FB campaign (so its
  * stale ads stop delivering), clear the stored FB ids + reset to PROCESSING, then re-run
  * launchCampaign to re-create Campaign→AdSet→Ad on Facebook with the CURRENT config —
  * notably a corrected `REDIRECT_DOMAIN`/creative link. Used when a live campaign's creatives
  * carry a stale/broken redirect domain. The old FB campaign is left PAUSED (no spend), and a
- * fresh FB campaign is created.
+ * fresh FB campaign is created. A launch that never finished (its Facebook campaign is only in
+ * `fb_pending_campaign_id`) is treated the same: paused and forgotten, then rebuilt from scratch —
+ * relaunch is the explicit "start over", whereas a plain launch resumes.
  */
 export async function relaunchCampaign(auth: AuthContext, campaignId: string): Promise<LaunchResult> {
-  // Resolve the current FB campaign + a token to pause the old delivery (best-effort).
+  // Resolve the current FB campaign + the write credential to pause its delivery (best-effort).
   const info = await runScoped(auth, async (tx) => {
     const c = await tx.campaign.findUnique({
       where: { id: campaignId },
-      select: { id: true, buyerId: true, fbCampaignId: true, adAccountId: true },
+      select: { id: true, buyerId: true, orgId: true, name: true, fbCampaignId: true, fbPendingCampaignId: true, adAccountId: true },
     });
     if (!c) throw new AppError(404, 'Campaign not found');
     if (auth.role === ROLES.MEDIA_BUYER && c.buyerId !== auth.userId) throw new AppError(404, 'Campaign not found');
-    let pause: { fbCampaignId: string; fbAccountId: string; token: string } | null = null;
-    if (c.fbCampaignId && c.adAccountId) {
-      const acc = await tx.fbAdAccount.findUnique({
-        where: { id: c.adAccountId },
-        select: { fbAccountId: true, connection: { select: { accessTokenEnc: true } } },
-      });
-      if (acc) {
-        pause = { fbCampaignId: c.fbCampaignId, fbAccountId: acc.fbAccountId, token: decryptConnectionToken(acc.connection.accessTokenEnc) };
-      }
-    }
-    return { pause };
+    // The finished campaign, or — for a launch that never finished — the unfinished one (also live).
+    const oldFbCampaignId = c.fbCampaignId ?? c.fbPendingCampaignId;
+    return { c, oldFbCampaignId, target: oldFbCampaignId ? await resolveFbWriteTarget(tx, c.adAccountId) : null };
   });
 
-  // Stop the old (stale-link) campaign on Facebook. Best-effort — never block the relaunch.
-  if (info.pause) {
-    try {
-      await updateFbCampaignStatus(info.pause.fbCampaignId, info.pause.fbAccountId, info.pause.token, 'PAUSED');
-    } catch (err) {
-      console.warn(`[relaunch] could not pause old FB campaign for ${campaignId}: ${(err as Error).message}`);
+  // Stop the old (stale-link) campaign on Facebook. Best-effort — never block the relaunch — but never
+  // silent: when it can't be paused the buyer is told its id, so a live campaign isn't left behind unnoticed.
+  if (info.oldFbCampaignId) {
+    let paused = false;
+    if (info.target) {
+      try {
+        await updateFbCampaignStatus(info.oldFbCampaignId, info.target.fbAccountId, info.target.token, 'PAUSED', info.target.appKind);
+        paused = true;
+      } catch (err) {
+        console.warn(`[relaunch] could not pause old FB campaign for ${campaignId}: ${(err as Error).message}`);
+      }
     }
+    if (!paused) await notifyFbCampaignNotPaused(info.c, info.oldFbCampaignId, 'relaunched');
   }
 
-  // Clear the stored FB ids + reset to PROCESSING so launchCampaign re-creates the structure.
+  // Clear the stored FB ids (finished AND unfinished) + reset to PROCESSING so launchCampaign
+  // re-creates the whole structure instead of resuming the old one.
   await runScoped(auth, async (tx) => {
     await tx.ad.updateMany({ where: { adSet: { campaignId } }, data: { fbAdId: null } });
     await tx.adSet.updateMany({ where: { campaignId }, data: { fbAdSetId: null } });
-    await tx.campaign.update({ where: { id: campaignId }, data: { fbCampaignId: null, status: CAMPAIGN_STATUS.PROCESSING } });
+    await tx.campaign.update({ where: { id: campaignId }, data: { fbCampaignId: null, fbPendingCampaignId: null, status: CAMPAIGN_STATUS.PROCESSING } });
   });
 
   return launchCampaign(auth, campaignId);
+}
+
+/**
+ * Abandon a launch's UNFINISHED Facebook structure so the campaign can be reopened for editing.
+ *
+ * Why this exists: a resumed launch reuses every object it already created, which is only right
+ * while the campaign's config is unchanged. "Reopen & edit" is exactly the moment it changes — and
+ * the objects built so far may be live and spending. So before the reopen we pause the unfinished
+ * Facebook campaign and forget every recorded id; the next launch then builds the edited config from
+ * scratch. Pausing comes first and the ids are dropped only after it worked, so a failure never
+ * strands a live campaign with no record of it.
+ *
+ * Failure policy (mirrors pause/resume and the budget edits): a rate limit, an ad-account security
+ * hold or a dead token stops the reopen with the usual actionable error and changes nothing — the
+ * buyer can retry once it clears. Anything else Facebook says (typically: the campaign was deleted
+ * in Ads Manager, so there is nothing left to pause) — or an ad account that is no longer connected —
+ * cannot be fixed by waiting, so the reopen goes ahead and the buyer is told to pause it by hand.
+ * A no-op (returns false) unless the campaign has an unfinished build and can be reopened.
+ *
+ * Not atomic with a concurrent launch: if one claims the campaign while we are pausing its Facebook
+ * campaign, the guarded clear below matches nothing and the reopen stops (409) — and that launch then
+ * resumes a campaign that is paused on Facebook. The 30-minute status reconcile mirrors it as PAUSED
+ * and the buyer can resume it (no spend is lost, nothing duplicates).
+ */
+async function discardUnfinishedFbBuild(auth: AuthContext, campaignId: string): Promise<boolean> {
+  const found = await runScoped(auth, async (tx) => {
+    const c = await tx.campaign.findUnique({
+      where: { id: campaignId },
+      select: {
+        id: true, buyerId: true, orgId: true, name: true, status: true,
+        fbCampaignId: true, fbPendingCampaignId: true, adAccountId: true,
+        adSets: { select: { fbAdSetId: true, ads: { select: { fbAdId: true } } } },
+      },
+    });
+    if (!c) throw new AppError(404, 'Campaign not found');
+    if (auth.role === ROLES.MEDIA_BUYER && c.buyerId !== auth.userId) throw new AppError(404, 'Campaign not found');
+    // Only a campaign that CAN be reopened is touched (otherwise reopenCampaign reports the state
+    // error in its usual words), and only while a build is unfinished.
+    if (c.fbCampaignId || !c.fbPendingCampaignId || !canTransitionCampaign(c.status, CAMPAIGN_STATUS.DRAFT)) return null;
+
+    return {
+      orgId: c.orgId,
+      buyerId: c.buyerId,
+      name: c.name,
+      status: c.status,
+      pendingId: c.fbPendingCampaignId,
+      adSets: c.adSets.filter((s) => s.fbAdSetId).length,
+      ads: c.adSets.reduce((n, s) => n + s.ads.filter((a) => a.fbAdId).length, 0),
+      fb: await resolveFbWriteTarget(tx, c.adAccountId),
+    };
+  });
+  if (!found) return false;
+
+  let paused = false;
+  if (found.fb) {
+    try {
+      await updateFbCampaignStatus(found.pendingId, found.fb.fbAccountId, found.fb.token, 'PAUSED', found.fb.appKind);
+      paused = true;
+    } catch (err) {
+      if (err instanceof FbRateLimitError || err instanceof FbAccountRestrictedError || err instanceof FbConnectionBrokenError) {
+        await throwFbWriteError(err, found.fb.connectionId); // always throws
+      }
+      console.warn(`[reopen] could not pause unfinished FB campaign ${found.pendingId} for ${campaignId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Forget the unfinished structure — only if nothing moved while we talked to Facebook.
+  await runScoped(auth, async (tx) => {
+    const cleared = await tx.campaign.updateMany({
+      where: { id: campaignId, fbCampaignId: null, fbPendingCampaignId: found.pendingId, status: found.status },
+      data: { fbPendingCampaignId: null },
+    });
+    if (cleared.count === 0) throw new AppError(409, 'This campaign changed while it was being reopened — try again.');
+    await tx.adSet.updateMany({ where: { campaignId }, data: { fbAdSetId: null } });
+    await tx.ad.updateMany({ where: { adSet: { campaignId } }, data: { fbAdId: null } });
+    await writeAudit(tx, {
+      orgId: found.orgId,
+      actorId: auth.userId,
+      action: 'campaign.fb_build_discarded',
+      entityType: 'campaign',
+      entityId: campaignId,
+      details: { fbCampaignId: found.pendingId, adSets: found.adSets, ads: found.ads, pausedOnFacebook: paused },
+    });
+  });
+
+  if (!paused) await notifyFbCampaignNotPaused(found, found.pendingId, 'reopened for editing');
+  return true;
+}
+
+/**
+ * Reopen a pre-launch campaign to an editable DRAFT — the campaign page's "Reopen & edit". Same as
+ * `reopenCampaign`, but first abandons any UNFINISHED Facebook structure (see `discardUnfinishedFbBuild`)
+ * so the edited campaign is never launched by resuming objects built from its old config. This is the
+ * entry point the reopen route uses; `reopenCampaign` alone refuses a campaign with an unfinished build.
+ */
+export async function reopenCampaignForEdit(auth: AuthContext, campaignId: string): Promise<CampaignWithChildren> {
+  const discarded = await discardUnfinishedFbBuild(auth, campaignId);
+  const reopened = await reopenCampaign(auth, campaignId);
+  // B1: the unfinished build's edge configs were written active:true with the channel that reopening just
+  // released — and its ads may still be live — so they would keep routing paid clicks to a channel another
+  // campaign is about to be given. The campaign is DRAFT now, so this republishes them inactive. Best-effort:
+  // a KV hiccup must never fail a reopen that has already happened.
+  if (discarded) {
+    await syncCampaignRedirectConfigs(campaignId).catch((e) =>
+      console.warn(`[reopen] edge KV resync failed for ${campaignId}:`, e instanceof Error ? e.message : String(e)),
+    );
+  }
+  return reopened;
 }

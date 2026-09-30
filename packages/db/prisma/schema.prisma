@@ -345,8 +345,16 @@ model Campaign {
   articleId String? @map("article_id") @db.Uuid
   channelId String? @map("channel_id") @db.Uuid
 
-  /// Populated on launch (Phase 8).
+  /// Populated on launch (Phase 8). Non-null means the WHOLE Facebook structure (campaign → ad sets →
+  /// ads) is built and recorded — every reader treats it as "launched". Never set it early.
   fbCampaignId String? @map("fb_campaign_id")
+  /// The Facebook campaign of a launch that has NOT finished building (rate-limited or failed
+  /// mid-way). Recorded the moment it exists, together with `ad_sets.fb_ad_set_id` / `ads.fb_ad_id`
+  /// as each of those is created, so the next attempt resumes and skips what is already on Facebook
+  /// instead of building a second structure. It becomes `fbCampaignId` (and this is cleared) when the
+  /// build completes, and is cleared when the unfinished build is discarded (reopen / relaunch).
+  /// Child ids are only meaningful under a non-null value here.
+  fbPendingCampaignId String? @map("fb_pending_campaign_id")
   /// The STABLE Meta ad-account id (the `act_…` numeric body) this campaign launched under.
   /// Unlike `adAccountId` (an internal fb_ad_accounts row id that is deleted when a connection is
   /// disconnected), this survives reconnects/app-switches — so reads (status reconcile, insights)

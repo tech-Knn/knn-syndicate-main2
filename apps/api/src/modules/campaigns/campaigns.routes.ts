@@ -12,11 +12,10 @@ import {
   deleteCampaign,
   getCampaign,
   listCampaigns,
-  reopenCampaign,
   submitCampaign,
   updateCampaign,
 } from './campaigns.service.js';
-import { launchCampaign, setCampaignActive, testLaunchCampaign, updateAdSetBudget, updateCampaignBudget } from './launch.service.js';
+import { launchCampaign, reopenCampaignForEdit, setCampaignActive, testLaunchCampaign, updateAdSetBudget, updateCampaignBudget } from './launch.service.js';
 import { bulkApprove, bulkDelete, bulkReject, bulkSetActive } from './bulk.service.js';
 import { listArticleVariants, listOfferDomains, listOffers, setOffers, updateLiveOffers } from './offers.service.js';
 import { getGoogleSignals, updateGoogleSignals } from './google-signals.service.js';
@@ -159,7 +158,8 @@ export async function campaignRoutes(app: FastifyInstance): Promise<void> {
     async (req, reply) => {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
-        return reply.send({ campaign: await reopenCampaign(req.auth, req.params.id) });
+        // Pauses + forgets any unfinished Facebook build first, so the edited campaign is never resumed from stale objects.
+        return reply.send({ campaign: await reopenCampaignForEdit(req.auth, req.params.id) });
       } catch (err) {
         return handleRouteError(err, reply);
       }

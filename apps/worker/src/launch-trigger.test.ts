@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prisma, withSystem } from '@knn/db';
 import { ROLES, USER_STATUS } from '@knn/shared';
-import { type FbLaunchJob, launchJobId, learnRcTermsNow, runFbLaunch, syncAllFbConnections, triggerAutoLaunch } from './launch-trigger.js';
+import { type FbLaunchJob, enqueueFbLaunch, launchJobId, learnRcTermsNow, runFbLaunch, syncAllFbConnections, triggerAutoLaunch } from './launch-trigger.js';
 
 const suffix = Date.now().toString(36);
 let orgId = '';
@@ -14,9 +14,11 @@ let domB = '';
 interface CampaignShape {
   channelId?: string | null;
   fbCampaignId?: string | null;
+  /** The Facebook campaign of a launch that was interrupted mid-build (rate limit) — NOT "launched". */
+  fbPendingCampaignId?: string | null;
 }
 
-async function makeCampaign({ channelId = null, fbCampaignId = null }: CampaignShape = {}): Promise<string> {
+async function makeCampaign({ channelId = null, fbCampaignId = null, fbPendingCampaignId = null }: CampaignShape = {}): Promise<string> {
   const c = await withSystem((tx) =>
     tx.campaign.create({
       data: {
@@ -27,6 +29,7 @@ async function makeCampaign({ channelId = null, fbCampaignId = null }: CampaignS
         keywords: [],
         channelId,
         fbCampaignId,
+        fbPendingCampaignId,
       },
     }),
   );
@@ -130,6 +133,19 @@ describe('triggerAutoLaunch', () => {
     expect(enqueueLaunch).not.toHaveBeenCalled();
   });
 
+  // A rate-limited launch records the Facebook campaign it already created in `fbPendingCampaignId` and
+  // leaves `fbCampaignId` (= "fully launched") null. The gate must keep treating it as launchable — otherwise
+  // auto-launch and the BATCHED re-drive could never finish the build (and the launch RESUMES it, it doesn't duplicate).
+  it('still enqueues a campaign whose Facebook build is UNFINISHED (fbPendingCampaignId set, fbCampaignId null)', async () => {
+    const id = await makeCampaign({ channelId: randomUUID(), fbPendingCampaignId: 'fbcamp-half-built' });
+    const enqueueLaunch = vi.fn(async () => {});
+
+    const res = await triggerAutoLaunch(id, { enqueueLaunch });
+
+    expect(res.enqueued).toBe(true);
+    expect(enqueueLaunch).toHaveBeenCalledWith(id);
+  });
+
   it('does NOT enqueue for a missing campaign', async () => {
     const enqueueLaunch = vi.fn(async () => {});
 
@@ -160,6 +176,21 @@ describe('triggerAutoLaunch', () => {
 
     expect(res.enqueued).toBe(false);
     expect(enqueueLaunch).not.toHaveBeenCalled();
+  });
+});
+
+describe('FB_LAUNCH job options (D19)', () => {
+  // A launch that fails for any reason OTHER than a rate limit must never be retried by BullMQ: a blind retry
+  // can repeat a deterministic rejection, and worsens an ad-account security checkpoint (FB code 368). A rate
+  // limit is not a job failure at all — the API parks the campaign in BATCHED and answers 200 — so `attempts: 1`
+  // costs nothing there. (The resumable build makes a *manual* relaunch safe; it does not make auto-retry wise.)
+  it('is de-duped per campaign and attempts:1 — BullMQ never retries a failed launch', async () => {
+    const add = vi.fn(async (..._args: unknown[]) => undefined);
+
+    await enqueueFbLaunch('camp-1', { add });
+
+    expect(add).toHaveBeenCalledTimes(1);
+    expect(add).toHaveBeenCalledWith('launch', { campaignId: 'camp-1' }, expect.objectContaining({ jobId: launchJobId('camp-1'), attempts: 1 }));
   });
 });
 
@@ -194,7 +225,7 @@ describe('runFbLaunch', () => {
     });
   });
 
-  it('throws on a non-2xx response so BullMQ retries', async () => {
+  it('throws on a non-2xx response so the job fails (never auto-retried — attempts:1)', async () => {
     const fetchMock = vi.fn(async () => new Response('boom', { status: 500 }));
 
     await expect(

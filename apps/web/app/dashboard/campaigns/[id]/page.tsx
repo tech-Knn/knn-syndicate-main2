@@ -278,7 +278,7 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
   const reopen = async (): Promise<void> => {
     const ok = await confirm({
       title: 'Reopen for editing?',
-      body: 'This returns the campaign to a draft and releases its assigned channel back to the pool. You can resubmit when you are done.',
+      body: 'This returns the campaign to a draft and releases its assigned channel back to the pool. If part of it was already created on Facebook (for example the launch was rate-limited), that unfinished Facebook campaign is paused first. You can resubmit when you are done.',
       confirmLabel: 'Reopen',
     });
     if (!ok) return;
@@ -375,7 +375,9 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
         >
           {c.status === 'QUEUED_NO_CHANNEL'
             ? 'No AdSense channel is free for this campaign yet. Reopen to edit it, or leave it queued.'
-            : 'A channel is assigned. Launching generates the article, wires the redirect, and creates the ads on Facebook. Need to fix something first? Reopen to edit.'}
+            : c.status === 'BATCHED'
+              ? 'Facebook rate-limited the launch part-way. Whatever was already created there is kept, and Launch continues from where it stopped — nothing is created twice. Need to fix something first? Reopen to edit.'
+              : 'A channel is assigned. Launching generates the article, wires the redirect, and creates the ads on Facebook. Need to fix something first? Reopen to edit.'}
         </Banner>
       )}
       {note && (

@@ -225,7 +225,8 @@ the approved plan.
 - **Safety:** `FB_LAUNCH` is **`attempts:1`** — `launchCampaign` is only idempotent on *full* success
   (`fbCampaignId`), so a partial FB failure must not auto-retry (would double-create). Rate-limits aren't
   job failures (the API parks the campaign in BATCHED, a 200). A truly failed launch lands in Bull-Board
-  for a manual retry. Resumable partial-failure launch is a Phase 11 hardening follow-up (OPEN_QUESTIONS #10).
+  for a manual retry. Resumable partial-failure launch is a Phase 11 hardening follow-up (OPEN_QUESTIONS #10)
+  — **done, see D32** (the launch now records each Facebook id as it is created and resumes; `attempts:1` stays).
 - **UX:** the auto-launch switch sits beside auto-approve on the Approvals page (company-admin only);
   approval/auto-approval notifications now say "will launch automatically" vs "ready to launch" per the mode.
 
@@ -736,3 +737,100 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   - The rc-word learner (D28) still measures keyword clicks per 100 **FB clicks**, because its
     thresholds were calibrated on that.
   - Today's RPC climbs through the day, because AdSense earnings lag the clicks by a few hours.
+
+### 2026-09-30 — D32: A rate-limited launch resumes instead of rebuilding — Facebook ids are recorded as each object is created
+
+- **Read first:** this was written on a checkout where **D31** (the BATCHED re-drive cron,
+  `apps/worker/src/jobs/batched-redrive.ts`) and its "Known gap" note are **not present** — not on this branch,
+  `origin/main` or any other remote branch. So this entry stands alone instead of extending that note. It is the fix
+  for that gap: the re-drive re-runs `launchCampaign` on a BATCHED campaign, and this makes that safe. When D31 lands,
+  point its "Known gap" here.
+- **Problem:**
+  - `createFbStructure` created the campaign, then each ad set, then per ad an image/video upload + creative + ad, all
+    ACTIVE, and wrote the Facebook ids only at the very end (`persistFbIds`).
+  - A rate limit mid-build (`FbRateLimitError`, after the per-account limiter's retries and breaker, D12) parked the
+    campaign in BATCHED and answered 200. Everything already created stayed on Facebook — live, possibly spending — with
+    no id recorded, and the next launch (the buyer's Launch, auto-launch, a re-drive) built a second complete structure.
+- **Decision — what "launched" means:**
+  - **`campaigns.fb_campaign_id` keeps its one meaning: the whole structure is built.** It is written only when the build
+    completes.
+  - **Progress of an unfinished build lives in a new nullable `campaigns.fb_pending_campaign_id`, plus the existing
+    `ad_sets.fb_ad_set_id` and `ads.fb_ad_id`.** Each is written in its own small transaction, right after the Graph call
+    that created it and before the next call. Migration `20260930103000_campaign_fb_pending_campaign_id` — additive,
+    nullable, no backfill.
+  - **Why not persist `fb_campaign_id` early plus a "fully built" marker** (or make each check verify the children):
+    every reader treats `fb_campaign_id` as "launched" — the launch's own early return and claim, the worker auto-launch
+    gate (`triggerAutoLaunch`), the meta-rejection reconcile scan, the attribution scan, google-signals `live`,
+    `relaunchCampaign` — and there can be readers not visible from one checkout (the D31 sweep is one). Changing the
+    column's meaning means finding and changing all of them, and one miss silently treats a half-built campaign as live or
+    a BATCHED one as done. Keeping the meaning and putting the new state in a new column changes none of them.
+  - **Why not delete/pause what was created when a rate limit aborts the build:** the cleanup calls go through the same
+    per-account limiter, whose breaker is already open after 5 consecutive rate limits (5-minute cooldown) — they fail
+    exactly when they are needed.
+- **How a launch resumes:**
+  - **The atomic LAUNCHING claim is unchanged** (`UPDATE … WHERE fb_campaign_id IS NULL AND status IN (PROCESSING,
+    BATCHED)`), so exactly one caller builds.
+  - **No extra Facebook calls.** The recorded campaign and ad sets are reused, and an ad that has an id is skipped
+    entirely (no upload, creative or create). A recorded ad set or ad is trusted only under the recorded campaign; a
+    brand-new Facebook campaign or ad set clears whatever was recorded below it.
+  - **An ad interrupted before its `createFbAd`** redoes its image upload and creative (an unreferenced creative costs
+    nothing); a video is uploaded again.
+  - **Completion is ONE commit:** `fb_campaign_id` ← the campaign, pending cleared, every id, status ACTIVE, audit
+    `campaign.launched` (now with `resumed`). Before, the ids and the status were two commits.
+  - **One campaign, one redirect host and one white domain.** Both are recorded with the pending campaign and kept on
+    resume while still eligible. Otherwise the least-loaded ranking moves between attempts — exactly when rate limits hit,
+    under load — and one campaign ends up with creatives on several hosts while only the last is recorded for
+    blast-radius reporting (and a CLOAKER ad's visible display link stops matching its fallback page).
+  - **Test launch is unchanged** (a fresh PAUSED structure, ids written at the end). It now refuses (409) over an
+    unfinished build, which it would otherwise take over and orphan.
+- **Changing or restarting a campaign with an unfinished build:**
+  - A resume reuses what exists, which is only right while the config is unchanged — and "Reopen & edit" is offered on
+    BATCHED and PROCESSING campaigns. So the reopen route now calls `reopenCampaignForEdit`: it pauses the unfinished
+    Facebook campaign, drops every recorded id, then reopens. A campaign launched after the edit builds from scratch.
+  - **Failure policy mirrors pause/resume and the budget edits.** A rate limit, an ad-account security hold (368) or a
+    dead token stops the reopen with the usual error and changes nothing (reopening anyway would strand a live campaign;
+    the buyer retries once it clears). Any other Facebook error (typically: deleted in Ads Manager), or an ad account that
+    is no longer connected, lets the reopen go ahead and tells the buyer (notification) which Facebook campaign to pause
+    by hand. Audited as `campaign.fb_build_discarded`.
+  - **The edge config is republished inactive after a discard** (B1): the unfinished build's configs were written
+    `active:true` with the channel that reopening releases, and its ads may still be live.
+  - **`reopenCampaign` on its own fails closed** (409) while a build is unfinished. **`relaunchCampaign`** (the ops
+    "start over") pauses and forgets the unfinished campaign too — now with the owner's write credential (the LAUNCH app's
+    when they have one; it used the raw DATA token) and a notification when the pause fails, instead of silently leaving
+    a live campaign. It stays best-effort: it never blocks. The Reopen confirmation and the BATCHED banner say so.
+- **D19 kept:** `FB_LAUNCH` stays `attempts:1`, and a failure that is not a rate limit still reverts to PROCESSING for a
+  human. Resumability makes a manual relaunch safe, not blind auto-retry wise — a deterministic rejection just repeats,
+  and retrying into a 368 hold makes the checkpoint worse. The rule is now pinned by a worker test.
+- **Known gaps:**
+  - **Crash window.** If Facebook created an object but our write then fails (DB outage, process killed right then), it
+    is unrecorded. It is logged as `ORPHAN RISK` with its id. Facebook has no idempotency key for these creates, and
+    finding strays by listing would add calls to every launch.
+  - **Live while BATCHED.** Ads created before the limit hit keep delivering (their edge config stays active), but
+    attribution and the status reconcile only see the campaign once `fb_campaign_id` is set. Deliberately not paused:
+    that needs calls during a rate limit, plus an un-pause on resume. Their edge configs carry no `expectedAdId` until
+    the launch completes (the resolver then uses its legacy paid-click routing, as in any launch's pre-resync window),
+    and any sync while BATCHED — e.g. a live offer edit — derives `active:false` from the status (as before).
+  - **The auto-launch job can't re-drive a BATCHED campaign by itself — verified on real Redis (bullmq 5.77).** The
+    `FB_LAUNCH` job id is `launch-<campaignId>` and completed jobs are retained (`removeOnComplete: 200`); BullMQ silently
+    ignores an `add()` whose id still exists, so a later `triggerAutoLaunch` for the same campaign enqueues nothing.
+    Pre-existing and unchanged here. A queue-based re-drive (D31) has to enqueue with a unique id per attempt, drop the
+    retention, or call the internal launch endpoint directly.
+  - **Reopen racing a launch.** If a launch claims the campaign while a reopen is pausing its Facebook campaign, the
+    reopen stops (409) and that launch resumes a campaign that is now paused on Facebook. The 30-minute status reconcile
+    mirrors it as PAUSED and the buyer can resume it; nothing is lost or duplicated.
+  - **A host that leaves its pool mid-build.** Resuming keeps the redirect host and white domain only while they are
+    still eligible; if one was retired or flagged, the rest of the build uses a fresh one (logged), and only that one is
+    recorded — the ads already created still link to the old one.
+  - **Stuck LAUNCHING (pre-existing).** A process killed mid-build leaves LAUNCHING, which nothing recovers. The recorded
+    ids now make it safe to flip such a campaign back to BATCHED (the launch resumes), but there is no sweeper yet.
+  - **Campaigns already BATCHED before this ships** may have live objects left by the old behaviour, with no id to find
+    them by — check Ads Manager for duplicates of those.
+  - **Not verified against live Facebook.** Tests use a scripted Graph client. Assumed: a rate-limited create creates
+    nothing, and a recorded object is still valid on the next attempt.
+- **Tests:** `launch-resume.test.ts` (API, real Postgres, scripted Facebook, 40 tests): a rate limit at each of the 15
+  Graph calls of a 2-ad-set × 2-ad campaign → BATCHED → a second launch → exactly one campaign, two ad sets and four ads
+  ever created, all recorded; plus ids recorded before the next call, only the missing calls made, repeated limits, two
+  racing resumes, a non-rate-limit failure, host stability and host switching, and the reopen / relaunch / test-launch
+  guards. **37 of the 40 fail on the pre-change code**; the other 3 guard behaviour that must not change. Worker: an
+  unfinished build still passes the auto-launch gate, and the job keeps `attempts:1` (`enqueueFbLaunch` is injectable, so
+  this needs no mocked module).

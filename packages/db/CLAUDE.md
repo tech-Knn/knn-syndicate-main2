@@ -24,6 +24,15 @@ Single source of truth for the data model. Exposes one shared `PrismaClient` sin
   the buyer's custom RSOC `terms_override` live on `campaigns`; `redirect_id` (unique) lives on `ads`.
   The ONE per-ad exception is `ads.rac_value`, an optional Referrer Ad Creative override (D27; null → the
   campaign's). Read it through `effectiveRac()` (`@knn/shared`). Don't add other per-ad offer fields.
+- **Facebook ids & the resumable launch**: `campaigns.fb_campaign_id` non-null ⇔ the WHOLE Facebook structure
+  (campaign → ad sets → ads) is built — every reader (auto-launch gate, meta-rejection/attribution scans,
+  google-signals `live`, the launch's own "already launched" check, the BATCHED re-drive) treats it as "launched",
+  so **never set it early**. A launch interrupted by a rate limit or failure records what already exists in
+  `campaigns.fb_pending_campaign_id` + `ad_sets.fb_ad_set_id` + `ads.fb_ad_id`, each written the moment its object is
+  created; the next launch resumes from those and creates only the rest. Child ids are only valid under a non-null
+  `fb_pending_campaign_id`. A launch-completing write moves pending → `fb_campaign_id` and flips the status in one
+  commit; reopen / relaunch pause + clear an unfinished build so an edited campaign never resumes stale objects.
+  A rate-limited (BATCHED) campaign therefore still has `fb_campaign_id IS NULL` — a "BATCHED and not launched" query keeps working.
 
 Phase 0 has only `platform_settings`. The full schema (orgs, users, campaigns, adsets, ads,
 channels, articles, revenue, …) is built phase by phase.
