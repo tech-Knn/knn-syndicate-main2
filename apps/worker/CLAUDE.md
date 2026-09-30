@@ -19,6 +19,11 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
   — conversions → clicks → impressions → `unallocated` (OPEN_QUESTIONS #1) — apply the revenue cut
   (buyer override ?? org default) → `ad_revenue_daily`. The `ATTRIBUTION` queue runs `hourly`
   (today) + `finalize` (trailing FB/AdSense windows, §5.8).
+- **A day's AdSense revenue belongs to the campaign that HELD the channel that day** (`channel_assignments.for_day`), in both
+  `campaign_revenue_daily` and `offer_revenue_daily`. Channels are reused by many campaigns and every pull re-reads the
+  trailing days, so never credit a report day to whoever holds the channel now (an earlier version did: a new campaign
+  showed the channel's previous week as its own earnings, and those days were counted twice). A day nobody held writes no
+  row; the pull also deletes per-offer rows for that channel and day that belong to a different campaign.
 - **Storage is DAILY, not the plan's `ad_stats_hourly`** — attribution + AFS reporting are daily and
   FB's hourly breakdown is timezone-fragile; the cron PULLS hourly to keep "today" fresh. Day key =
   IST business day (FB uses the ad-account tz; OPEN_QUESTIONS #14).
