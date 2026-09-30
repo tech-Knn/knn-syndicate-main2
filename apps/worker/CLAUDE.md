@@ -41,6 +41,18 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
   BullMQ retries (status stays `pending`); already-`sent` → no-op. Idempotent on `event_id = clickId`
   (Facebook also dedupes against the in-browser pixel). Don't move token resolution earlier or add a retry
   on the terminal cases.
+- **Whop dispatch (D32, `src/whop-dispatch.ts`, `WHOP_DISPATCH` queue):** the Whop sibling of the above. A
+  `conversion_events` row with `provider = 'whop'` is reported to Whop's Events API with `@knn/whop`
+  `buildWhopEvent`. The business, the landing URL and Whop's click ids are **frozen on the row at ingest**
+  (`provider_context`), because this job cannot read the edge KV; the API key is resolved **fresh here**
+  (the campaign buyer's own connection first). Policy by error KIND, never message text: `auth` (401) →
+  terminal, flip the connection to BROKEN once + notify once; `permission` (403) → terminal, names the missing
+  permission, connection stays ACTIVE; `validation`/`not_found`/`conflict`/`payment_required` → terminal;
+  `rate_limited`/`server`/`network`/`timeout` → record and **rethrow** (BullMQ retries; the client itself
+  retries only once). When BullMQ's retries run out, `failExhaustedWhopEvent` settles the row as `failed` so
+  nothing sits `pending` forever (the CAPI path has no such handler). Events older than 27 days are never sent
+  (Whop refuses 28). Idempotent: Whop keeps one copy of an `event_name` + `event_id` (= the click id). The
+  Facebook and Whop paths never share a row, a queue or a retry policy: one row is one send.
 
 **Testing footgun:** worker tests share one Postgres and use GLOBAL (cross-org) scans (channel pool,
 meta-rejection, attribution), so `vitest.config.ts` sets `fileParallelism: false` — don't re-enable

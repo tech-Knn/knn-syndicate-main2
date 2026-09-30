@@ -5,6 +5,7 @@ import { QUEUES, closeQueues, createConnection, getQueue } from '@knn/queue';
 import { FINALIZATION } from '@knn/shared';
 import { runFinalization, runHourlyAttribution } from './attribution/attribution.service.js';
 import { type CapiDispatchJob, dispatchConversion } from './capi-dispatch.js';
+import { type WhopDispatchJob, dispatchWhopEvent, failExhaustedWhopEvent } from './whop-dispatch.js';
 import {
   assignForCampaign,
   processQueue,
@@ -136,6 +137,22 @@ async function main(): Promise<void> {
   );
   capiWorker.on('failed', (job, err) => {
     console.error(`[worker] ${QUEUES.CAPI_DISPATCH} job ${job?.id} failed:`, err.message);
+  });
+
+  // Conversion → Whop's Events API (S2S, D32): the Whop sibling of the CAPI worker above. A Whop ad's money
+  // page carries no Whop pixel, so each funnel event is reported from here. Retries with backoff on rate-limit
+  // or transient errors; a rejected key or a refusal is terminal; when BullMQ's retries run out the row is
+  // settled as failed (CAPI leaves such rows pending forever; this one must not).
+  const whopWorker = new Worker(
+    QUEUES.WHOP_DISPATCH,
+    async (job: Job<WhopDispatchJob>) => dispatchWhopEvent(job.data),
+    { connection, concurrency: 4 },
+  );
+  whopWorker.on('failed', (job, err) => {
+    console.error(`[worker] ${QUEUES.WHOP_DISPATCH} job ${job?.id} failed:`, err.message);
+    if (job && job.attemptsMade >= (job.opts.attempts ?? 1)) {
+      void failExhaustedWhopEvent(job.data.conversionEventId, err.message).catch((e) => console.error('[worker] could not settle exhausted Whop event:', e instanceof Error ? e.message : String(e)));
+    }
   });
 
   // Campaign reconciliation (D14 + status sync): FB has no reliable webhook for disapproval
@@ -288,6 +305,7 @@ async function main(): Promise<void> {
     await channelWorker.close();
     await fbLaunchWorker.close();
     await capiWorker.close();
+    await whopWorker.close();
     await metaRejectionWorker.close();
     await attributionWorker.close();
     await closeQueues();

@@ -22,6 +22,7 @@ import {
   autoApproveSchema,
   autoLaunchSchema,
   cloakingSchema,
+  whopSchema,
   createOrgSchema,
   funnelModeSchema,
   platformSettingsSchema,
@@ -44,6 +45,7 @@ import {
   setOrgAutoApprove,
   setOrgAutoLaunch,
   setOrgCloaking,
+  setOrgWhop,
   setUserFunnelMode,
   setUserStatus,
 } from './admin.service.js';
@@ -486,6 +488,16 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     try {
       await deleteWhiteDomain(req.params.id);
       return reply.code(204).send();
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // ─── Whop Ads gate (super-admin): off by default; nothing Whop-related shows until it is turned on ───
+  app.patch<{ Params: { id: string } }>('/organizations/:id/whop', superOnly, async (req, reply) => {
+    if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+    try {
+      return reply.send({ organization: await setOrgWhop(req.auth, req.params.id, whopSchema.parse(req.body).whopEnabled) });
     } catch (err) {
       return handleRouteError(err, reply);
     }

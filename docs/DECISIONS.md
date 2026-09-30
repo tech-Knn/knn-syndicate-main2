@@ -736,3 +736,141 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
   - The rc-word learner (D28) still measures keyword clicks per 100 **FB clicks**, because its
     thresholds were calibrated on that.
   - Today's RPC climbs through the day, because AdSense earnings lag the clicks by a few hours.
+
+### 2026-09-30 — D32: Whop Ads is a second ad provider — a buyer connects a Whop business with its ID and an API key; Meta ads only
+
+- **Why:** Whop resells Meta advertising. Whop owns the Meta ad account (one per Whop business) and exposes it
+  through a REST API, so a buyer with a Whop business can run campaigns without their own Facebook ad account
+  or Business Manager. The brief: the buyer adds only the business ID and an API key; the page, payment
+  method, pixel and going live are guided and checked; nothing that exists may break.
+- **Decided with Aman (2026-09-30):**
+
+  | Question | Decision |
+  |---|---|
+  | Who owns a connection? | The buyer adds and connects their own Whop business, like Facebook. A super-admin can see all. |
+  | Cloaking | Whop only needs a destination link. Funnel mode (NORMAL / CLOAKER) applies exactly as it does for Facebook. ~~We add nothing Whop-specific to get past Whop's own pixel check; if Whop rejects a link, the buyer sees Whop's message.~~ **Superseded the same day by the tracking design below:** the Whop pixel goes on the page Whop's check sees. |
+  | Who turns it on? | The global flag `WHOP_ADS_ENABLED` AND a per-company switch only a super-admin flips (`organizations.whop_enabled`). Off by default. When off, every route answers 404 and the nav item is hidden. |
+  | Scope | Meta ads only. No audiences, AI creatives or lead forms. |
+  | Test access | Aman creates a Whop sandbox account and key, saved in `~/whop-sandbox.env` outside the repo. |
+  | Column labels | Columns that come from a platform are labelled by source: "(FB)" and "(Whop)". |
+
+- **What Whop's API gives us** (OpenAPI 1.0.0, read 2026-09-29):
+  - **Auth:** an Account API key (`Authorization: Bearer`) plus the business ID (`biz_…`). Production is
+    `api.whop.com/api/v1`; the sandbox is `sandbox-api.whop.com/api/v1`, same API and separate data.
+  - **Versioned by date** (`Api-Version-Date`). We pin `2026-09-29` (`WHOP_API_VERSION_DATE`). The ad copy
+    shape changed on 2026-09-24-1, so never send an older date.
+  - **Limits:** 600 requests a minute per operation and credential. POSTs take an `Idempotency-Key` (kept 24 h).
+  - **Objects:** ad campaign (`adcamp_`) → ad group (`adgrp_`) → ad (`ad_`). Stats ride on those objects.
+  - **No Meta ids.** Whop doesn't expose the Meta ad account, pixel or ad ids, so no Facebook path that assumes
+    them can be reused.
+  - **Launch gates:** a signed ads agreement, a payment method, a Facebook page, and the Whop pixel on any
+    external destination (`validate_pixel`). Drafts need none of them.
+  - **Reserved click parameters** (`utm_meta_*`, `utm_source`, `wacid`, `wasid`, `waid`, …) belong to Whop.
+    Our links must not reuse them.
+- **Architecture**
+  - **Separate everything.** New tables `whop_connections` and `whop_social_accounts` (RLS like `fb_*`), a new
+    package `@knn/whop`, routes under `/api/ad-providers/whop/*`. The `fb_*` tables, `/api/facebook/*` and
+    `@knn/fb` are untouched.
+  - **Connect = verify, then store.** The key is checked against Whop before anything is saved. It is encrypted
+    with the same AES-256-GCM helper as Facebook and Google tokens, only its last four characters are ever
+    shown, and it never appears in a response, an error or the audit trail (tested); no Whop code logs it.
+    Reconnecting replaces the key. Disconnecting deletes the row, and with it the key.
+  - **One checklist, from live reads:** key works · key permissions · ads agreement · payment method ·
+    reporting currency · Facebook page · Whop pixel. The design: from phase 2 a buyer can build campaigns as
+    drafts as soon as the key works (`canDraft`), and launching needs every step (`canLaunch`). Each step says
+    what to do, with a button where we can do it for them (connect Meta Business, create a Whop-managed page,
+    check again).
+  - **Permissions can't be listed.** Whop has no call that returns what a key may do. The check probes the
+    read permissions and reports the write ones as confirmed on first use; the error then names the missing
+    permission.
+  - **BROKEN means Whop said so.** A connection turns BROKEN only when Whop rejects the key, the key lost access,
+    or it belongs to another business. An outage never breaks it. One `whop_connection_broken` notification per
+    break; a later good check recovers it.
+  - **Access is per user.** An owner sees and manages only their own connections; a super-admin sees all
+    (`GET /connections/all`). For buyers, sandbox connections need `WHOP_ALLOW_SANDBOX=true` (off by default, for
+    local and staging); a super-admin can always connect a sandbox business, so the platform owner can test
+    in any environment.
+  - **Client behaviour:** retries only what is safe (reads, and POSTs that carry an `Idempotency-Key`);
+    a `Retry-After` longer than the cap is raised to the caller instead of slept on; its own limiter is keyed by
+    a hash of the credential, not by an account id.
+- **Risks found in the existing Facebook code, and how Whop stays clear of them:**
+  - **Provider-blind credential lookups** (`resolveCampaignReadAuth` picks any live connection; an unknown app
+    kind falls through to DATA) → Whop credentials never live in `fb_connections`, so they cannot be picked up.
+  - **`Campaign.fbCampaignId != null` means "launched"** in about eight places → Phase 2 adds `isLaunched()`
+    before a Whop campaign can exist.
+  - **About twenty `instanceof` Facebook-error branches** → Phase 2 introduces neutral error kinds. Whop errors
+    never flow through the Facebook branches.
+  - **Facebook status reconcile can archive a campaign and release its channel** → Whop campaigns are excluded
+    until they have their own reconcile.
+  - **A `ConversionEvent` row is also an Analytics count** → Phase 3 defines how Whop events are counted once.
+  - **The Facebook rate limiter is process-local and keyed by raw account id** → Whop has its own.
+  - **About fifteen test files insert raw `fb_*` rows with minimal fields** → no new required columns on `fb_*`.
+- **Risk disclosed to the owner once:** Whop's terms make the advertiser responsible for Meta's ad policies, and
+  Whop can suspend an account after a 5-business-day cure period. The cloaking decision above was made with
+  that in view.
+- **Phases:**
+  1. **Connect — built and tested (this entry).** Connection, checklist, page and pixel steps, the company
+     switch, the dashboard page, the mock Whop API. Nothing launches yet.
+  2. **Build and launch** — neutral error kinds, `isLaunched()`, Whop ids on campaign / ad set / ad, a provider
+     choice in the wizard, draft-first launch that can resume and is idempotent, pause / resume, budget edit, clone.
+  3. **Pixel, events, stats** — **tracking built 2026-09-30** (see the addendum below): the Whop pixel on the
+     page Whop's check sees, Whop's click parameters kept through the redirect, conversion events to Whop.
+     Still to do: stats and status sync in the IST day, "(Whop)" column labels in Analytics.
+  4. **Operate** — webhooks, payment-failed banner with retry, notifications, super-admin overview, runbook.
+  - **Phase 0 (sandbox spike)** answers the questions listed in `OPEN_QUESTIONS.md` #15 and gates phase 3. It
+    waits for the sandbox key.
+- **Docs:** `docs/WHOP.md` (setup, checklist, permissions, testing, operations, API), `packages/whop/CLAUDE.md`.
+
+#### D32 addendum, 2026-09-30 (later): tracking — the pixel on the page Whop checks, server events for the rest
+
+- **Owner's direction (Aman).** Put the complete Whop pixel on the **white page** and let it fire there; send the
+  real conversions from the **money page** server-to-server, the way ClickFlare already runs Whop campaigns for
+  the team. Aman also reports that Whop support confirmed **in writing** that search-arbitrage funnels are
+  allowed. That confirmation is not in the repository: keep a copy with the company records (this decision
+  leans on it). This supersedes the "add nothing Whop-specific to get past Whop's pixel check" row above.
+- **What the sandbox and ClickFlare showed** (details and open items: `OPEN_QUESTIONS.md` #15):
+  - Whop checks an ad's destination **when the ad is created** (`POST /ads`, even as a draft): 400 "The Whop
+    pixel was not detected on <url>" until it passes. It loads the URL, **follows redirects**, and reads the
+    final page's source for the pixel (recent pixel events from that page also count; a whop.com page needs none).
+    ClickFlare's docs say the same: "Whop requires its pixel on external landing pages before an ad can go live.
+    The Conversion API does not replace it."
+  - A server event (`POST /events`) is attributed from the landing URL's `wacid`/`wasid`/`waid`, `fbclid`, IP and
+    user agent; the visitor cookie (`_wuid`) is optional. ClickFlare's live mapping is Page Visit → `view_content`,
+    Click Button → `add_to_cart`, Search → `submit_application`: the same three steps as our funnel.
+- **Design**
+  - **The go-link decides.** A Whop campaign's redirect config carries `whop: { bizId }`. For such a config the
+    Worker also counts Whop's own click signal as paid; records Whop's ids and the landing URL (only Whop's
+    parameters, validated) beside the click; and tags the **non-paid** landing with a signed `_ws` scope. The
+    money route never carries it. Facebook configs have no `whop` block and route exactly as before.
+  - **The pixel appears only behind a verified scope.** The white Worker (and the article, in NORMAL funnel
+    mode, where the non-paid landing is the plain article) renders the business's pixel in `<head>` only when a
+    request carries a valid `_ws`: an HMAC of the business id (`WHOP_SCOPE_SECRET`), so a stranger cannot make
+    our pages report into someone else's Whop account. A direct visit, a crawler or a forged link sees the same
+    clean page as ever. The variant is `private, no-store`. It fires the ordinary page view only: no conversion
+    event is ever wired on a page.
+  - **Conversions go server-side.** Ingest marks a click with a `whop` block as a Whop send (`provider = 'whop'`,
+    business, landing URL and click ids frozen in `provider_context`) and queues it on `WHOP_DISPATCH`; the worker
+    posts it to Whop's Events API with ClickFlare's payload shape. One row is one send, and still exactly one row
+    for Analytics (D30). Facebook rows are untouched (`provider` defaults to `facebook`).
+  - **Failures are explicit.** A rejected key breaks the connection once and notifies once; a missing permission
+    names itself; refusals are terminal; outages retry; and unlike CAPI, a row whose retries run out is settled
+    as `failed` instead of sitting `pending` forever.
+- **Trade-offs we accepted**
+  - The white site's rule "no shared ID, ever" now has one narrow, documented exception. The business id is
+    visible in that page's source, but only to visitors who arrived through that business's go-link (Whop's
+    check, a reviewer following the ad), never to a direct visit. White sites of one business carry the same id
+    for those visitors, which is the price of Whop's requirement.
+  - The Whop pixel check sees the white page, not the money page. If Whop ever renders the final destination
+    with a real browser and compares it with what users see, this design stops being enough; ClickFlare users
+    share that exposure today.
+  - The redirect Worker stays dependency-free, so it holds its own copy of Whop's click parser (a test proves it
+    agrees with `@knn/shared`); the scope token and the pixel loader are verbatim copies in the white Worker and
+    the article app, each guarded by a test that fails on drift.
+- **Not done yet (phase 2 and deploy)**
+  - Nothing writes `whop.bizId` into a KV config until a Whop campaign can be launched (phase 2). **Both** config
+    builders in `launch.service.ts` must emit it, or the next resync drops it.
+  - `WHOP_SCOPE_SECRET` must be set as a secret in three places, with the same value: the redirect Worker and the
+    white Worker (wrangler secrets, the white one on the white Cloudflare account) and the article app's runtime
+    env. Unset anywhere = no pixel there (the safe default).
+  - Whop-specific ad-id verification under `CLOAK_VERIFY_MODE=enforce` (an `expectedWhopAdId` matched against
+    `waid`) waits until the ad id is known after creation.

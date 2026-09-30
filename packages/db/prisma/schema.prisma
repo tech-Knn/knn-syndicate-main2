@@ -67,6 +67,9 @@ model Organization {
   /// The org's default funnel mode for its buyers (only effective when cloakingEnabled). A buyer
   /// inherits this unless a per-buyer override is set (User.funnelMode).
   defaultFunnelMode    FunnelMode @default(NORMAL) @map("default_funnel_mode")
+  /// Whop Ads gate (SUPER-ADMIN only, D32): when false no Whop screen, route or job is active for
+  /// this company. Off by default — nothing Whop-related shows until a super-admin turns it on.
+  whopEnabled          Boolean   @default(false) @map("whop_enabled")
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
 
@@ -116,6 +119,7 @@ model User {
   organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
   refreshTokens RefreshToken[]
   fbConnections FbConnection[]
+  whopConnections WhopConnection[]
   campaigns     Campaign[]
 
   @@index([orgId, status])
@@ -210,6 +214,78 @@ model FbPixel {
   @@unique([adAccountId, fbPixelId])
   @@index([orgId])
   @@map("fb_pixels")
+}
+
+/// Which Whop API a connection talks to. The sandbox has its own accounts, keys and data.
+enum WhopEnvironment {
+  PRODUCTION
+  SANDBOX
+}
+
+/// A Whop connection is usable (ACTIVE) or its API key was rejected (BROKEN) until re-entered.
+enum WhopConnectionStatus {
+  ACTIVE
+  BROKEN
+}
+
+/// A user's connected Whop business (D32): the `biz_` id + an Account API key, stored encrypted at rest
+/// (AES-256-GCM, same as the Facebook tokens). Whop owns the Meta ad account; we reach it through this
+/// key. Deliberately NOT stored in fb_connections: every Facebook lookup is provider-blind, so a Whop
+/// row there could be handed to Graph calls.
+model WhopConnection {
+  id            String               @id @default(uuid()) @db.Uuid
+  orgId         String               @map("org_id") @db.Uuid
+  userId        String               @map("user_id") @db.Uuid
+  /// The Whop business (account) id, `biz_…`.
+  bizId         String               @map("biz_id")
+  environment   WhopEnvironment      @default(PRODUCTION)
+  /// The business name as Whop reports it (when the key may read it), else a user-given label.
+  label         String?
+  apiKeyEnc     String               @map("api_key_enc")
+  /// Last four characters of the key, for display only.
+  apiKeyLast4   String               @map("api_key_last4")
+  /// The pinned `Api-Version-Date` this connection talks with.
+  apiVersionDate String              @map("api_version_date")
+  status        WhopConnectionStatus @default(ACTIVE)
+  lastError     String?              @map("last_error")
+  /// Reporting currency Whop uses for spend (lowercase ISO code), when known.
+  reportingCurrency String?          @map("reporting_currency")
+  /// The last connection checklist (see WhopChecklist in @knn/shared) and when it ran.
+  checks        Json?
+  lastCheckedAt DateTime?            @map("last_checked_at")
+  connectedAt   DateTime             @default(now()) @map("connected_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  socialAccounts WhopSocialAccount[]
+
+  @@unique([userId, bizId, environment])
+  @@index([userId])
+  @@index([orgId, status])
+  @@map("whop_connections")
+}
+
+/// A Facebook page / Instagram account Whop reports for a connected business (the page ads run under).
+model WhopSocialAccount {
+  id           String   @id @default(uuid()) @db.Uuid
+  orgId        String   @map("org_id") @db.Uuid
+  connectionId String   @map("connection_id") @db.Uuid
+  /// Whop's social account id, `sacc_…`.
+  whopId       String   @map("whop_id")
+  platform     String
+  name         String?
+  username     String?
+  externalId   String?  @map("external_id")
+  verified     Boolean  @default(false)
+  /// Why Whop says this account cannot be used for ads right now. Null when healthy.
+  error        String?
+  syncedAt     DateTime @default(now()) @map("synced_at")
+
+  connection WhopConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, whopId])
+  @@index([orgId])
+  @@map("whop_social_accounts")
 }
 
 /// Hashed refresh tokens for JWT rotation (access 15m / refresh 7d).
@@ -952,6 +1028,18 @@ model ConversionEvent {
   /// (nontrivial EMQ lift for pure-S2S traffic with no email/phone). Nullable — legacy
   /// rows without a server-minted fbp simply omit the field in the CAPI event.
   fbp            String?
+
+  /// Which ad provider this event is reported to: 'facebook' (CAPI: the default, and every existing row) or
+  /// 'whop' (Whop's Events API, D32). One row is one send, so a campaign is one or the other — never add a
+  /// second row per provider (Analytics counts these rows, D30).
+  provider         String    @default("facebook")
+  /// Whop only. What the dispatch job needs, frozen at ingest because the job has no access to the edge KV:
+  /// `{ bizId, landing, click }` from the redirect Worker's click record. Null for Facebook rows.
+  providerContext  Json?     @map("provider_context")
+  /// Whop only. The id Whop answered with (`<biz>:<event_id>`).
+  providerRef      String?   @map("provider_ref")
+  /// Whop only. The latest outcome: `ok`, or the error kind/status and message. Never a key or a header.
+  providerResponse String?   @map("provider_response")
 
   /// pending → sent (CAPI 200) | failed (exhausted retries).
   status         String    @default("pending")

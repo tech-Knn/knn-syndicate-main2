@@ -20,6 +20,7 @@ import { statsRoutes } from './modules/stats/stats.routes.js';
 import { cloakTelemetryRoutes } from './modules/telemetry/cloak-telemetry.routes.js';
 import { termTelemetryRoutes } from './modules/telemetry/term-telemetry.routes.js';
 import { uploadRoutes } from './modules/uploads/uploads.routes.js';
+import { whopRoutes } from './modules/whop/whop.routes.js';
 import { registerBullBoard } from './plugins/bull-board.js';
 import { registerHealth } from './plugins/health.js';
 
@@ -97,6 +98,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(authRoutes, { prefix: '/api/auth' });
   await app.register(adminRoutes, { prefix: '/api/admin' });
   await app.register(facebookRoutes, { prefix: '/api/facebook' });
+  await app.register(whopRoutes, { prefix: '/api/ad-providers/whop' });
   await app.register(adsenseRoutes, { prefix: '/api/adsense' });
   await app.register(domainRoutes, { prefix: '/api/domains' });
   await app.register(campaignRoutes, { prefix: '/api/campaigns' });

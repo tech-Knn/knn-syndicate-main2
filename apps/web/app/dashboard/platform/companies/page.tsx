@@ -38,6 +38,7 @@ const ACTION_LABEL: Record<string, string> = {
   'org.auto_launch.enabled': 'Auto-launch on',
   'org.auto_launch.disabled': 'Auto-launch off',
   'org.cloaking.updated': 'Cloaking updated',
+  'org.whop.updated': 'Whop Ads updated',
   'user.funnel_mode.updated': 'Buyer funnel mode set',
 };
 function actionLabel(a: string): string {
@@ -153,11 +154,12 @@ export default function CompaniesPage() {
     }
   };
 
-  const toggle = async (o: OrgRow, key: 'autoApprove' | 'autoLaunch' | 'cloaking'): Promise<void> => {
+  const toggle = async (o: OrgRow, key: 'autoApprove' | 'autoLaunch' | 'cloaking' | 'whop'): Promise<void> => {
     setBusy(o.id + key);
     try {
       if (key === 'autoApprove') await admin.setAutoApprove(o.id, !o.autoApprove);
       else if (key === 'autoLaunch') await admin.setAutoLaunch(o.id, !o.autoLaunch);
+      else if (key === 'whop') await admin.setWhop(o.id, !o.whopEnabled);
       else await admin.setCloaking(o.id, { cloakingEnabled: !o.cloakingEnabled });
       load();
       loadAudit();
@@ -453,6 +455,15 @@ export default function CompaniesPage() {
                                   <option value="CLOAKER">Buyers default: Cloaker</option>
                                 </select>
                               )}
+                              <button
+                                type="button"
+                                className={styles.actionBtn}
+                                disabled={busy === o.id + 'whop'}
+                                onClick={() => void toggle(o, 'whop')}
+                                title="Let this company's users connect a Whop business and run Meta ads through Whop"
+                              >
+                                {o.whopEnabled ? 'Whop Ads on' : 'Whop Ads off'}
+                              </button>
                               <button type="button" className={styles.actionBtn} onClick={() => openAddUser(o)}>
                                 Add user
                               </button>

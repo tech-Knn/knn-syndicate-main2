@@ -63,6 +63,10 @@ export const cloakingSchema = z
   });
 export type CloakingInput = z.infer<typeof cloakingSchema>;
 
+/** Super-admin: turn Whop Ads on or off for a company. */
+export const whopSchema = z.object({ whopEnabled: z.boolean() });
+export type WhopInput = z.infer<typeof whopSchema>;
+
 /** Per-buyer funnel-mode override (null = inherit the org default). */
 export const funnelModeSchema = z.object({ funnelMode: funnelModeEnum.nullable() });
 export type FunnelModeInput = z.infer<typeof funnelModeSchema>;

@@ -80,8 +80,9 @@ export interface OrgSettings {
   autoLaunch: boolean;
   cloakingEnabled: boolean;
   defaultFunnelMode: FunnelMode;
+  whopEnabled: boolean;
 }
-const orgSettingsSelect = { id: true, name: true, autoApprove: true, autoLaunch: true, cloakingEnabled: true, defaultFunnelMode: true } as const;
+const orgSettingsSelect = { id: true, name: true, autoApprove: true, autoLaunch: true, cloakingEnabled: true, defaultFunnelMode: true, whopEnabled: true } as const;
 
 export interface OrgRow {
   id: string;
@@ -93,6 +94,7 @@ export interface OrgRow {
   autoLaunch: boolean;
   cloakingEnabled: boolean;
   defaultFunnelMode: FunnelMode;
+  whopEnabled: boolean;
   buyerCount: number;
   adminCount: number;
   pendingCount: number;
@@ -155,6 +157,7 @@ export async function listOrganizations(): Promise<OrgRow[]> {
       autoLaunch: o.autoLaunch,
       cloakingEnabled: o.cloakingEnabled,
       defaultFunnelMode: o.defaultFunnelMode,
+      whopEnabled: o.whopEnabled,
       buyerCount: buyerByOrg.get(o.id) ?? 0,
       adminCount: adminByOrg.get(o.id) ?? 0,
       pendingCount: pendingByOrg.get(o.id) ?? 0,
@@ -322,6 +325,21 @@ export async function setOrgCloaking(
       entityId: orgId,
       details: { cloakingEnabled: updated.cloakingEnabled, defaultFunnelMode: updated.defaultFunnelMode },
     });
+    return updated;
+  });
+}
+
+/**
+ * Whop Ads gate (SUPER-ADMIN only, D32): turn Whop Ads on or off for a company. Off by default; with it
+ * off no Whop screen, route or job is active for the company's users.
+ */
+export async function setOrgWhop(actor: AuthContext, orgId: string, whopEnabled: boolean): Promise<OrgSettings> {
+  if (actor.role !== ROLES.SUPER_ADMIN) throw new AppError(403, 'Only a super admin can change Whop Ads access');
+  return runScoped(actor, async (tx) => {
+    const org = await tx.organization.findUnique({ where: { id: orgId }, select: { id: true, isPlatform: true } });
+    if (!org) throw new AppError(404, 'Company not found');
+    const updated = await tx.organization.update({ where: { id: orgId }, data: { whopEnabled }, select: orgSettingsSelect });
+    await writeAudit(tx, { orgId, actorId: actor.userId, action: 'org.whop.updated', entityType: 'organization', entityId: orgId, details: { whopEnabled } });
     return updated;
   });
 }

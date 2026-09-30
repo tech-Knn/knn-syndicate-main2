@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { BrandMark } from '@/components/brand';
 import { CommandPalette, type Command } from '@/components/command-palette';
 import {
+  IconAds,
   IconAnalytics,
   IconApprovals,
   IconCampaigns,
@@ -20,7 +21,7 @@ import {
 } from '@/components/icons';
 import { ThemeToggle, useTheme } from '@/components/theme';
 import { Spinner, useToast } from '@/components/ui';
-import { facebook, stats } from '@/lib/api';
+import { facebook, stats, whop } from '@/lib/api';
 import { type Role } from '@/lib/types';
 import { useAuth } from '../providers';
 import styles from './dashboard.module.css';
@@ -39,6 +40,7 @@ const TITLES: { prefix: string; label: string }[] = [
   { prefix: '/dashboard/approvals', label: 'Approvals' },
   { prefix: '/dashboard/team', label: 'Team' },
   { prefix: '/dashboard/facebook', label: 'Facebook' },
+  { prefix: '/dashboard/whop', label: 'Whop Ads' },
   { prefix: '/dashboard/platform/companies', label: 'Companies' },
   { prefix: '/dashboard/platform/domains', label: 'Domains' },
   { prefix: '/dashboard/platform/channels', label: 'Channels' },
@@ -52,7 +54,7 @@ function titleFor(pathname: string): string {
 }
 
 type NavItem = { href: string; label: string; Icon: ComponentType<{ size?: number }> };
-function navFor(role: Role): NavItem[] {
+function navFor(role: Role, whopEnabled: boolean): NavItem[] {
   const isAdmin = role === 'SUPER_ADMIN' || role === 'COMPANY_ADMIN';
   return [
     { href: '/dashboard', label: 'Overview', Icon: IconOverview },
@@ -62,6 +64,7 @@ function navFor(role: Role): NavItem[] {
     ...(role === 'COMPANY_ADMIN' ? [{ href: '/dashboard/team', label: 'Team', Icon: IconTeam }] : []),
     ...(role === 'SUPER_ADMIN' ? [{ href: '/dashboard/platform', label: 'Platform', Icon: IconPlatform }] : []),
     ...(role !== 'SUPER_ADMIN' ? [{ href: '/dashboard/facebook', label: 'Facebook', Icon: IconFacebook }] : []),
+    ...(whopEnabled ? [{ href: '/dashboard/whop', label: 'Whop Ads', Icon: IconAds }] : []),
   ];
 }
 
@@ -85,10 +88,24 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
+  // Whop Ads is invisible until a super-admin turns it on for the company (D32).
+  const [whopEnabled, setWhopEnabled] = useState(false);
 
   useEffect(() => {
     if (state === 'anon') router.replace('/login');
   }, [state, router]);
+
+  useEffect(() => {
+    if (state !== 'authed') return;
+    let alive = true;
+    whop
+      .status()
+      .then((s) => alive && setWhopEnabled(s.enabled))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [state]);
 
   // ⌘K / Ctrl-K toggles the command palette anywhere; "/" opens it (unless you're typing).
   useEffect(() => {
@@ -133,7 +150,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     );
   }
 
-  const items = navFor(user.role);
+  const items = navFor(user.role, whopEnabled);
   const isActive = (href: string) =>
     href === '/dashboard' ? pathname === '/dashboard' : pathname.startsWith(href);
 

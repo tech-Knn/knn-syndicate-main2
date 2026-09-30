@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { signCloakToken } from './cloak-token.js';
 import { type RedirectConfig, resolveRedirect } from './resolve.js';
+import { extractWhopClick, whopLandingUrl } from './whop-click.js';
+import { WHOP_SCOPE_PARAM, signWhopScope } from './whop-scope.js';
 
 /**
  * Edge redirect engine — Hono on Cloudflare Workers (D3, refined to edge after
@@ -31,6 +33,9 @@ interface Env {
   /** Shared HMAC secret for the cloak token. Set → money 302s carry an opaque `?t=` instead of
    *  plaintext AFS params (closes the Location leak). Unset → legacy plaintext params (current). */
   CLOAK_TOKEN_SECRET?: string;
+  /** HMAC secret for the Whop scope token (see whop-scope.ts). Set → a Whop link's non-paid landing carries a
+   *  signed `_ws`, so that page can show the business's Whop pixel. Unset → no Whop pixel anywhere (safe default). */
+  WHOP_SCOPE_SECRET?: string;
 }
 
 const key = (id: string): string => `redirect:${id}`;
@@ -65,7 +70,8 @@ worker.get('/go/:id', async (c) => {
   // today, only measure. Set CLOAK_VERIFY_MODE=enforce (and redeploy) once the stats prove it's safe.
   config.verifyMode = c.env.CLOAK_VERIFY_MODE === 'enforce' ? 'enforce' : 'observe';
 
-  const query = Object.fromEntries(new URL(c.req.url).searchParams);
+  const reqUrl = new URL(c.req.url);
+  const query = Object.fromEntries(reqUrl.searchParams);
   const decision = resolveRedirect(config, query, { txid: mintTxid() });
 
   // Beacon the decision (money/white + the would-be-enforce ad-id outcome) so the money-vs-white
@@ -95,6 +101,11 @@ worker.get('/go/:id', async (c) => {
     const rand10 = Math.floor(1_000_000_000 + Math.random() * 9_000_000_000).toString();
     const fbp = `fb.1.${clickTimeMs}.${rand10}`;
     const clientIp = c.req.header('cf-connecting-ip') || undefined;
+    // A Whop ad's click also records Whop's own ids + the landing URL Whop sent the visitor to: Whop
+    // attributes a server-reported conversion from those (D32). Facebook clicks have no `whop` block.
+    const whop = config.whop?.bizId
+      ? { bizId: config.whop.bizId, click: extractWhopClick(reqUrl.searchParams) ?? undefined, landing: whopLandingUrl(reqUrl) }
+      : undefined;
     // Include the chosen offer (Phase E) so revenue/conversions attribute per-offer.
     const record = JSON.stringify({
       redirectId: c.req.param('id'),
@@ -103,6 +114,7 @@ worker.get('/go/:id', async (c) => {
       ts: clickTimeMs,
       fbp,
       ...(clientIp ? { clientIp } : {}),
+      ...(whop ? { whop } : {}),
     });
     c.executionCtx.waitUntil(c.env.REDIRECTS.put(`click:${decision.txid}`, record, { expirationTtl: 604_800 }));
   }
@@ -127,6 +139,20 @@ worker.get('/go/:id', async (c) => {
       location = `${u.origin}${u.pathname}?t=${encodeURIComponent(token)}${chan ? `&cid=${encodeURIComponent(chan)}` : ''}`;
     } catch {
       location = decision.location;
+    }
+  }
+
+  // A Whop link's NON-paid landing (the white site, or the plain article in normal funnel mode) is the page
+  // Whop's ad check loads and reads for the pixel. Tag it with a signed scope naming the business, so that
+  // page (and only that page, only for visitors arriving through this link) carries the right pixel. Never on
+  // the money route. No secret, or any failure → untagged, so the click is never blocked.
+  if (decision.verify.route === 'white' && config.whop?.bizId && c.env.WHOP_SCOPE_SECRET) {
+    try {
+      const u = new URL(location);
+      u.searchParams.set(WHOP_SCOPE_PARAM, await signWhopScope(config.whop.bizId, c.env.WHOP_SCOPE_SECRET));
+      location = u.toString();
+    } catch {
+      /* keep the untagged location */
     }
   }
 

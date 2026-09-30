@@ -1,4 +1,4 @@
-import { type Role, type UserStatus } from '@knn/shared';
+import { type Role, type UserStatus, type WhopChecklist, type WhopEnvironment } from '@knn/shared';
 
 export type { Role, UserStatus };
 
@@ -190,6 +190,7 @@ export interface AdminOrg {
   autoLaunch: boolean;
   cloakingEnabled: boolean;
   defaultFunnelMode: FunnelMode;
+  whopEnabled: boolean;
 }
 
 export interface PublicUser {
@@ -282,6 +283,7 @@ export interface OrgRow {
   autoLaunch: boolean;
   cloakingEnabled: boolean;
   defaultFunnelMode: FunnelMode;
+  whopEnabled: boolean;
   buyerCount: number;
   adminCount: number;
   pendingCount: number;
@@ -417,4 +419,56 @@ export interface RcLearningRunResult {
   eligibleCampaigns: number;
   suppressedCampaigns: number;
   added: { term: string; suppressedCampaigns: number; campaignsUsing: number; keywordClicksPer100: number }[];
+}
+
+// ── Whop Ads (D32) ──────────────────────────────────────────────────────────────────────────────
+
+/** Whether the user may use Whop Ads (global flag AND their company's switch). */
+export interface WhopStatus {
+  enabled: boolean;
+  allowSandbox: boolean;
+}
+
+export interface WhopPage {
+  /** Whop's social account id, `sacc_…`. */
+  id: string;
+  platform: string;
+  name: string | null;
+  username: string | null;
+  verified: boolean;
+  error: string | null;
+}
+
+export interface WhopConnection {
+  id: string;
+  bizId: string;
+  environment: WhopEnvironment;
+  label: string | null;
+  /** The only part of the API key we ever show. */
+  apiKeyLast4: string;
+  status: 'ACTIVE' | 'BROKEN';
+  lastError: string | null;
+  reportingCurrency: string | null;
+  apiVersionDate: string;
+  checklist: WhopChecklist | null;
+  lastCheckedAt: string | null;
+  connectedAt: string;
+  pages: WhopPage[];
+}
+
+export interface WhopConnectionWithOwner extends WhopConnection {
+  ownerId: string;
+  ownerName: string;
+  ownerEmail: string;
+  orgId: string;
+  orgName: string;
+}
+
+export interface WhopPixelCheck {
+  installed: boolean;
+  lastSeenDays: number | null;
+  lastFiredDays: Record<string, number>;
+  nativeTracking: boolean;
+  reachable: boolean | null;
+  url: string | null;
 }

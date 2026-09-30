@@ -153,4 +153,19 @@ describe('recordConversion', () => {
     expect(evs.map((e) => e.eventName).sort()).toEqual(['AddToCart', 'Search', 'ViewContent']);
     expect(enqueue).toHaveBeenCalledTimes(3); // 3 distinct events, the 4th deduped
   });
+
+  it('records a Whop click but never sends it while Whop Ads is off (the flag is off in this file)', async () => {
+    // WHOP_ADS_ENABLED defaults to false. Even with a live Whop connection the event is kept as a
+    // first-party signal and skipped: "off" means nothing Whop-related is active.
+    const redirectId = await seedAd(false);
+    await withSystem((tx) => tx.whopConnection.create({ data: { orgId, userId: buyerId, bizId: 'biz_5kCAsGozVBmEm1', apiKeyEnc: 'enc', apiKeyLast4: '0001', apiVersionDate: '2026-09-29' } }));
+    const enqueue = vi.fn(async () => { });
+    const whopEnqueue = vi.fn(async () => { });
+    const res = await recordConversion({ clickId: 'tx-whop-off' }, { ...deps({ redirectId, ts: 1, whop: { bizId: 'biz_5kCAsGozVBmEm1' } }, enqueue), enqueueWhopDispatch: whopEnqueue });
+    expect(res).toEqual({ recorded: true, deduped: false, dispatched: false });
+    expect(await withSystem((tx) => tx.conversionEvent.findFirst({ where: { clickId: 'tx-whop-off' } }))).toMatchObject({ provider: 'whop', status: 'skipped' });
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(whopEnqueue).not.toHaveBeenCalled();
+    await withSystem((tx) => tx.whopConnection.deleteMany({ where: { orgId } }));
+  });
 });

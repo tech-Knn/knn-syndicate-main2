@@ -1,0 +1,20 @@
+{
+  "name": "@knn/whop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/mock-whop.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "mock": "tsx src/testing/serve.ts"
+  },
+  "dependencies": {
+    "@knn/shared": "workspace:*"
+  }
+}

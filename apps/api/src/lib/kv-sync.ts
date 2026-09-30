@@ -27,6 +27,14 @@ export interface RedirectConfigPayload {
   styleId?: string;
   fallbackUrl?: string;
   splits?: RedirectSplitPayload[];
+  /**
+   * Whop Ads campaigns only (D32): the Whop business this link belongs to. Makes the edge Worker recognise
+   * a click on a Whop ad, record Whop's click parameters beside the click, and tag the non-paid landing
+   * with a signed scope so that page carries the business's pixel. Absent for Facebook. Mirrors
+   * `apps/redirect/src/resolve.ts#RedirectConfig.whop`. Both config builders in launch.service.ts must
+   * emit it for a Whop campaign, or the next resync silently drops it.
+   */
+  whop?: { bizId: string };
 }
 
 export class KvNotConfiguredError extends Error {
@@ -82,6 +90,25 @@ export interface ClickRecord {
    *  we prefer this value. Absent on legacy records written before this field was
    *  added — the service layer falls back to the beacon-time IP. */
   clientIp?: string;
+  /**
+   * Whop Ads clicks only (D32), written by the edge Worker for a config that has a `whop` block: the business
+   * the link belongs to, Whop's own click ids, and the landing URL Whop sent the visitor to (our go-link plus
+   * Whop's parameters only). Whop resolves which ad drove a visit from those, so a conversion reports them
+   * back. Absent on Facebook clicks and on legacy records.
+   */
+  whop?: {
+    bizId: string;
+    click?: {
+      campaignId?: string;
+      adGroupId?: string;
+      adId?: string;
+      metaCampaignId?: string;
+      metaAdSetId?: string;
+      metaAdId?: string;
+      utm?: { source?: string; medium?: string; content?: string; adset?: string; placement?: string };
+    };
+    landing?: string;
+  };
 }
 
 /** Read a click record by txid from KV. Returns null when the key is absent (404). */
