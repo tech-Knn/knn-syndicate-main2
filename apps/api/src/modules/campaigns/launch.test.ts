@@ -905,7 +905,9 @@ describe('updateAdSetBudget — per-ad-set live budget (multi-ad-set ABO)', () =
     const res = await updateAdSetBudget(auth(), campId, setId, { dailyBudgetCents: 1200 });
     expect(res).toMatchObject({ id: campId, adSetId: setId, dailyBudgetCents: 1200 });
     expect(fb.updateFbAdSetBudget).toHaveBeenCalledWith('fbadset-as-a', 'act_1', 'tok', 1200, 'DATA');
-    const sets = await withSystem((tx) => tx.adSet.findMany({ where: { campaignId: campId }, orderBy: { createdAt: 'asc' }, select: { dailyBudgetCents: true } }));
+    // Sort by name, not createdAt: both sets are created in one transaction, so their created_at ties and
+    // the read order (after set A's UPDATE moves its row) is otherwise undefined.
+    const sets = await withSystem((tx) => tx.adSet.findMany({ where: { campaignId: campId }, orderBy: { name: 'asc' }, select: { dailyBudgetCents: true } }));
     expect(sets.map((s) => s.dailyBudgetCents)).toEqual([1200, 400]); // only set A changed
   });
 
