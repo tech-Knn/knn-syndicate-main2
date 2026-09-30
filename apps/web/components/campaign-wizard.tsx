@@ -584,7 +584,8 @@ function formIssues(form: CampaignForm): string[] {
 
 const STEPS = ['Offer', 'Ad sets', 'Review'];
 
-export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
+/** `embedded`: shown inside another page that already has the campaign's own header (the read-only view then drops its title). */
+export function CampaignWizard({ campaign, embedded = false }: { campaign?: Campaign; embedded?: boolean }) {
   const router = useRouter();
   const readOnly = Boolean(campaign && campaign.status !== 'DRAFT');
 
@@ -845,7 +846,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
 
   return (
     <div className={styles.wrap}>
-      <div className={styles.head}>
+      {!(readOnly && embedded) && <div className={styles.head}>
         <div>
           <h1 className={`serif ${styles.title}`}>{readOnly ? campaign?.name : campaign ? 'Edit campaign' : 'New campaign'}</h1>
           <p className={styles.subtitle}>
@@ -855,7 +856,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
         <Link href="/dashboard/campaigns" className={styles.chipBtn} style={{ alignSelf: 'center' }}>
           Back to campaigns
         </Link>
-      </div>
+      </div>}
 
       {!readOnly && (
         <nav className={styles.steps} aria-label="Campaign steps">
