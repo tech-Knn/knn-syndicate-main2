@@ -10,7 +10,7 @@ import {
   whopSyncTarget,
 } from '@knn/shared';
 import { type WhopAd, type WhopAdCampaign, type WhopAdsApi, type WhopIssue, isWhopError } from '@knn/whop';
-import { releaseChannelForCampaign } from '../channel-pool/channel.service.js';
+import { assignForCampaign, releaseChannelForCampaign } from '../channel-pool/channel.service.js';
 import { resyncOffersToKv } from '../launch-trigger.js';
 import { sendNotification } from '../lib/notify.js';
 import {
@@ -83,6 +83,8 @@ export interface WhopReconcileDeps {
   enabled?: () => boolean;
   adsFor?: (conn: WhopConnectionRow) => WhopAdsApi;
   releaseChannel?: (campaignId: string) => Promise<unknown>;
+  /** Give a revived campaign a channel again, only if one is free right now (never queues it). */
+  claimChannels?: (campaignId: string) => Promise<{ assigned: boolean }>;
   resync?: (campaignId: string) => Promise<unknown>;
   notify?: (n: Notification) => void;
   now?: () => Date;
@@ -111,6 +113,7 @@ export interface WhopReconcileResult {
 interface Ctx {
   adsFor: (conn: WhopConnectionRow) => WhopAdsApi;
   releaseChannel: (campaignId: string) => Promise<unknown>;
+  claimChannels: (campaignId: string) => Promise<{ assigned: boolean }>;
   resync: (campaignId: string) => Promise<unknown>;
   notify: (n: Notification) => void;
   sleep: (ms: number) => Promise<void>;
@@ -167,7 +170,7 @@ type CampaignRow = Awaited<ReturnType<typeof loadCampaigns>>[number];
 async function loadCampaigns() {
   return withSystem((tx) =>
     tx.campaign.findMany({
-      where: { adProvider: 'WHOP', whopCampaignId: { not: null }, status: { in: [CAMPAIGN_STATUS.ACTIVE, CAMPAIGN_STATUS.PAUSED] } },
+      where: { adProvider: 'WHOP', whopCampaignId: { not: null }, status: { in: [CAMPAIGN_STATUS.ACTIVE, CAMPAIGN_STATUS.PAUSED, CAMPAIGN_STATUS.META_REJECTED] } },
       select: {
         id: true,
         orgId: true,
@@ -363,6 +366,49 @@ function tellAboutRejectedAds(ctx: Ctx, c: CampaignRow, whopAds: readonly WhopAd
   });
 }
 
+/**
+ * Bring a rejected campaign back: Whop no longer says every ad is rejected, so some of its ads can deliver. The rejection released
+ * its channel and stopped its routing; undoing it is the same steps in the other direction, in the one order that cannot strand
+ * traffic: (1) a channel again (only if one is free now: otherwise nothing changes and the next tick tries again), (2) the status
+ * (META_REJECTED -> PAUSED -> ACTIVE, both legal moves; it stays PAUSED if Whop has it paused), (3) the edge config, which then
+ * emits the channel. If the edge will not follow, everything is given back and the next tick starts over. Same links, article,
+ * offers and history: nothing is rebuilt and nothing is cloned.
+ */
+async function recoverRejected(ctx: Ctx, c: CampaignRow, target: typeof CAMPAIGN_STATUS.ACTIVE | typeof CAMPAIGN_STATUS.PAUSED): Promise<void> {
+  let claimed = false;
+  try {
+    claimed = (await ctx.claimChannels(c.id)).assigned;
+  } catch (err) {
+    console.warn(`[whop-reconcile] could not look for a channel to revive ${c.id}: ${errText(err)}`);
+  }
+  if (!claimed) return;
+
+  const giveBack = async (status: CampaignStatus): Promise<void> => {
+    await withSystem((tx) => tx.campaign.updateMany({ where: { id: c.id, status, whopCampaignId: c.whopCampaignId }, data: { status: CAMPAIGN_STATUS.META_REJECTED } }));
+    await afterMove('release channel', c.id, ctx, () => ctx.releaseChannel(c.id));
+  };
+
+  if (!(await move(c, CAMPAIGN_STATUS.PAUSED))) {
+    await afterMove('release channel', c.id, ctx, () => ctx.releaseChannel(c.id));
+    return;
+  }
+  let now: CampaignStatus = CAMPAIGN_STATUS.PAUSED;
+  if (target === CAMPAIGN_STATUS.ACTIVE && (await move({ ...c, status: CAMPAIGN_STATUS.PAUSED }, CAMPAIGN_STATUS.ACTIVE))) now = CAMPAIGN_STATUS.ACTIVE;
+
+  if (!(await afterMove('edge KV resync', c.id, ctx, () => ctx.resync(c.id)))) {
+    await giveBack(now);
+    return;
+  }
+  ctx.notify({
+    orgId: c.orgId,
+    userId: c.buyerId,
+    type: 'campaign.status_synced',
+    title: 'Campaign is back on',
+    body: `"${c.name}" is no longer rejected as a whole: Whop has ads in it that can deliver. It has its links, article and data back with a new channel${now === CAMPAIGN_STATUS.PAUSED ? ', and is paused as it is in Whop; resume it when you want it running' : ' and is running again'}.`,
+  });
+  ctx.out.statusSynced += 1;
+}
+
 /** Everything one campaign needs once Whop has answered for it. */
 async function reconcileKnown(ctx: Ctx, conn: WhopConnectionRow, ads: WhopAdsApi, c: CampaignRow, whop: WhopAdCampaign, whopAds: readonly WhopAd[]): Promise<void> {
   ctx.out.checked += 1;
@@ -391,6 +437,15 @@ async function reconcileKnown(ctx: Ctx, conn: WhopConnectionRow, ads: WhopAdsApi
   }
 
   const target = whopSyncTarget(whop, whopAds);
+
+  // A campaign we stopped as rejected (every ad rejected at the time, or under the old "any ad" rule) is watched too: once Whop
+  // says it has ads that can deliver, it comes back with the same links and data. While it is still wholly rejected, nothing
+  // is done again (no second notice, no second stop).
+  if (c.status === CAMPAIGN_STATUS.META_REJECTED) {
+    if (mirrored && (target === CAMPAIGN_STATUS.ACTIVE || target === CAMPAIGN_STATUS.PAUSED)) await recoverRejected(ctx, c, target);
+    return;
+  }
+
   if (mirrored && target !== CAMPAIGN_STATUS.META_REJECTED) tellAboutRejectedAds(ctx, c, whopAds);
   if (!target) return;
 
@@ -687,6 +742,7 @@ export async function reconcileWhopCampaigns(deps: WhopReconcileDeps = {}): Prom
   const ctx: Ctx = {
     adsFor: deps.adsFor ?? whopAdsForConnection,
     releaseChannel: deps.releaseChannel ?? releaseChannelForCampaign,
+    claimChannels: deps.claimChannels ?? ((id: string) => assignForCampaign(id, { queue: false })),
     resync: deps.resync ?? resyncOffersToKv,
     notify: deps.notify ?? sendNotification,
     sleep: deps.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))),

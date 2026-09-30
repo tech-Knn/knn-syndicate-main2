@@ -65,7 +65,13 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
   - **Sync:** one bulk `listCampaigns` per business, `listAds` only for the campaigns it listed (a batch Whop refuses is
     re-read campaign by campaign; a campaign whose ads cannot be read is skipped, never decided on). Then: EVERY ad rejected (or Whop's
     `all_ads_rejected`) → `META_REJECTED` (pause at Whop best-effort, `stopRouting`, notify); SOME ads rejected → the campaign keeps
-    running and the buyer is told once per ad (`campaign.ads_rejected`; unlike Facebook's D14), pause / resume mirrored (if the edge resync fails the
+    running and the buyer is told once per ad (`campaign.ads_rejected`; unlike Facebook's D14). **A campaign already stopped as
+    `META_REJECTED` stays in the scan and is REVIVED** (`recoverRejected`) as soon as `whopSyncTarget` says ACTIVE / PAUSED, i.e. Whop
+    has ads that can deliver (it was wholly rejected and an appeal won, or it was stopped under the old "any ad" rule): it gets a
+    channel again only if one is free right now (`claimChannels` = `assignForCampaign(id, { queue: false })`, which never queues it),
+    moves META_REJECTED -> PAUSED -> ACTIVE (both legal moves; PAUSED if Whop has it paused), and the edge config is re-published
+    with the channel; if the edge will not follow, everything is given back. Same links, article, offers, Whop campaign and
+    history: nothing is rebuilt. While it is still wholly rejected nothing is done again. Pause / resume mirrored (if the edge resync fails the
     status is given back and nothing is announced), deleted-in-Whop →
     `ARCHIVED` only on the **second consecutive** tick whose direct read says 404 (the first leaves `not_found` in
     `whop_delivery_status`; any real answer clears it), billing failure notified once per episode (`payment_failed` is stored
