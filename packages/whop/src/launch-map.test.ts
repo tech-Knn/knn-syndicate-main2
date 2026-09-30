@@ -121,8 +121,13 @@ describe('whopAdBody', () => {
       call_to_action: 'learn_more',
       creatives: [{ id: 'file_X' }],
       social_accounts: [{ id: 'sacc_X' }],
+      multi_advertiser_ads: false,
       idempotencyKey: 'k3',
     });
+  });
+
+  it('turns multi-advertiser ads OFF (Whop would default it to ON)', () => {
+    expect(whopAdBody(ad, ctx, 'k')).toHaveProperty('multi_advertiser_ads', false);
   });
 
   it('never sets Whop\'s reserved click parameters itself', () => {
