@@ -607,7 +607,8 @@ export async function getCampaignOfferStats(
       return {
         offerId: o.id,
         host: o.domain.host,
-        afsLabel: o.domain.afsAccount.label,
+        // The platform's own name for its Google account: a buyer or a company admin never needs it.
+        afsLabel: auth.role === ROLES.SUPER_ADMIN ? o.domain.afsAccount.label : null,
         kind: o.kind,
         weightPct: o.weightPct,
         revenueUsd,

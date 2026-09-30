@@ -54,7 +54,7 @@ export function KpiStrip({ stats, range, onRange }: { stats: CampaignStats; rang
             label="Revenue"
             value={formatUsd(t.revenueUsd)}
             sub={t.adClicks > 0 ? `${formatUsd(rpcPerAdClick(t.revenueUsd, t.adClicks) ?? 0)} per ad click` : 'From Google ad clicks'}
-            info="What the ads on your landing pages earned (after the platform's revenue cut). Google reports it per campaign, so per ad it is an estimate."
+            info="What the ads on this campaign's landing pages earned you. Google reports it per campaign, so per ad it is an estimate."
           />
           <StatTile
             label="Profit"

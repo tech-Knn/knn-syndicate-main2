@@ -216,3 +216,24 @@ describe('live offer rebalance (post-launch, no Facebook — OQ#9)', () => {
     await withSystem((tx) => tx.campaign.deleteMany({ where: { id: draft.id } }));
   });
 });
+
+describe('the AFS account label (the platform name for its Google accounts)', () => {
+  const superAuth = () => ({ userId: buyerId, orgId, role: ROLES.SUPER_ADMIN, status: USER_STATUS.ACTIVE });
+
+  it('is hidden from buyers and company admins, in the offers list and in the website picker', async () => {
+    await setOffers(auth(), campaignId, [{ domainId: domLiveA, weightPct: 100, kind: 'PAID' }]);
+    for (const role of [ROLES.MEDIA_BUYER, ROLES.COMPANY_ADMIN]) {
+      const a = { userId: buyerId, orgId, role, status: USER_STATUS.ACTIVE };
+      expect((await listOffers(a, campaignId)).every((o) => o.afsLabel === null), role).toBe(true);
+      const picker = (await listOfferDomains(a)).filter((d) => d.id === domLiveA || d.id === domLiveB);
+      expect(picker.length, role).toBe(2);
+      expect(picker.every((d) => d.afsLabel === null), role).toBe(true);
+    }
+  });
+
+  it('is shown to the platform', async () => {
+    expect((await listOffers(superAuth(), campaignId))[0]!.afsLabel).toBe('AFS');
+    const picker = (await listOfferDomains(superAuth())).filter((d) => d.id === domLiveA);
+    expect(picker[0]!.afsLabel).toBe('AFS');
+  });
+});

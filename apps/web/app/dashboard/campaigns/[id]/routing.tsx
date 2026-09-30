@@ -7,7 +7,8 @@ import { campaigns, publicSite, type PublicSiteConfig } from '@/lib/api';
 import type { Campaign, OfferRow } from '@/lib/types';
 import styles from './campaign.module.css';
 import { CopyField, toneClass } from './parts';
-import { funnelOf, goLink, networkName } from './status';
+import { useAuth } from '../../../providers';
+import { funnelOf, goLink, networkName, routingVisibility } from './status';
 
 /** One offer (a money website) with the publisher id and style its landing page really uses. */
 interface MoneySite {
@@ -15,7 +16,7 @@ interface MoneySite {
   config: PublicSiteConfig | null;
 }
 
-function useMoneySites(campaignId: string, enabled: boolean): { sites: MoneySite[] | null; failed: boolean } {
+function useMoneySites(campaignId: string, enabled: boolean, withConfig: boolean): { sites: MoneySite[] | null; failed: boolean } {
   const [sites, setSites] = useState<MoneySite[] | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -24,23 +25,26 @@ function useMoneySites(campaignId: string, enabled: boolean): { sites: MoneySite
     void campaigns
       .offers(campaignId)
       .then(async (offers) => {
-        const configs = await Promise.all(offers.map((o) => publicSite.config(o.host).catch(() => null)));
+        // The publisher id and style are only ever shown to the platform, so nobody else's page even asks for them.
+        const configs = await Promise.all(offers.map((o) => (withConfig ? publicSite.config(o.host).catch(() => null) : Promise.resolve(null))));
         if (alive) setSites(offers.map((offer, i) => ({ offer, config: configs[i] ?? null })));
       })
       .catch(() => alive && setFailed(true));
     return () => {
       alive = false;
     };
-  }, [campaignId, enabled]);
+  }, [campaignId, enabled, withConfig]);
   return { sites, failed };
 }
 
 /** Where every click goes, written out: the go-link, the money page (with its channel and style) and the white page. */
 export function RoutingTab({ campaign: c }: { campaign: Campaign }) {
+  const { user } = useAuth();
+  const see = routingVisibility(user?.role);
   const launched = Boolean(c.redirectDomainHost);
   const funnel = funnelOf(c);
   const net = networkName(c);
-  const { sites, failed } = useMoneySites(c.id, launched);
+  const { sites, failed } = useMoneySites(c.id, launched, see.publisherAndStyle);
   const paid = sites?.filter((s) => s.offer.kind === 'PAID') ?? [];
   const organic = sites?.find((s) => s.offer.kind === 'ORGANIC');
   const ads = c.adSets.flatMap((s) => s.ads);
@@ -91,7 +95,8 @@ export function RoutingTab({ campaign: c }: { campaign: Campaign }) {
                   <>
                     <span className={styles.nodeTitle}>{main.offer.host}</span>
                     <span className={styles.nodeSub}>
-                      Channel {main.offer.channelId ?? 'pending'} · Style {main.config?.styleId ?? 'default'}
+                      Channel {main.offer.channelId ?? 'pending'}
+                      {see.publisherAndStyle ? ` · Style ${main.config?.styleId ?? 'default'}` : ''}
                       {paid.length > 1 ? ` · +${paid.length - 1} more site${paid.length === 2 ? '' : 's'}` : ''}
                     </span>
                   </>
@@ -104,7 +109,9 @@ export function RoutingTab({ campaign: c }: { campaign: Campaign }) {
               <span className={styles.laneTag}>Everyone else</span>
               <div className={`${styles.node} ${styles.nodeAccent}`}>
                 <span className={styles.nodeLabel}>{funnel === 'CLOAKER' ? 'White page' : 'Plain article'}</span>
-                <span className={styles.nodeTitle}>{funnel === 'CLOAKER' ? c.whiteDomainHost : (organic?.offer.host ?? 'The article, without ad tracking')}</span>
+                <span className={styles.nodeTitle}>
+                  {funnel === 'CLOAKER' ? (see.whiteHost ? c.whiteDomainHost : 'A clean white page') : (organic?.offer.host ?? 'The article, without ad tracking')}
+                </span>
                 <span className={styles.nodeSub}>
                   {funnel === 'CLOAKER'
                     ? 'A clean content site for reviewers, bots and organic visits.'
@@ -116,7 +123,7 @@ export function RoutingTab({ campaign: c }: { campaign: Campaign }) {
         </div>
       </section>
 
-      {c.adProvider === 'WHOP' && (
+      {c.adProvider === 'WHOP' && see.cloakNote && (
         <div className={`${styles.note} ${toneClass('warning')}`}>
           <IconAlert size={16} />
           <span>
@@ -148,7 +155,7 @@ export function RoutingTab({ campaign: c }: { campaign: Campaign }) {
           <div className={styles.panelHead}>
             <div>
               <h3 className={styles.panelTitle}>Money pages</h3>
-              <p className={styles.panelSub}>The sites paid clicks land on, with the Google settings each one really uses.</p>
+              <p className={styles.panelSub}>The sites paid clicks land on{see.publisherAndStyle ? ', with the Google settings each one really uses' : ''}.</p>
             </div>
           </div>
           {!sites ? (
@@ -169,10 +176,14 @@ export function RoutingTab({ campaign: c }: { campaign: Campaign }) {
                   </dd>
                   <dt>AFS channel</dt>
                   <dd>{offer.channelId ?? 'Pending'}</dd>
-                  <dt>Style id</dt>
-                  <dd>{config?.styleId ?? 'Default (set on the article server)'}</dd>
-                  <dt>Publisher</dt>
-                  <dd>{config?.pubId ?? 'Not registered'}</dd>
+                  {see.publisherAndStyle && (
+                    <>
+                      <dt>Style id</dt>
+                      <dd>{config?.styleId ?? 'Default (set on the article server)'}</dd>
+                      <dt>Publisher</dt>
+                      <dd>{config?.pubId ?? 'Not registered'}</dd>
+                    </>
+                  )}
                   {offer.articleTitle && (
                     <>
                       <dt>Article</dt>

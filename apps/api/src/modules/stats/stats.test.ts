@@ -356,6 +356,12 @@ describe('getCampaignOfferStats (Phase F per-offer revenue)', () => {
       // Lo: $35 over 2 ad clicks → $17.50. Google reported just 3 clicks — below 10, which it hides —
       // but our own counts are never hidden.
       expect(byOffer.get(offerLo)).toEqual(expect.objectContaining({ revenueUsd: 35, visits: 8, keywordClicks: 3, adClicks: 2, rpcUsd: 17.5 }));
+      // The platform's name for its Google account is the platform's alone: a buyer and a company admin get null.
+      expect(byOffer.get(offerHi)!.afsLabel).toBeNull();
+      const companyAdmin = { userId: buyerId, orgId, role: ROLES.COMPANY_ADMIN, status: USER_STATUS.ACTIVE };
+      expect((await getCampaignOfferStats(companyAdmin, campaignId, { from: today, to: today })).every((s) => s.afsLabel === null)).toBe(true);
+      const platform = { userId: buyerId, orgId, role: ROLES.SUPER_ADMIN, status: USER_STATUS.ACTIVE };
+      expect((await getCampaignOfferStats(platform, campaignId, { from: today, to: today }))[0]!.afsLabel).toBe('AFS');
       // A buyer can't read another buyer's campaign.
       const other = { userId: '44444444-4444-4444-4444-444444444444', orgId, role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE };
       await expect(getCampaignOfferStats(other, campaignId, { from: today, to: today })).rejects.toThrow('Campaign not found');

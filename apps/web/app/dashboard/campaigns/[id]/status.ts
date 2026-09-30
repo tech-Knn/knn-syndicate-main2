@@ -1,4 +1,4 @@
-import type { Campaign } from '@/lib/types';
+import type { Campaign, Role } from '@/lib/types';
 
 /** Statuses that have (or had) delivery at the ad network, so there are numbers to show. */
 export const HAS_DELIVERY = new Set(['ACTIVE', 'PAUSED', 'META_REJECTED', 'ARCHIVED']);
@@ -73,3 +73,16 @@ export const minBudgetMessage = (c: Pick<Campaign, 'adProvider'>): string =>
 
 /** The go-link one ad carries: the host recorded at launch plus that ad's own redirect id (D9). */
 export const goLink = (host: string, redirectId: string): string => `https://${host}/go/${redirectId}`;
+
+/**
+ * What the Routing tab may show a given role. The platform (super-admin) sees the wiring; a company or a buyer sees
+ * what it needs to run its ads. Hidden from them: the AFS publisher id and style (the platform's Google account),
+ * which white domain sits behind a funnel (the white side is built to stay unlinkable from the money side), and how
+ * the cloaker tells a paid click from any other (an explanation that is also a recipe for getting past it).
+ * This is only what the page shows: it does not make those values secret, since a landing page's source carries its
+ * own channel and style for any visitor.
+ */
+export function routingVisibility(role: Role | null | undefined): { publisherAndStyle: boolean; whiteHost: boolean; cloakNote: boolean } {
+  const platform = role === 'SUPER_ADMIN';
+  return { publisherAndStyle: platform, whiteHost: platform, cloakNote: platform };
+}

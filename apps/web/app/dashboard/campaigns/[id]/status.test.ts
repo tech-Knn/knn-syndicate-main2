@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Campaign } from '@/lib/types';
-import { HAS_DELIVERY, funnelOf, goLink, minBudgetCents, minBudgetMessage, networkName, statusMeta, timeAgo } from './status';
+import { HAS_DELIVERY, funnelOf, goLink, minBudgetCents, minBudgetMessage, networkName, routingVisibility, statusMeta, timeAgo } from './status';
 import { rangeFor } from './use-stats';
 
 type Status = Campaign['status'];
@@ -81,5 +81,20 @@ describe('rangeFor', () => {
     expect(days(rangeFor('7d'))).toBe(7);
     expect(days(rangeFor('30d'))).toBe(30);
     expect(rangeFor('7d').to).toBe(rangeFor('today').to);
+  });
+});
+
+describe('routingVisibility (what the Routing tab may show)', () => {
+  it('shows the platform everything', () => {
+    expect(routingVisibility('SUPER_ADMIN')).toEqual({ publisherAndStyle: true, whiteHost: true, cloakNote: true });
+  });
+  it('hides the Google account, the white domain and the cloaker explanation from companies and buyers', () => {
+    for (const role of ['COMPANY_ADMIN', 'MEDIA_BUYER'] as const) {
+      expect(routingVisibility(role), role).toEqual({ publisherAndStyle: false, whiteHost: false, cloakNote: false });
+    }
+  });
+  it('hides it all until the role is known (a page that has not loaded the user yet leaks nothing)', () => {
+    expect(routingVisibility(null)).toEqual({ publisherAndStyle: false, whiteHost: false, cloakNote: false });
+    expect(routingVisibility(undefined)).toEqual({ publisherAndStyle: false, whiteHost: false, cloakNote: false });
   });
 });
