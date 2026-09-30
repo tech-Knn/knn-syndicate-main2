@@ -1,4 +1,6 @@
 import { type Context, Hono } from 'hono';
+import { WHOP_SCOPE_PARAM, verifyWhopScope } from './whop-scope.js';
+import { whopPixelTag } from './whop-pixel.js';
 
 /**
  * The WHITE site — a clean, legitimate-looking content publication. It is the cloaker funnel's
@@ -14,6 +16,9 @@ import { type Context, Hono } from 'hono';
 interface Env {
   /** Public API base the article content is fetched from (server-side). */
   API_BASE: string;
+  /** HMAC secret (a wrangler secret, never in wrangler.toml) that verifies the Whop scope token the redirect
+   *  Worker appends (`_ws`). Unset → this site never renders a Whop pixel. The same value as the redirect Worker's. */
+  WHOP_SCOPE_SECRET?: string;
 }
 
 interface PublicArticle {
@@ -250,7 +255,29 @@ export const white = new Hono<{ Bindings: Env }>();
 white.use('*', async (c, next) => {
   await next();
   c.header('X-Robots-Tag', 'noindex, nofollow');
+  await addWhopPixel(c);
 });
+
+// The ONE exception to "no IDs here" (D33). Whop will not create an ad until it finds its pixel on the
+// destination: it loads the go-link, follows the redirect to THIS page and reads the HTML. The redirect Worker
+// tags that hop with a signed scope naming the business (`_ws`); only a request carrying a valid one gets the
+// pixel, so a direct visit, a crawler or a forged link sees the same clean page as always. Never a static or
+// global pixel. The page then varies per request, so it is marked uncacheable.
+async function addWhopPixel(c: Context<{ Bindings: Env }>): Promise<void> {
+  const token = c.req.query(WHOP_SCOPE_PARAM);
+  if (!token || !c.res.headers.get('content-type')?.includes('text/html')) return;
+  const bizId = await verifyWhopScope(token, c.env?.WHOP_SCOPE_SECRET);
+  if (!bizId) return;
+  const html = await c.res.text();
+  // A replacer FUNCTION, not a replacement string: a string would interpret `$&`, `$'` etc. inside the snippet.
+  const tag = whopPixelTag(bizId);
+  const body = html.includes('</head>') ? html.replace('</head>', () => `${tag}</head>`) : html;
+  c.res = new Response(body, { status: c.res.status, headers: c.res.headers });
+  // Set AFTER the swap: Hono copies the old response's headers over a replaced one, so the route's own
+  // `public, max-age=300` would otherwise win and a pixel-carrying page could be shared from a cache.
+  c.header('cache-control', 'private, no-store');
+  c.res.headers.delete('content-length');
+}
 
 white.get('/health/live', (c) => c.json({ status: 'ok' }));
 

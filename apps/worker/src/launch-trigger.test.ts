@@ -14,21 +14,27 @@ let domB = '';
 interface CampaignShape {
   channelId?: string | null;
   fbCampaignId?: string | null;
+  /** Whop campaigns (D33) are launched or not by their own id + status, never by `fbCampaignId`. */
+  adProvider?: 'FACEBOOK' | 'WHOP';
+  whopCampaignId?: string | null;
+  status?: 'PROCESSING' | 'ACTIVE' | 'PAUSED';
   /** The Facebook campaign of a launch that was interrupted mid-build (rate limit) — NOT "launched". */
   fbPendingCampaignId?: string | null;
 }
 
-async function makeCampaign({ channelId = null, fbCampaignId = null, fbPendingCampaignId = null }: CampaignShape = {}): Promise<string> {
+async function makeCampaign({ channelId = null, fbCampaignId = null, adProvider = 'FACEBOOK', whopCampaignId = null, status = 'PROCESSING', fbPendingCampaignId = null }: CampaignShape = {}): Promise<string> {
   const c = await withSystem((tx) =>
     tx.campaign.create({
       data: {
         orgId,
         buyerId,
         name: `AL ${Math.random()}`,
-        status: 'PROCESSING',
+        status,
         keywords: [],
         channelId,
         fbCampaignId,
+        adProvider,
+        whopCampaignId,
         fbPendingCampaignId,
       },
     }),
@@ -120,6 +126,28 @@ describe('triggerAutoLaunch', () => {
     const res = await triggerAutoLaunch(id, { enqueueLaunch });
 
     expect(res.enqueued).toBe(false);
+    expect(enqueueLaunch).not.toHaveBeenCalled();
+  });
+
+  it('launches a Whop campaign the same way (the launch routes by provider on the API side)', async () => {
+    const id = await makeCampaign({ channelId: randomUUID(), adProvider: 'WHOP' });
+    const enqueueLaunch = vi.fn(async () => {});
+    expect((await triggerAutoLaunch(id, { enqueueLaunch })).enqueued).toBe(true);
+    expect(enqueueLaunch).toHaveBeenCalledWith(id);
+  });
+
+  it('resumes a half-launched Whop campaign: its Whop draft exists, but it is not launched until it is ACTIVE', async () => {
+    const id = await makeCampaign({ channelId: randomUUID(), adProvider: 'WHOP', whopCampaignId: 'adcamp_HalfBuilt1', status: 'PROCESSING' });
+    const enqueueLaunch = vi.fn(async () => {});
+    expect((await triggerAutoLaunch(id, { enqueueLaunch })).enqueued).toBe(true);
+  });
+
+  it('does NOT re-enqueue a Whop campaign that is live or paused at Whop', async () => {
+    const enqueueLaunch = vi.fn(async () => {});
+    for (const status of ['ACTIVE', 'PAUSED'] as const) {
+      const id = await makeCampaign({ channelId: randomUUID(), adProvider: 'WHOP', whopCampaignId: `adcamp_Live${status}`, status });
+      expect((await triggerAutoLaunch(id, { enqueueLaunch })).enqueued).toBe(false);
+    }
     expect(enqueueLaunch).not.toHaveBeenCalled();
   });
 

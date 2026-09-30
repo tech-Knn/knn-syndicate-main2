@@ -14,6 +14,14 @@ IDs** — so a reviewer landing here sees a normal site.
 - Article TEXT is fetched from our public API **server-side** (invisible to external scanners);
   only the white domain's DNS/IP/cert/content/IDs are inspectable, and those are all clean.
 - Never add Google Analytics / AdSense / a FB pixel / any shared ID here.
+  - **The one exception (D33, Whop Ads):** Whop will not create an ad until it finds *its* pixel on the ad's
+    destination. It loads the go-link, follows the redirect to this site and reads the HTML. So a page carries
+    the Whop pixel **only** when the request has a valid signed `_ws` scope (`src/whop-scope.ts`, minted by the
+    redirect Worker for a Whop link): a direct visit, a crawler or a forged link sees the same clean page as
+    ever. Never make it static or global, never add a second ID, and keep the variant uncacheable
+    (`private, no-store`). The business id then appears in that page's source, but only to visitors who came
+    through that business's link. It fires the ordinary page view only; conversions never come from here.
+    Needs the `WHOP_SCOPE_SECRET` Worker secret (the same value as the redirect Worker's); unset = no pixel.
 
 ## Routes
 `/` (recent-articles index, from `GET /api/public/articles/recent`) · `/a/:slug` (the article,
@@ -27,4 +35,5 @@ wrangler login              # to the WHITE account (or use a scoped CLOUDFLARE_A
 pnpm dlx wrangler deploy    # provisions the 3 custom domains + certs
 ```
 `API_BASE` (the public API host) is a `[vars]` entry. Keep this package lean — no `@knn/shared`,
-no money-side imports.
+no money-side imports. Tests: `pnpm --filter @knn/white test` (vitest; `whop-scope.ts` and `whop-pixel.ts`
+are verbatim copies, guarded by tests in `apps/redirect` and `packages/whop`).

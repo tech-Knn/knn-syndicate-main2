@@ -45,6 +45,9 @@ import {
   type GroupKey,
   derive,
   fmtCount,
+  infoFor,
+  networkTag,
+  relabel,
   sumInputs,
 } from './columns';
 
@@ -251,6 +254,8 @@ export default function AnalyticsPage() {
   }, [rows, debouncedSearch, statusSel, buyerSel, companySel, profitSel, sortKey, sortDir]);
 
   const totals = useMemo(() => sumInputs(filtered), [filtered]);
+  // Network-sourced columns are labelled by where their numbers come from: (FB), (Whop), or (FB/Whop) for a mix (D33).
+  const tag = useMemo(() => networkTag(filtered.map((r) => r.adProvider)), [filtered]);
   const cellCtx = useMemo<CellCtx>(
     () => ({ maxSpend: Math.max(0, ...filtered.map((r) => r.spendUsd)), maxRevenue: Math.max(0, ...filtered.map((r) => r.revenueUsd)) }),
     [filtered],
@@ -322,7 +327,7 @@ export default function AnalyticsPage() {
   // CSV always carries every metric, whatever the on-screen column pick.
   const exportCsv = (): void => {
     const metricCols = COLUMNS.filter((c) => c.key !== 'budget');
-    const head = ['Campaign', 'Status', 'Buyer', 'Company', 'Channel', 'Daily budget', ...metricCols.map((c) => c.label)];
+    const head = ['Campaign', 'Status', 'Buyer', 'Company', 'Channel', 'Daily budget', ...metricCols.map((c) => relabel(c.label, tag))];
     const esc = (v: string | number): string => {
       const s = String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -467,7 +472,7 @@ export default function AnalyticsPage() {
           )}
           <div className={styles.spacer} />
           <SyncIndicator sync={sync} />
-          <ColumnPicker value={columns} onChange={chooseColumns} />
+          <ColumnPicker value={columns} onChange={chooseColumns} tag={tag} />
           <button type="button" className={styles.toolBtn} onClick={exportCsv} disabled={filtered.length === 0}>
             Export CSV
           </button>
@@ -513,7 +518,7 @@ export default function AnalyticsPage() {
             <div className={styles.summaryGroup}>
               <span className={styles.summaryLabel}>Results · {fmtCount(filtered.length)} {filtered.length === 1 ? 'campaign' : 'campaigns'}</span>
               <div className={styles.summaryStrip}>
-                <StatTile label="Spend" value={formatUsd(totals.spendUsd)} sub={`${fmtCount(totals.visits)} visits`} info="Facebook ad spend across the campaigns shown. Visits = people who landed on the page." />
+                <StatTile label="Spend" value={formatUsd(totals.spendUsd)} sub={`${fmtCount(totals.visits)} visits`} info={relabel('Facebook ad spend across the campaigns shown. Visits = people who landed on the page.', tag)} />
                 <StatTile label="Revenue" value={formatUsd(totals.revenueUsd)} sub={`${fmtCount(totals.adClicks)} ad clicks`} info="AdSense earnings attributed to the campaigns shown (after any platform cut). Lags spend by a few hours." />
                 <StatTile
                   label="Profit"
@@ -568,8 +573,8 @@ export default function AnalyticsPage() {
                     <th key={`${g.group}-${i}`} scope="colgroup" colSpan={g.count} className={`${styles.groupHead} ${styles.groupStart} ${styles[`group_${g.group}`] ?? ''}`}>
                       {GROUPS[g.group].label && (
                         <span className={styles.thInner}>
-                          {GROUPS[g.group].label}
-                          <InfoTip>{GROUPS[g.group].info}</InfoTip>
+                          {relabel(GROUPS[g.group].label, tag)}
+                          <InfoTip>{infoFor(`group:${g.group}`, GROUPS[g.group].info, tag)}</InfoTip>
                         </span>
                       )}
                     </th>
@@ -581,11 +586,11 @@ export default function AnalyticsPage() {
                   <SortHead k="status" label="Status" left extraClass={styles.statusCol} />
                   {visibleCols.map((c) =>
                     c.sort ? (
-                      <SortHead key={c.key} k={c.key} label={c.label} info={c.info} start={groupStarts.has(c.key)} />
+                      <SortHead key={c.key} k={c.key} label={relabel(c.label, tag)} info={infoFor(c.key, c.info ?? '', tag)} start={groupStarts.has(c.key)} />
                     ) : (
                       <th key={c.key} scope="col" className={`${styles.thNum} ${groupStarts.has(c.key) ? styles.groupStart : ''}`}>
-                        <Tooltip content={c.info} className={styles.headTip}>
-                          <span className={`${styles.defined} ${styles.plainHead}`}>{c.label}</span>
+                        <Tooltip content={infoFor(c.key, c.info ?? '', tag)} className={styles.headTip}>
+                          <span className={`${styles.defined} ${styles.plainHead}`}>{relabel(c.label, tag)}</span>
                         </Tooltip>
                       </th>
                     ),
@@ -630,6 +635,7 @@ export default function AnalyticsPage() {
                                 editable={(r.status === 'ACTIVE' || r.status === 'PAUSED') && (r.budgetMode === 'CAMPAIGN' || r.adSetCount === 1)}
                                 emptyLabel={r.budgetMode === 'AD_SET' && r.adSetCount > 1 ? 'Per ad set' : undefined}
                                 label={r.name}
+                                minCents={r.adProvider === 'WHOP' ? 1 : 200}
                                 save={(cents) => campaignApi.setBudget(r.id, cents)}
                                 onSaved={(cents) => setRows((prev) => (prev ? prev.map((x) => (x.id === r.id ? { ...x, dailyBudgetCents: cents } : x)) : prev))}
                                 onError={setError}
@@ -644,13 +650,13 @@ export default function AnalyticsPage() {
                         <td className={styles.actionsCell}>
                           <div className={styles.rowActions}>
                             {r.status === 'ACTIVE' ? (
-                              <Tooltip content="Pause on Facebook" wrapsControl>
+                              <Tooltip content={`Pause on ${r.adProvider === 'WHOP' ? 'Whop' : 'Facebook'}`} wrapsControl>
                                 <button type="button" className={`${styles.iconBtn} ${styles.iconBtnDanger}`} disabled={busy === r.id} aria-label={`Pause ${r.name}`} onClick={() => void toggleActive(r, false)}>
                                   {busy === r.id ? '…' : <IconPause size={15} />}
                                 </button>
                               </Tooltip>
                             ) : r.status === 'PAUSED' ? (
-                              <Tooltip content="Resume on Facebook" wrapsControl>
+                              <Tooltip content={`Resume on ${r.adProvider === 'WHOP' ? 'Whop' : 'Facebook'}`} wrapsControl>
                                 <button type="button" className={styles.iconBtn} disabled={busy === r.id} aria-label={`Resume ${r.name}`} onClick={() => void toggleActive(r, true)}>
                                   {busy === r.id ? '…' : <IconPlay size={15} />}
                                 </button>

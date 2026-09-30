@@ -5,6 +5,7 @@ import { QUEUES, closeQueues, createConnection, getQueue } from '@knn/queue';
 import { FINALIZATION } from '@knn/shared';
 import { runFinalization, runHourlyAttribution } from './attribution/attribution.service.js';
 import { type CapiDispatchJob, dispatchConversion } from './capi-dispatch.js';
+import { type WhopDispatchJob, dispatchWhopEvent, failExhaustedWhopEvent } from './whop-dispatch.js';
 import {
   assignForCampaign,
   processQueue,
@@ -14,6 +15,7 @@ import {
 } from './channel-pool/channel.service.js';
 import { sweepDomainHealth } from './jobs/domain-health.js';
 import { reconcileCampaigns } from './jobs/meta-rejection.js';
+import { reconcileWhopCampaigns } from './jobs/whop-reconcile.js';
 import { SYNC_KEYS, markSyncRun } from './lib/sync-state.js';
 import { refreshFbTokens } from './jobs/token-refresh.js';
 import { type FbLaunchJob, learnRcTermsNow, resyncOffersToKv, runFbLaunch, syncAllFbConnections, triggerAutoLaunch } from './launch-trigger.js';
@@ -138,6 +140,22 @@ async function main(): Promise<void> {
     console.error(`[worker] ${QUEUES.CAPI_DISPATCH} job ${job?.id} failed:`, err.message);
   });
 
+  // Conversion → Whop's Events API (S2S, D33): the Whop sibling of the CAPI worker above. A Whop ad's money
+  // page carries no Whop pixel, so each funnel event is reported from here. Retries with backoff on rate-limit
+  // or transient errors; a rejected key or a refusal is terminal; when BullMQ's retries run out the row is
+  // settled as failed (CAPI leaves such rows pending forever; this one must not).
+  const whopWorker = new Worker(
+    QUEUES.WHOP_DISPATCH,
+    async (job: Job<WhopDispatchJob>) => dispatchWhopEvent(job.data),
+    { connection, concurrency: 4 },
+  );
+  whopWorker.on('failed', (job, err) => {
+    console.error(`[worker] ${QUEUES.WHOP_DISPATCH} job ${job?.id} failed:`, err.message);
+    if (job && job.attemptsMade >= (job.opts.attempts ?? 1)) {
+      void failExhaustedWhopEvent(job.data.conversionEventId, err.message).catch((e) => console.error('[worker] could not settle exhausted Whop event:', e instanceof Error ? e.message : String(e)));
+    }
+  });
+
   // Campaign reconciliation (D14 + status sync): FB has no reliable webhook for disapproval
   // OR pause/resume, so poll each launched campaign's effective_status. A disapproved ad →
   // META_REJECTED + release channel + notify; a pause/resume done in Ads Manager → mirror
@@ -145,9 +163,22 @@ async function main(): Promise<void> {
   const metaRejectionWorker = new Worker(
     QUEUES.META_REJECTION_CHECK,
     async () => {
-      const result = await reconcileCampaigns();
+      // Facebook and Whop (D33) are reconciled independently: neither's failure may keep the other from running.
+      // A Facebook failure still fails the job (as before); a Whop failure is logged and surfaces in the result.
+      let facebook: Awaited<ReturnType<typeof reconcileCampaigns>> | undefined;
+      let facebookError: unknown;
+      try {
+        facebook = await reconcileCampaigns();
+      } catch (err) {
+        facebookError = err;
+      }
+      const whop = await reconcileWhopCampaigns().catch((err: unknown) => {
+        console.error('[worker] Whop reconcile failed:', err instanceof Error ? err.message : String(err));
+        return { error: err instanceof Error ? err.message : String(err) };
+      });
+      if (facebookError) throw facebookError;
       await markSyncRun(SYNC_KEYS.FB_STATUS); // freshness signal for the Analytics "last updated" indicator
-      return result;
+      return { ...facebook, whop };
     },
     { connection, concurrency: 1 },
   );
@@ -288,6 +319,7 @@ async function main(): Promise<void> {
     await channelWorker.close();
     await fbLaunchWorker.close();
     await capiWorker.close();
+    await whopWorker.close();
     await metaRejectionWorker.close();
     await attributionWorker.close();
     await closeQueues();

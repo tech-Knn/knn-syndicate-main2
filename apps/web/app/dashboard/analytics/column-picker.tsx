@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useId, useRef, useState } from 'react';
-import { COLUMNS, COLUMN_PRESETS, type ColKey, GROUPS, type GroupKey } from './columns';
+import { COLUMNS, COLUMN_PRESETS, type ColKey, GROUPS, type GroupKey, type NetworkTag, relabel } from './columns';
 import styles from '../analytics.module.css';
 
 /**
@@ -9,7 +9,7 @@ import styles from '../analytics.module.css';
  * metric, grouped like the table header. Closes on outside click and Escape; focus returns to the
  * trigger. The page persists the choice per browser.
  */
-export function ColumnPicker({ value, onChange }: { value: ColKey[]; onChange: (cols: ColKey[]) => void }) {
+export function ColumnPicker({ value, onChange, tag = 'FB' }: { value: ColKey[]; onChange: (cols: ColKey[]) => void; /** Which ad network(s) the rows in view come from: the network-sourced columns are named after it. */ tag?: NetworkTag }) {
   const [open, setOpen] = useState(false);
   // Open toward the side with room: the trigger can sit at either end of a wrapping toolbar.
   const [alignRight, setAlignRight] = useState(false);
@@ -64,7 +64,7 @@ export function ColumnPicker({ value, onChange }: { value: ColKey[]; onChange: (
         }}
       >
         Columns
-        <span className={styles.toolBtnMeta}>{activePreset ? activePreset.label : `${value.length} shown`}</span>
+        <span className={styles.toolBtnMeta}>{activePreset ? relabel(activePreset.label, tag) : `${value.length} shown`}</span>
       </button>
       {open && (
         <div id={panelId} className={`${styles.pickerPanel} ${alignRight ? styles.pickerPanelRight : ''}`} role="dialog" aria-label="Choose columns">
@@ -77,18 +77,18 @@ export function ColumnPicker({ value, onChange }: { value: ColKey[]; onChange: (
                 aria-pressed={activePreset?.id === p.id}
                 onClick={() => onChange(p.columns)}
               >
-                {p.label}
+                {relabel(p.label, tag)}
               </button>
             ))}
           </div>
           <div className={styles.pickerGroups}>
             {groups.map(({ g, cols }) => (
               <fieldset key={g} className={styles.pickerGroup}>
-                <legend className={styles.pickerLegend}>{GROUPS[g].label || 'Controls'}</legend>
+                <legend className={styles.pickerLegend}>{relabel(GROUPS[g].label, tag) || 'Controls'}</legend>
                 {cols.map((c) => (
                   <label key={c.key} className={styles.pickerItem}>
                     <input type="checkbox" checked={selected.has(c.key)} onChange={() => toggle(c.key)} />
-                    <span>{c.label}</span>
+                    <span>{relabel(c.label, tag)}</span>
                   </label>
                 ))}
               </fieldset>

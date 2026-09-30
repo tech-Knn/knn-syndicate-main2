@@ -185,7 +185,7 @@ export async function getCampaignPerformance(
     const campaigns = await tx.campaign.findMany({
       where: auth.role === ROLES.MEDIA_BUYER ? { buyerId: auth.userId } : {},
       orderBy: { createdAt: 'desc' },
-      select: { id: true, name: true, status: true, channelId: true, buyerId: true, orgId: true, budgetMode: true, dailyBudgetCents: true },
+      select: { id: true, name: true, status: true, adProvider: true, channelId: true, buyerId: true, orgId: true, budgetMode: true, dailyBudgetCents: true },
     });
     if (campaigns.length === 0) return [];
 
@@ -245,6 +245,7 @@ export async function getCampaignPerformance(
         id: c.id,
         name: c.name,
         status: c.status,
+        adProvider: c.adProvider,
         channelLabel: c.channelId ? (channelLabel.get(c.channelId) ?? null) : null,
         buyerId: c.buyerId,
         buyerName: buyerName.get(c.buyerId) ?? '—',
@@ -319,6 +320,7 @@ export async function getCampaignBreakdown(
         id: true,
         name: true,
         status: true,
+        adProvider: true,
         buyerId: true,
         budgetMode: true,
         adSets: {
@@ -329,6 +331,7 @@ export async function getCampaignBreakdown(
             effectiveStatus: true,
             dailyBudgetCents: true,
             fbAdSetId: true,
+            whopAdGroupId: true,
             ads: { orderBy: { createdAt: 'asc' }, select: { id: true, name: true, effectiveStatus: true } },
           },
         },
@@ -421,9 +424,9 @@ export async function getCampaignBreakdown(
         conversions: ads.reduce((a, x) => a + x.conversions, 0),
         ...sumFunnel(ads),
         dailyBudgetCents: set.dailyBudgetCents,
-        // Editable only for a live ABO campaign whose ad set is on Facebook (mirrors updateAdSetBudget).
+        // Editable only for a live ABO campaign whose ad set is at its ad network, Facebook or Whop (mirrors updateAdSetBudget).
         editableBudget:
-          (campaign.status === 'ACTIVE' || campaign.status === 'PAUSED') && campaign.budgetMode === 'AD_SET' && set.fbAdSetId != null,
+          (campaign.status === 'ACTIVE' || campaign.status === 'PAUSED') && campaign.budgetMode === 'AD_SET' && (set.fbAdSetId ?? set.whopAdGroupId) != null,
         ads,
       };
     });
@@ -444,7 +447,7 @@ export async function getCampaignBreakdown(
 
     return {
       range,
-      campaign: { id: campaign.id, name: campaign.name, status: campaign.status },
+      campaign: { id: campaign.id, name: campaign.name, status: campaign.status, adProvider: campaign.adProvider },
       totals,
       adSets,
     };

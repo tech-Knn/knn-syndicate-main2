@@ -478,3 +478,39 @@ describe('funnel counts come from our own tracking — visits, keyword clicks, a
     }
   });
 });
+
+describe('the provider shows in Analytics (D33)', () => {
+  it('tells each campaign row its ad network, and lets a live Whop ad set be edited by its Whop ad group id', async () => {
+    const b1 = await withSystem((tx) => tx.user.findUniqueOrThrow({ where: { email: buyerA1 } }));
+    const whop = await withSystem(async (tx) => {
+      const c = await tx.campaign.create({
+        data: {
+          orgId: orgAId,
+          buyerId: b1.id,
+          name: 'Camp Whop',
+          status: 'ACTIVE',
+          adProvider: 'WHOP',
+          budgetMode: 'AD_SET',
+          whopCampaignId: `adcamp_Stats${suffix}`.slice(0, 30),
+          adSets: {
+            create: [
+              { orgId: orgAId, name: 'Whop set', whopAdGroupId: `adgrp_Stats${suffix}`.slice(0, 30), ads: { create: [{ orgId: orgAId, name: 'W1', headline: 'H', primaryText: 'P', redirectId: `r-${suffix}-w1` }] } },
+              { orgId: orgAId, name: 'Unlaunched set', ads: { create: [{ orgId: orgAId, name: 'W2', headline: 'H', primaryText: 'P', redirectId: `r-${suffix}-w2` }] } },
+            ],
+          },
+        },
+      });
+      return c.id;
+    });
+    const auth = { userId: b1.id, orgId: orgAId, role: ROLES.MEDIA_BUYER, status: USER_STATUS.ACTIVE } as const;
+    const rows = await getCampaignPerformance(auth, { from: today, to: today });
+    expect(rows.find((r) => r.id === whop)?.adProvider).toBe('WHOP');
+    expect(rows.find((r) => r.id === ids.cA1)?.adProvider).toBe('FACEBOOK');
+
+    const bd = await getCampaignBreakdown(auth, whop, { from: today, to: today });
+    expect(bd.campaign.adProvider).toBe('WHOP');
+    // Editable only where the ad set exists at the network: the launched one, not the one with no Whop ad group yet.
+    expect(bd.adSets.find((s) => s.name === 'Whop set')?.editableBudget).toBe(true);
+    expect(bd.adSets.find((s) => s.name === 'Unlaunched set')?.editableBudget).toBe(false);
+  });
+});

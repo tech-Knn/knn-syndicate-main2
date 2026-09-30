@@ -33,6 +33,18 @@ through-synced from the origin (Postgres = source of truth) on launch/update. Ho
   → YES: 302 to the article with params. NO (organic/bot/ad-library): 302 to `fallback_url`.
 - Ad traffic split: weighted random destination (weights sum to 100), then append params.
 
+## Whop Ads (D33)
+
+A config with a `whop: { bizId }` block is a Whop campaign; Facebook configs never have one and route exactly as
+before. For a Whop config the Worker: (1) counts Whop's own click signal (valid `wacid`/`wasid`/`waid`, or
+`utm_whop=true`) as paid, (2) writes a `whop` block into the KV click record (`bizId`, Whop's ids, the landing
+URL with only Whop's parameters) so the conversion can be reported back to Whop server-side, (3) tags the
+*non-paid* landing with a signed `_ws` scope (`whop-scope.ts`) so that page can carry the business's Whop pixel.
+The money route never carries `_ws`. `whop-click.ts` is a deliberate copy of `extractWhopClick` in `@knn/shared`
+(this Worker stays dependency-free; `@knn/shared` is a test-only devDependency that proves the two agree).
+`whop-scope.ts` is a verbatim copy in `apps/white` and `apps/article` (test-guarded). Needs the
+`WHOP_SCOPE_SECRET` Worker secret; unset = nothing Whop-related happens.
+
 ## Don't
 
 - Don't add heavy middleware or Prisma to the cached path. Don't import the FB/AdSense SDKs here.

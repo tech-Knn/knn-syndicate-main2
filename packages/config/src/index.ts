@@ -129,6 +129,20 @@ const EnvSchema = z.object({
   // business-login dialog currently uses; override if Meta moves it again.
   FB_VERIFY_API_VERSION: z.string().default('v25.0'),
 
+  // Whop Ads (D33). All optional with safe defaults: config is parsed at import by every app and
+  // test, so none of these may be required. With WHOP_ADS_ENABLED off nothing Whop-related is active.
+  WHOP_ADS_ENABLED: booleanish.default(false),
+  // Allow connecting a Whop SANDBOX business (own accounts/keys/data, no real money). Super-admins can
+  // always use it; turn this on for staging so buyers can too.
+  WHOP_ALLOW_SANDBOX: booleanish.default(false),
+  WHOP_API_BASE: z.string().url().default('https://api.whop.com/api/v1'),
+  WHOP_SANDBOX_API_BASE: z.string().url().default('https://sandbox-api.whop.com/api/v1'),
+  // Whop's API is versioned by date; breaking changes ship only in a new date. We pin one.
+  WHOP_API_VERSION_DATE: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}(-\d+)?$/, 'WHOP_API_VERSION_DATE must look like 2026-09-29')
+    .default('2026-09-29'),
+
   // Google / AdSense
   GOOGLE_CLIENT_ID: optionalString,
   GOOGLE_CLIENT_SECRET: optionalString,

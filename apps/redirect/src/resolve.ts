@@ -8,6 +8,8 @@
  * `styleId`) + our `txid` for attribution; organic/bot/paused → the fallback.
  */
 
+import { hasWhopSignal } from './whop-click.js';
+
 /**
  * A weighted destination for a paid click. Plain A/B splits carry just `url` +
  * `weight`; Phase-E **offers** additionally carry the offer's own `channel` (its
@@ -51,6 +53,13 @@ export interface RedirectConfig {
   /** 'observe' (default): route exactly as today, only RECORD what verification would decide (zero
    *  revenue risk). 'enforce': require the ad-id match for paid traffic. Set globally by the Worker. */
   verifyMode?: 'observe' | 'enforce';
+  /**
+   * Present only for a Whop Ads campaign (D33). The Whop business whose ad this link belongs to. It makes
+   * the Worker (a) also recognise a click from a Whop ad (Whop's own ids) as paid, (b) record Whop's click
+   * parameters beside the click so the conversion can be reported back, and (c) tag the page a non-paid
+   * visitor lands on with a signed scope so it carries that business's pixel. Absent for Facebook.
+   */
+  whop?: { bizId: string };
 }
 
 /** The cloak ad-id verification outcome for a click (observe-first telemetry). */
@@ -113,7 +122,9 @@ export function resolveRedirect(
   query: QueryParams,
   opts: { txid: string; rand?: number },
 ): RedirectDecision {
-  const basePaid = isPaidTraffic(query);
+  // A Whop config also counts Whop's own click signal as paid: a click on a Whop ad carries Whop's ids even
+  // when it lacks an fbclid (some placements). Facebook configs (no `whop`) route exactly as before.
+  const basePaid = isPaidTraffic(query) || (Boolean(config.whop) && hasWhopSignal(query));
   const outcome = verifyOutcome(config, query, basePaid);
 
   // SINGLE-FACTOR cloaker (operator decision 2026-06-03): under ENFORCE the money page is gated SOLELY

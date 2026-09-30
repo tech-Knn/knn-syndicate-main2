@@ -12,5 +12,8 @@
   },
   "dependencies": {
     "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@knn/shared": "workspace:*"
   }
 }

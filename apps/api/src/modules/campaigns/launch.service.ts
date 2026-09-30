@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { env } from '@knn/config';
-import { FbConnectionStatus, type TxClient, withSystem } from '@knn/db';
+import { FbConnectionStatus, type TxClient } from '@knn/db';
 import {
   type FbAppKind,
   FbAccountRestrictedError,
@@ -23,7 +23,7 @@ import {
   uploadFbAdImage,
   uploadFbAdVideo,
 } from '@knn/fb';
-import { CAMPAIGN_STATUS, type FunnelMode, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, canTransitionCampaign, effectiveFunnelMode, effectiveRac, goalRequiresPixel, normalizeCustomTerms, pxeToCustomEventType } from '@knn/shared';
+import { CAMPAIGN_STATUS, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, canTransitionCampaign, effectiveRac, goalRequiresPixel, pxeToCustomEventType } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { KvNotConfiguredError, type RedirectConfigPayload, writeRedirectConfigs } from '../../lib/kv-sync.js';
@@ -33,6 +33,12 @@ import type { AuthContext } from '../../middleware/authenticate.js';
 import { markConnectionBroken } from '../facebook/facebook.service.js';
 import { generateArticleForCampaign } from '../articles/articles.service.js';
 import { type CampaignWithChildren, campaignInclude, reopenCampaign, toDraft } from './campaigns.service.js';
+import { pickWhiteDomain, resolveBuyerFunnelMode, resolveRedirectBase, syncCampaignRedirectConfigs, withCustomTerms } from './launch-routing.js';
+import { setWhopCampaignActive, updateWhopAdSetBudget, updateWhopCampaignBudget } from './whop-controls.service.js';
+import { type WhopLaunchDeps, launchWhopCampaign, relaunchWhopCampaign } from './whop-launch.service.js';
+
+// Existing callers import these from here; they now live in launch-routing.ts (shared with the Whop launch).
+export { syncCampaignRedirectConfigs, withCustomTerms };
 
 /**
  * Decrypt a stored FB connection token, mapping an undecryptable value (rotated
@@ -193,6 +199,11 @@ async function resolveLaunchPlan(auth: AuthContext, campaignId: string): Promise
     if (auth.role === ROLES.MEDIA_BUYER && campaign.buyerId !== auth.userId) {
       throw new AppError(404, 'Campaign not found');
     }
+    // The Facebook plan builder, and the test launch that uses it, are Facebook only (D33). A Whop campaign is
+    // checked by Whop itself when its ads are created, and launches through `launchWhopCampaign`.
+    if (campaign.adProvider === 'WHOP') {
+      throw new AppError(409, 'Test launch is for Facebook campaigns. Whop checks a campaign when its ads are created: launch it from the campaign page.');
+    }
 
     const issues = campaignSubmitIssues(toDraft(campaign));
     if (issues.length > 0) throw new AppError(422, 'Campaign is not complete enough to launch', issues);
@@ -251,6 +262,20 @@ async function resolveLaunchPlan(auth: AuthContext, campaignId: string): Promise
 }
 
 /**
+ * Which ad network runs a campaign (D33). Every action that differs by provider asks this FIRST, before any side
+ * effect or validation that only makes sense for one network (Facebook's $2 budget floor, for instance). Also the
+ * scope check: a buyer only ever sees their own campaign, anything else is a 404.
+ */
+async function campaignProvider(auth: AuthContext, campaignId: string): Promise<'FACEBOOK' | 'WHOP'> {
+  return runScoped(auth, async (tx) => {
+    const c = await tx.campaign.findUnique({ where: { id: campaignId }, select: { adProvider: true, buyerId: true } });
+    if (!c) throw new AppError(404, 'Campaign not found');
+    if (auth.role === ROLES.MEDIA_BUYER && c.buyerId !== auth.userId) throw new AppError(404, 'Campaign not found');
+    return c.adProvider;
+  });
+}
+
+/**
  * Pause or resume a launched campaign — the core optimization action. Flips the FB
  * campaign's delivery status (network call done OUTSIDE the txn) AND the local status
  * (ACTIVE ↔ PAUSED). A buyer may only touch their own; admins/super their scope (RLS).
@@ -262,6 +287,7 @@ export async function setCampaignActive(
   active: boolean,
   deps: Pick<LaunchDeps, 'writeRedirectConfigs'> = { writeRedirectConfigs },
 ): Promise<{ id: string; status: string }> {
+  if ((await campaignProvider(auth, campaignId)) === 'WHOP') return setWhopCampaignActive(auth, campaignId, active, deps);
   const target = active ? CAMPAIGN_STATUS.ACTIVE : CAMPAIGN_STATUS.PAUSED;
 
   // Read phase: validate scope/state and resolve the FB campaign + token (no network).
@@ -378,6 +404,7 @@ export async function updateCampaignBudget(
   campaignId: string,
   input: { dailyBudgetCents: number },
 ): Promise<{ id: string; dailyBudgetCents: number }> {
+  if ((await campaignProvider(auth, campaignId)) === 'WHOP') return updateWhopCampaignBudget(auth, campaignId, input);
   const cents = input.dailyBudgetCents;
   if (!Number.isInteger(cents) || cents < MIN_DAILY_BUDGET_CENTS) {
     throw new AppError(422, `Daily budget must be at least $${(MIN_DAILY_BUDGET_CENTS / 100).toFixed(2)} (Facebook minimum).`);
@@ -479,6 +506,7 @@ export async function updateAdSetBudget(
   adSetId: string,
   input: { dailyBudgetCents: number },
 ): Promise<{ id: string; adSetId: string; dailyBudgetCents: number }> {
+  if ((await campaignProvider(auth, campaignId)) === 'WHOP') return updateWhopAdSetBudget(auth, campaignId, adSetId, input);
   const cents = input.dailyBudgetCents;
   if (!Number.isInteger(cents) || cents < MIN_DAILY_BUDGET_CENTS) {
     throw new AppError(422, `Daily budget must be at least $${(MIN_DAILY_BUDGET_CENTS / 100).toFixed(2)} (Facebook minimum).`);
@@ -534,95 +562,6 @@ export async function updateAdSetBudget(
 }
 
 /** FB write phase — campaign → ad sets → (image, creative, ad), all at `status`. */
-/**
- * The buyer's effective funnel mode (org gate + org default + per-buyer override), resolved by the
- * shared `effectiveFunnelMode`. CLOAKER buyers rotate onto CLOAKER redirect domains (and, Phase 2,
- * get the white-site fallback + display link); NORMAL buyers run the straight monetized redirect.
- */
-async function resolveBuyerFunnelMode(orgId: string, buyerId: string): Promise<FunnelMode> {
-  const [org, user] = await withSystem((tx) =>
-    Promise.all([
-      tx.organization.findUnique({ where: { id: orgId }, select: { cloakingEnabled: true, defaultFunnelMode: true } }),
-      tx.user.findUnique({ where: { id: buyerId }, select: { funnelMode: true } }),
-    ]),
-  );
-  return effectiveFunnelMode({
-    cloakingEnabled: org?.cloakingEnabled ?? false,
-    defaultFunnelMode: org?.defaultFunnelMode ?? 'NORMAL',
-    userFunnelMode: user?.funnelMode ?? null,
-  });
-}
-
-/**
- * Pick the redirect (go.*) base URL for a launch, ROTATING across the eligible pool. Eligible =
- * domains whose `mode` matches the buyer, that are active + healthy, and either company-exclusive to
- * this org or in the shared pool (exclusive wins). Chooses the LEAST-loaded host (fewest campaigns
- * already on it) so a flagged domain has minimal blast radius. Falls back to the legacy default, then
- * env `REDIRECT_DOMAIN`, so launches never break before the super-admin has populated the pool.
- * Returns both the base URL and the bare host (recorded on the campaign).
- *
- * `keepHost`: when RESUMING an unfinished build, the ads already created on Facebook link to that
- * host — so the rest of the build stays on it while it is still eligible. Otherwise the ranking
- * shifts between attempts (exactly when rate limits hit, under load) and one campaign ends up with
- * creatives on several hosts while only the last one is recorded for blast-radius reporting.
- */
-async function resolveRedirectBase(
-  mode: FunnelMode,
-  orgId: string,
-  keepHost?: string | null,
-): Promise<{ base: string; host: string }> {
-  const eligible = await withSystem((tx) =>
-    tx.redirectDomain.findMany({
-      where: { mode, isActive: true, healthy: true, OR: [{ ownerOrgId: orgId }, { ownerOrgId: null }] },
-      select: { host: true, ownerOrgId: true },
-    }),
-  );
-  const exclusive = eligible.filter((d) => d.ownerOrgId === orgId);
-  const pool = (exclusive.length ? exclusive : eligible).map((d) => d.host);
-  if (pool.length > 0) {
-    if (keepHost && pool.includes(keepHost)) return { base: `https://${keepHost}`, host: keepHost };
-    // Least-loaded rotation: spread campaigns evenly so one flagged host affects the fewest.
-    const loads = await withSystem((tx) =>
-      tx.campaign.groupBy({ by: ['redirectDomainHost'], where: { redirectDomainHost: { in: pool } }, _count: { _all: true } }),
-    );
-    const loadByHost = new Map(loads.map((l) => [l.redirectDomainHost, l._count._all]));
-    pool.sort((a, b) => (loadByHost.get(a) ?? 0) - (loadByHost.get(b) ?? 0));
-    const host = pool[0]!;
-    return { base: `https://${host}`, host };
-  }
-  // Backward-compat fallback: the legacy default domain, then env REDIRECT_DOMAIN.
-  const def = await withSystem((tx) => tx.redirectDomain.findFirst({ where: { isDefault: true }, select: { host: true } }));
-  if (def?.host) return { base: `https://${def.host}`, host: def.host };
-  const base = env.REDIRECT_DOMAIN;
-  let host = base;
-  try {
-    host = new URL(base).host;
-  } catch {
-    /* env may already be a bare host */
-  }
-  return { base, host };
-}
-
-/**
- * Pick a white domain from the active + healthy pool, rotating LEAST-LOADED (fewest campaigns already
- * on it) so cloaker ads spread across the pool instead of all sharing one display URL. Returns the
- * host, or undefined when the pool is empty → no white auto-fill (the buyer's own display/fallback stand).
- * `keepHost`: RESUMING an unfinished build keeps the white domain its earlier ads already display
- * (their FB display link can't change), while it is still in the pool.
- */
-async function pickWhiteDomain(keepHost?: string | null): Promise<string | undefined> {
-  const pool = await withSystem((tx) => tx.whiteDomain.findMany({ where: { isActive: true, healthy: true }, select: { host: true } }));
-  const hosts = pool.map((d) => d.host);
-  if (hosts.length === 0) return undefined;
-  if (keepHost && hosts.includes(keepHost)) return keepHost;
-  const loads = await withSystem((tx) =>
-    tx.campaign.groupBy({ by: ['whiteDomainHost'], where: { whiteDomainHost: { in: hosts } }, _count: { _all: true } }),
-  );
-  const loadByHost = new Map(loads.map((l) => [l.whiteDomainHost, l._count._all]));
-  hosts.sort((a, b) => (loadByHost.get(a) ?? 0) - (loadByHost.get(b) ?? 0));
-  return hosts[0]!;
-}
-
 /**
  * When launching through a separate LAUNCH app, verify ITS token can see the ad account,
  * Page and pixels first — Facebook grants assets per app, so a launch app that wasn't
@@ -938,6 +877,10 @@ export async function testLaunchCampaign(auth: AuthContext, campaignId: string):
 export interface LaunchDeps {
   generateArticle: (auth: AuthContext, campaignId: string) => Promise<{ slug: string }>;
   writeRedirectConfigs: (entries: { redirectId: string; config: RedirectConfigPayload }[]) => Promise<void>;
+  /** Test seam for the Whop launch, which waits between tries (pixel preflight, creative processing). Unused by Facebook. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Test seam for the Whop launch: how a finished launch is saved. Unused by Facebook. */
+  saveLaunched?: WhopLaunchDeps['saveLaunched'];
 }
 const defaultLaunchDeps: LaunchDeps = {
   generateArticle: (auth, id) => generateArticleForCampaign(auth, id),
@@ -947,116 +890,8 @@ const defaultLaunchDeps: LaunchDeps = {
 export interface LaunchResult {
   status: 'ACTIVE' | 'BATCHED';
   fbCampaignId?: string;
-}
-
-/**
- * D27: the buyer's custom RSOC terms ride on the MONEY-page URL as `terms=` — the go.* Worker signs
- * every destination param into the cloak token, so they reach the article page (and are sent to
- * Google as entered) with no Worker change. Never added to fallback/white URLs. No-op when empty.
- */
-export function withCustomTerms(url: string, termsOverride: readonly string[] | null | undefined): string {
-  const custom = normalizeCustomTerms(termsOverride);
-  if (!custom.length) return url;
-  const u = new URL(url);
-  u.searchParams.set('terms', custom.join(','));
-  return u.toString();
-}
-
-/**
- * Rebuild + write each ad's redirect config to edge KV from the campaign's CURRENT
- * offers / channel / article variants — **without touching Facebook**. The FB creative
- * carries only the stable `/go/{redirectId}` link, so rewriting KV reroutes live traffic
- * on the next click with zero ad republish. This is the engine behind post-launch offer
- * rebalancing (weights, article A/B, add/remove). System-scoped (the caller authorizes;
- * also called by the worker after it assigns/releases channels). Mirrors the split-build
- * in `launchCampaign` (kept in sync deliberately — launch stays inline to avoid coupling
- * the critical, stress-tested launch path to this helper).
- */
-export async function syncCampaignRedirectConfigs(
-  campaignId: string,
-  deps: Pick<LaunchDeps, 'writeRedirectConfigs'> = { writeRedirectConfigs },
-): Promise<{ ads: number }> {
-  const campaign = await withSystem((tx) => tx.campaign.findUnique({ where: { id: campaignId }, include: campaignInclude }));
-  if (!campaign) throw new AppError(404, 'Campaign not found');
-
-  // Campaign default article slug.
-  let slug: string | null = null;
-  if (campaign.articleId) {
-    const a = await withSystem((tx) => tx.article.findUnique({ where: { id: campaign.articleId! }, select: { slug: true } }));
-    slug = a?.slug ?? null;
-  }
-  if (!slug) throw new AppError(409, 'Campaign has no article yet — nothing to route');
-
-  // CLOAKER campaigns route white (non-ad) traffic to the white domain assigned at launch.
-  const whiteFallbackUrl = campaign.whiteDomainHost ? `https://${campaign.whiteDomainHost}/a/${slug}` : undefined;
-
-  const offers = await withSystem((tx) =>
-    tx.offer.findMany({ where: { campaignId }, include: { domain: { select: { host: true } } } }),
-  );
-  const paidOffers = offers.filter((o) => o.kind === 'PAID' && o.channelRef);
-
-  let articleUrl = `${env.ARTICLE_DOMAIN}/a/${slug}`;
-  let channel: string | undefined;
-  let splits: RedirectConfigPayload['splits'];
-  let organicFallbackUrl: string | undefined;
-
-  if (paidOffers.length > 0) {
-    const chRows = await withSystem((tx) =>
-      tx.channel.findMany({ where: { id: { in: paidOffers.map((o) => o.channelRef!) } }, select: { id: true, channelId: true } }),
-    );
-    const chById = new Map(chRows.map((c) => [c.id, c.channelId]));
-    const variantIds = [...new Set(offers.map((o) => o.articleId).filter((x): x is string => Boolean(x)))];
-    const variantRows = variantIds.length
-      ? await withSystem((tx) => tx.article.findMany({ where: { id: { in: variantIds } }, select: { id: true, slug: true } }))
-      : [];
-    const slugByArticle = new Map(variantRows.map((a) => [a.id, a.slug]));
-    const slugFor = (articleId: string | null): string => (articleId ? slugByArticle.get(articleId) ?? slug! : slug!);
-    splits = paidOffers.map((o) => ({
-      url: withCustomTerms(`https://${o.domain.host}/a/${slugFor(o.articleId)}`, campaign.termsOverride),
-      weight: o.weightPct,
-      channel: chById.get(o.channelRef!),
-      offerId: o.id,
-    }));
-    const organic = offers.find((o) => o.kind === 'ORGANIC');
-    organicFallbackUrl = organic ? `https://${organic.domain.host}/a/${slugFor(organic.articleId)}` : undefined;
-    articleUrl = splits[0]?.url ?? articleUrl;
-  } else if (campaign.channelId) {
-    const ch = await withSystem((tx) => tx.channel.findUnique({ where: { id: campaign.channelId! }, select: { channelId: true } }));
-    channel = ch?.channelId;
-    articleUrl = withCustomTerms(articleUrl, campaign.termsOverride);
-  }
-
-  const entries = campaign.adSets.flatMap((set) =>
-    set.ads
-      .filter((ad) => ad.redirectId)
-      .map((ad) => ({
-        redirectId: ad.redirectId,
-        config: {
-          campaignId: campaign.id,
-          active: campaign.status === CAMPAIGN_STATUS.ACTIVE,
-          articleUrl,
-          channel,
-          splits,
-          // Cloak verification: the click must carry kaid={{ad.id}} matching this id (enforce mode).
-          expectedAdId: ad.fbAdId ?? undefined,
-          // referrerAdCreative (the AFS `rc`): the ad's own override, else the campaign default (D27).
-          adCreative: effectiveRac(ad.racValue, campaign.racValue) ?? undefined,
-          // CLOAKER: white domain is the fallback (white page); else organic offer → ad → campaign.
-          fallbackUrl: whiteFallbackUrl ?? organicFallbackUrl ?? ad.fallbackUrl ?? campaign.fallbackUrl ?? undefined,
-        } satisfies RedirectConfigPayload,
-      })),
-  );
-  try {
-    await deps.writeRedirectConfigs(entries);
-  } catch (err) {
-    // Tolerate an unconfigured edge (mirrors launchCampaign) — never throw on the rebalance path.
-    if (err instanceof KvNotConfiguredError) {
-      console.warn(`[resync] Cloudflare KV not configured — redirect configs not synced for ${campaignId}`);
-    } else {
-      throw err;
-    }
-  }
-  return { ads: entries.length };
+  /** Whop campaigns only (D33). */
+  whopCampaignId?: string;
 }
 
 /**
@@ -1086,6 +921,9 @@ export async function launchCampaign(
     if (auth.role === ROLES.MEDIA_BUYER && c.buyerId !== auth.userId) throw new AppError(404, 'Campaign not found');
     return c;
   });
+
+  // Whop has its own launch (D33): draft-first, resumable, and it checks the pixel at the end of our go-link.
+  if (campaign.adProvider === 'WHOP') return launchWhopCampaign(auth, campaign, deps);
 
   if (campaign.fbCampaignId) return { status: 'ACTIVE', fbCampaignId: campaign.fbCampaignId };
 
@@ -1400,7 +1238,8 @@ async function notifyFbCampaignNotPaused(
  * `fb_pending_campaign_id`) is treated the same: paused and forgotten, then rebuilt from scratch —
  * relaunch is the explicit "start over", whereas a plain launch resumes.
  */
-export async function relaunchCampaign(auth: AuthContext, campaignId: string): Promise<LaunchResult> {
+export async function relaunchCampaign(auth: AuthContext, campaignId: string, deps: LaunchDeps = defaultLaunchDeps): Promise<LaunchResult> {
+  if ((await campaignProvider(auth, campaignId)) === 'WHOP') return relaunchWhopCampaign(auth, campaignId, deps);
   // Resolve the current FB campaign + the write credential to pause its delivery (best-effort).
   const info = await runScoped(auth, async (tx) => {
     const c = await tx.campaign.findUnique({
@@ -1437,7 +1276,7 @@ export async function relaunchCampaign(auth: AuthContext, campaignId: string): P
     await tx.campaign.update({ where: { id: campaignId }, data: { fbCampaignId: null, fbPendingCampaignId: null, status: CAMPAIGN_STATUS.PROCESSING } });
   });
 
-  return launchCampaign(auth, campaignId);
+  return launchCampaign(auth, campaignId, deps);
 }
 
 /**

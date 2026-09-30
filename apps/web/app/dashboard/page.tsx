@@ -191,7 +191,9 @@ export default function DashboardHome() {
     }
     const rejected = campaigns.filter((c) => c.status === 'META_REJECTED' || c.status === 'REJECTED');
     if (rejected.length > 0) {
-      items.push({ key: 'rejected', tone: 'danger', icon: '!', label: `${rejected.length} campaign${rejected.length === 1 ? ' was' : 's were'} rejected by Facebook`, detail: 'Fix the creative, then relaunch', href: '/dashboard/campaigns', cta: 'Fix' });
+      // Meta reviews the ads on both networks; a buyer who only runs Facebook keeps reading "Facebook", as before.
+      const reviewer = rejected.some((c) => c.adProvider === 'WHOP') ? 'Meta' : 'Facebook';
+      items.push({ key: 'rejected', tone: 'danger', icon: '!', label: `${rejected.length} campaign${rejected.length === 1 ? ' was' : 's were'} rejected by ${reviewer}`, detail: 'Fix the creative, then relaunch', href: '/dashboard/campaigns', cta: 'Fix' });
     }
     const winners = campaigns.filter((c) => c.status === 'ACTIVE' && c.profitUsd > 0 && c.roi > 0.2);
     if (winners.length > 0) {

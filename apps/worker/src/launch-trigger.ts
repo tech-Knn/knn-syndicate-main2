@@ -1,6 +1,7 @@
 import { env } from '@knn/config';
 import { withSystem } from '@knn/db';
 import { QUEUES, getQueue } from '@knn/queue';
+import { isLaunched } from '@knn/shared';
 
 export interface FbLaunchJob {
   campaignId: string;
@@ -76,7 +77,10 @@ export async function triggerAutoLaunch(
       select: {
         id: true,
         channelId: true,
+        adProvider: true,
+        status: true,
         fbCampaignId: true,
+        whopCampaignId: true,
         organization: { select: { autoLaunch: true } },
         offers: { where: { kind: 'PAID' }, select: { channelRef: true } },
       },
@@ -84,7 +88,7 @@ export async function triggerAutoLaunch(
   );
   if (!campaign) return { enqueued: false };
   if (!campaign.organization.autoLaunch) return { enqueued: false };
-  if (campaign.fbCampaignId) return { enqueued: false }; // already on Facebook
+  if (isLaunched(campaign)) return { enqueued: false }; // already live at its ad network (Facebook, or Whop)
 
   const paidOffers = campaign.offers;
   const hasChannels =

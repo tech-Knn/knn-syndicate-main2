@@ -7,6 +7,8 @@ import {
   SPECIAL_AD_CATEGORIES,
 } from './facebook-options.js';
 import { GOOGLE_SIGNAL_LIMITS } from './google-signals.js';
+import { AD_PROVIDERS } from './providers.js';
+import { whopLaunchProblems } from './whop-launch.js';
 
 /**
  * Campaign / ad-set / ad validation, shared by the API (source of truth) and the
@@ -214,8 +216,14 @@ export const campaignDraftSchema = z.object({
   // Landing-page angle that drives article generation (Phase 5).
   query: z.string().trim().max(300).optional(),
   fallbackUrl: optionalUrl,
+  // Which ad network runs it (D33). Omitted = Facebook, so every existing draft, preset and clone stays valid.
+  adProvider: z.enum(AD_PROVIDERS).default('FACEBOOK'),
+  // Facebook assets (a Whop campaign has none).
   adAccountId: uuid.optional(),
   pageId: uuid.optional(),
+  // Whop: the connection (a Whop business) and the Facebook page (`sacc_…`) the ads run under.
+  whopConnectionId: uuid.optional(),
+  whopPageId: z.string().regex(/^sacc_[A-Za-z0-9]{4,40}$/, 'Not a Whop page id').optional(),
   adSets: z.array(adSetInputSchema).max(20).default([]),
 });
 export type CampaignDraftInput = z.input<typeof campaignDraftSchema>;
@@ -259,8 +267,60 @@ export function racValueIssues(
   return issues;
 }
 
+/**
+ * Completeness gate for a WHOP campaign. A Whop campaign needs a connection and a page instead of a Facebook ad
+ * account, page and pixel, and Whop enforces its own budget floor at launch (it answers with a message we show),
+ * so there is no $2 Facebook minimum here. Everything Whop cannot express is reported by `whopLaunchProblems`.
+ */
+function whopSubmitIssues(c: CampaignDraft): string[] {
+  const issues: string[] = [];
+  if (!c.whopConnectionId) issues.push('Select a Whop business.');
+  if (!c.whopPageId) issues.push('Select the Facebook page your Whop ads run under.');
+  if (c.keywords.length === 0) issues.push('Add at least one keyword.');
+  if (!c.racValue) issues.push('Set the Referrer Ad Creative.');
+  else issues.push(...racValueIssues(c.racValue, c.name));
+  if (c.adSets.length === 0) issues.push('Add at least one ad set.');
+  issues.push(
+    ...whopLaunchProblems(
+      { name: c.name, objective: c.objective, specialAdCategories: c.specialAdCategories, budgetMode: c.budgetMode, dailyBudgetCents: c.dailyBudgetCents ?? null },
+      c.adSets.map((s) => ({
+        name: s.name,
+        dailyBudgetCents: s.dailyBudgetCents ?? null,
+        countries: s.countries,
+        excludeCountries: s.excludeCountries,
+        ageMin: s.ageMin,
+        ageMax: s.ageMax,
+        genders: s.genders,
+        advantageAudience: s.advantageAudience,
+        placementMode: s.placementMode,
+        placements: s.placements,
+        languages: s.languages,
+        devicePlatforms: s.devicePlatforms,
+        mobileOs: s.mobileOs,
+        bidStrategy: s.bidStrategy ?? null,
+        costCapCents: s.costCapCents ?? null,
+        startTime: s.startTime ? new Date(s.startTime) : null,
+        endTime: s.endTime ? new Date(s.endTime) : null,
+        pxeEvent: s.pxeEvent,
+      })),
+    ),
+  );
+  c.adSets.forEach((set, i) => {
+    const label = `Ad set ${i + 1} ("${set.name}")`;
+    if (set.ads.length === 0) issues.push(`${label} needs at least one ad.`);
+    set.ads.forEach((ad, j) => {
+      const name = `Ad ${i + 1}.${j + 1} ("${ad.name}")`;
+      if (!ad.uploadId) issues.push(`${name} needs a creative.`);
+      if (!ad.headline) issues.push(`${name} needs a headline.`);
+      if (!ad.primaryText) issues.push(`${name} needs primary text.`);
+    });
+  });
+  return issues;
+}
+
 /** Strict completeness gate for DRAFT → PENDING_APPROVAL. Empty list = submittable. */
 export function campaignSubmitIssues(c: CampaignDraft): string[] {
+  if (c.adProvider === 'WHOP') return whopSubmitIssues(c);
   const issues: string[] = [];
   if (!c.adAccountId) issues.push('Select a Facebook ad account.');
   if (!c.pageId) issues.push('Select a Facebook page.');

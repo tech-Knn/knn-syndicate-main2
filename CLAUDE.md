@@ -13,7 +13,7 @@ buyers see real-time ROI. Multi-tenant (companies), ~50–200 buyers, ~1500–20
 - **Monorepo**: pnpm workspaces + Turborepo. Apps: `api` (Fastify), `redirect` (Hono on a
   **Cloudflare Worker**, `go.*`), `article` (Next 15 SSR), `white` (Cloudflare Worker — the safe
   decoy site), `web` (Next 15 dashboard/admin), `worker` (BullMQ). Packages: `db` (Prisma),
-  `shared`, `config`, `queue`, `fb`, `adsense`, `ai`.
+  `shared`, `config`, `queue`, `fb`, `adsense`, `ai`, `whop`.
 - **Framework split (D3)**: Fastify for the main API (Node — the Facebook/Google SDK paths aren't
   edge-compatible). The latency-critical (<50ms) public redirect (`go.*`) and the white decoy run as
   **Cloudflare Workers** (Hono) at the edge, reading per-ad config from Workers KV; deployed via
@@ -38,11 +38,21 @@ buyers see real-time ROI. Multi-tenant (companies), ~50–200 buyers, ~1500–20
   every 30 min (no reliable webhook).
 - **AI (D16)**: articles + compliance via Claude; embeddings via OpenAI `text-embedding-3-small`
   (1536-dim) in pgvector (ivfflat, cosine, reuse ≥0.70).
+- **Whop Ads (D33)**: a second ad provider — Whop owns the Meta ad account and the buyer connects a business
+  ID + API key. Its own tables (`whop_*`), package (`@knn/whop`) and routes (`/api/ad-providers/whop/*`);
+  the Facebook code paths are untouched. Off unless `WHOP_ADS_ENABLED` **and** the company's switch are on. A campaign
+  picks its network in the wizard (`Campaign.adProvider`); launch, pause / resume, budgets and relaunch route by provider
+  before any side effect. A Whop launch is draft-first and resumable (Whop ids saved as they appear, idempotent creates
+  keyed by our row ids + `whop_key_epoch`), and Whop ids never go in an `fb_*` column. Ask `isLaunched()` (`@knn/shared`),
+  not `fbCampaignId != null`. A launch whose outcome is unknown stays `LAUNCHING` with its edge config active (never
+  reported as "not launched" while Whop may be spending); the worker settles it from Whop's word. The worker syncs Whop
+  status and spend inside the Facebook crons, with every write conditional on what it read and recorded spend never erased.
+  Guide: `docs/WHOP.md`.
 
 ## Layout
 
 ```
-apps/{api,redirect,article,white,web,worker}   packages/{db,shared,config,queue,fb,adsense,ai}
+apps/{api,redirect,article,white,web,worker}   packages/{db,shared,config,queue,fb,adsense,ai,whop}
 infra/docker-compose.yml                  docs/{DECISIONS,CURRENT_STATE,OPEN_QUESTIONS}.md
 ```
 

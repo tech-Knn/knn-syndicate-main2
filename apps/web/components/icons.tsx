@@ -79,6 +79,14 @@ export const IconFacebook = (p: IconProps) => (
   </Svg>
 );
 
+export const IconAds = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 10v4a1 1 0 0 0 1 1h2l5 4V5L6 9H4a1 1 0 0 0-1 1z" />
+    <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+    <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+  </Svg>
+);
+
 export const IconTeam = (p: IconProps) => (
   <Svg {...p}>
     <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />

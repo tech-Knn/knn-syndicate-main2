@@ -30,6 +30,10 @@ import {
   type SyncResult,
   type UploadResult,
   type UserAction,
+  type WhopConnection,
+  type WhopConnectionWithOwner,
+  type WhopPixelCheck,
+  type WhopStatus,
 } from './types';
 import {
   type ArticleRow,
@@ -285,6 +289,32 @@ export const facebook = {
     parse(await authedFetch(`/api/facebook/access/requests/${userId}/invited`, { method: 'POST' })),
 };
 
+const WHOP = '/api/ad-providers/whop';
+
+/** Whop Ads connections (D33). Every call answers 404 when Whop Ads is off for the user's company. */
+export const whop = {
+  status: async (): Promise<WhopStatus> => parse(await authedFetch(`${WHOP}/status`)),
+  connections: async (): Promise<WhopConnection[]> =>
+    (await parse<{ connections: WhopConnection[] }>(await authedFetch(`${WHOP}/connections`))).connections,
+  // Every connection on the platform with its owner (super-admin oversight).
+  allConnections: async (): Promise<WhopConnectionWithOwner[]> =>
+    (await parse<{ connections: WhopConnectionWithOwner[] }>(await authedFetch(`${WHOP}/connections/all`))).connections,
+  connect: async (input: { bizId: string; apiKey: string; environment: 'PRODUCTION' | 'SANDBOX' }): Promise<WhopConnection> =>
+    (await parse<{ connection: WhopConnection }>(await authedFetch(`${WHOP}/connections`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(input) }))).connection,
+  check: async (id: string): Promise<WhopConnection> =>
+    (await parse<{ connection: WhopConnection }>(await authedFetch(`${WHOP}/connections/${id}/check`, { method: 'POST' }))).connection,
+  disconnect: async (id: string): Promise<void> => parse(await authedFetch(`${WHOP}/connections/${id}`, { method: 'DELETE' })),
+  // Starts Whop's Meta Business sign-in; send the browser to `authorizeUrl`.
+  metaConnect: async (id: string, redirectUrl: string): Promise<{ authorizeUrl: string }> =>
+    parse(await authedFetch(`${WHOP}/connections/${id}/pages/meta-connect`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ redirectUrl }) })),
+  createPage: async (id: string): Promise<WhopConnection> =>
+    (await parse<{ connection: WhopConnection }>(await authedFetch(`${WHOP}/connections/${id}/pages/create`, { method: 'POST' }))).connection,
+  refreshPage: async (id: string, pageId: string): Promise<WhopConnection> =>
+    (await parse<{ connection: WhopConnection }>(await authedFetch(`${WHOP}/connections/${id}/pages/${pageId}/refresh`, { method: 'POST' }))).connection,
+  pixelCheck: async (id: string, url?: string): Promise<WhopPixelCheck> =>
+    (await parse<{ pixel: WhopPixelCheck }>(await authedFetch(`${WHOP}/connections/${id}/pixel-check`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(url ? { url } : {}) }))).pixel,
+};
+
 export const campaigns = {
   list: async (): Promise<Campaign[]> =>
     (await parse<{ campaigns: Campaign[] }>(await authedFetch('/api/campaigns'))).campaigns,
@@ -406,8 +436,8 @@ export const campaigns = {
     parse(await authedFetch(`/api/campaigns/${id}`, { method: 'DELETE' })),
   testLaunch: async (id: string): Promise<{ fbCampaignId: string; adSets: { fbAdSetId: string; ads: { fbAdId: string }[] }[] }> =>
     parse(await authedFetch(`/api/campaigns/${id}/test-launch`, { method: 'POST' })),
-  // Real launch (admin/super): generate article → redirect config → create on FB → ACTIVE.
-  launch: async (id: string): Promise<{ status: string; fbCampaignId?: string }> =>
+  // Real launch: generate article → redirect config → create at the campaign's ad network (Facebook or Whop) → ACTIVE.
+  launch: async (id: string): Promise<{ status: string; fbCampaignId?: string; whopCampaignId?: string }> =>
     parse(await authedFetch(`/api/campaigns/${id}/launch`, { method: 'POST' })),
   // Phase E — campaign offers (the websites a campaign's traffic routes across).
   offers: async (id: string): Promise<OfferRow[]> =>
@@ -556,6 +586,8 @@ export const admin = {
   deleteRedirectDomain: async (id: string): Promise<void> => {
     await authedFetch(`/api/admin/redirect-domains/${id}`, { method: 'DELETE' });
   },
+  setWhop: async (orgId: string, whopEnabled: boolean): Promise<AdminOrg> =>
+    (await parse<{ organization: AdminOrg }>(await authedFetch(`/api/admin/organizations/${orgId}/whop`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify({ whopEnabled }) }))).organization,
   setCloaking: async (orgId: string, input: { cloakingEnabled?: boolean; defaultFunnelMode?: FunnelMode }): Promise<AdminOrg> =>
     (await parse<{ organization: AdminOrg }>(await authedFetch(`/api/admin/organizations/${orgId}/cloaking`, { method: 'PATCH', headers: jsonHeaders(), body: JSON.stringify(input) }))).organization,
   setUserFunnelMode: async (userId: string, funnelMode: FunnelMode | null): Promise<PublicUser> =>

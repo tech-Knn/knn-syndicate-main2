@@ -3,6 +3,8 @@ import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { articleBlocks, articleTeaser, resolvePublisherTerms } from '@knn/shared';
 import { resolveCloakGate } from '../../_afs/cloak-gate';
+import { whopPixelJs } from '../../_afs/whop-pixel';
+import { verifyWhopScope } from '../../_afs/whop-scope';
 import { resolveSiteConfig } from '../../_afs/site-config';
 import { SiteFooter } from '../../_components/site-footer';
 import { LanderBeacon } from '../../funnel-beacons';
@@ -99,6 +101,12 @@ export default async function ArticlePage({
   // page ALWAYS renders its unit (Google's crawler must see it to serve ads — see cloak-gate.ts), so
   // this only chooses the param source: token if valid, else the plaintext query.
   const gate = await resolveCloakGate(sp, Date.now());
+  // Whop Ads (D33): Whop will not create an ad until it finds its pixel on the destination. In NORMAL funnel
+  // mode a non-paid click (Whop's ad check included) lands on this page, tagged by the redirect Worker with a
+  // signed `_ws` scope naming the business. Only a valid one renders the pixel; a paid visitor (signed `t`
+  // token, no `_ws`), a crawler or a forged link gets the page exactly as before. Unset secret = never.
+  const scopeParam = Array.isArray(sp._ws) ? sp._ws[0] : sp._ws;
+  const whopBizId = await verifyWhopScope(scopeParam, process.env.WHOP_SCOPE_SECRET);
   // `rc` (referrerAdCreative) stays TOKEN-ONLY on purpose. It literally means "referrer ad
   // creative" — sending it on organic/Googlebot visits looks like paid-traffic misrepresentation
   // and (empirically 2026-08-17→08-20) caused Google to degrade RSOC serving on affected articles.
@@ -140,6 +148,7 @@ export default async function ArticlePage({
           lead → RSOC unit so the visitor's focus lands on the unit (matches the live RSOC
           funnels; reduces bounce). Legitimacy chrome lives in the footer + legal pages. */}
       <main id="main-content" className={styles.main}>
+        {whopBizId && <script dangerouslySetInnerHTML={{ __html: whopPixelJs(whopBizId) }} />}
         {/* Paid visitors fire the `lander` (ViewContent) funnel event on view. */}
         <LanderBeacon clickId={txid} />
         {/* Server-side AFS channel cookie set. Runs during HTML parse — BEFORE React hydrates

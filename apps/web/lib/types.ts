@@ -1,6 +1,14 @@
-import { type Role, type UserStatus } from '@knn/shared';
+import { type AdProvider, type Role, type UserStatus, type WhopChecklist, type WhopEnvironment } from '@knn/shared';
 
-export type { Role, UserStatus };
+export type { AdProvider, Role, UserStatus };
+
+/** A problem Whop reports on a campaign, ad group or ad (Meta's asynchronous rejections land here, in words). */
+export interface WhopIssue {
+  id: string;
+  message: string;
+  resource_id: string | null;
+  resource_type: string;
+}
 
 export interface SessionUser {
   id: string;
@@ -149,6 +157,8 @@ export interface CampaignAdSet {
 
 export interface Campaign {
   id: string;
+  /** The buyer who owns it (an admin can open it too, but only its buyer's connections and assets apply to it). */
+  buyerId: string;
   name: string;
   status: CampaignStatus;
   objective: string;
@@ -162,6 +172,8 @@ export interface Campaign {
   racValue: string | null;
   query: string | null;
   fallbackUrl: string | null;
+  /** Which ad network runs it (D33). Every campaign from before Whop Ads is FACEBOOK. */
+  adProvider: AdProvider;
   adAccountId: string | null;
   pageId: string | null;
   /** Resolved label for the selected ad account — server-side lookup so admins can view
@@ -169,6 +181,16 @@ export interface Campaign {
   adAccount?: { id: string; fbAccountId: string; name: string } | null;
   /** Resolved label for the selected page (see `adAccount` above). */
   page?: { id: string; fbPageId: string; name: string } | null;
+  /** Whop campaigns only: the connected business, the Facebook page its ads run under, and what Whop reports. */
+  whopConnectionId: string | null;
+  whopPageId: string | null;
+  whopBizId: string | null;
+  whopCampaignId: string | null;
+  whopDeliveryStatus: string | null;
+  whopIssues: WhopIssue[];
+  /** Resolved labels for the Whop business and page (server-side, like `adAccount` / `page`). */
+  whopBusiness?: { bizId: string; label: string | null } | null;
+  whopPage?: { whopId: string; name: string | null } | null;
   articleId: string | null;
   channelId: string | null;
   fbCampaignId: string | null;
@@ -190,6 +212,7 @@ export interface AdminOrg {
   autoLaunch: boolean;
   cloakingEnabled: boolean;
   defaultFunnelMode: FunnelMode;
+  whopEnabled: boolean;
 }
 
 export interface PublicUser {
@@ -282,6 +305,7 @@ export interface OrgRow {
   autoLaunch: boolean;
   cloakingEnabled: boolean;
   defaultFunnelMode: FunnelMode;
+  whopEnabled: boolean;
   buyerCount: number;
   adminCount: number;
   pendingCount: number;
@@ -417,4 +441,56 @@ export interface RcLearningRunResult {
   eligibleCampaigns: number;
   suppressedCampaigns: number;
   added: { term: string; suppressedCampaigns: number; campaignsUsing: number; keywordClicksPer100: number }[];
+}
+
+// ── Whop Ads (D33) ──────────────────────────────────────────────────────────────────────────────
+
+/** Whether the user may use Whop Ads (global flag AND their company's switch). */
+export interface WhopStatus {
+  enabled: boolean;
+  allowSandbox: boolean;
+}
+
+export interface WhopPage {
+  /** Whop's social account id, `sacc_…`. */
+  id: string;
+  platform: string;
+  name: string | null;
+  username: string | null;
+  verified: boolean;
+  error: string | null;
+}
+
+export interface WhopConnection {
+  id: string;
+  bizId: string;
+  environment: WhopEnvironment;
+  label: string | null;
+  /** The only part of the API key we ever show. */
+  apiKeyLast4: string;
+  status: 'ACTIVE' | 'BROKEN';
+  lastError: string | null;
+  reportingCurrency: string | null;
+  apiVersionDate: string;
+  checklist: WhopChecklist | null;
+  lastCheckedAt: string | null;
+  connectedAt: string;
+  pages: WhopPage[];
+}
+
+export interface WhopConnectionWithOwner extends WhopConnection {
+  ownerId: string;
+  ownerName: string;
+  ownerEmail: string;
+  orgId: string;
+  orgName: string;
+}
+
+export interface WhopPixelCheck {
+  installed: boolean;
+  lastSeenDays: number | null;
+  lastFiredDays: Record<string, number>;
+  nativeTracking: boolean;
+  reachable: boolean | null;
+  url: string | null;
 }

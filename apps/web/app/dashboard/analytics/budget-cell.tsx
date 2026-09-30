@@ -9,7 +9,8 @@ import styles from '../analytics.module.css';
  * Inline daily-budget cell — shows the campaign's daily budget right in the table and lets a buyer
  * edit it in place (click → type → Enter / blur saves, Esc cancels) without drilling into the campaign.
  * Editable only when live (ACTIVE/PAUSED) and CBO or a single ad set — matching the server's rule;
- * the save pushes to Facebook without releasing the channel. Read-only ("$X.XX" / "—") otherwise.
+ * the save pushes to the campaign's ad network (Facebook or Whop) without releasing the channel. Read-only
+ * ("$X.XX" / "—") otherwise. `minCents` is the network's floor: Facebook's is $2.00, Whop states its own.
  */
 export function BudgetCell({
   cents: centsProp,
@@ -19,6 +20,7 @@ export function BudgetCell({
   onSaved,
   onError,
   emptyLabel = '—',
+  minCents = 200,
 }: {
   cents: number | null;
   editable: boolean;
@@ -28,6 +30,8 @@ export function BudgetCell({
   onError: (msg: string) => void;
   /** Shown when there's no single editable budget (e.g. multi-ad-set ABO → "Per ad set"). */
   emptyLabel?: string;
+  /** The smallest budget to accept, in cents (Facebook 200; Whop 1, it enforces its own). */
+  minCents?: number;
 }) {
   const [current, setCurrent] = useState(centsProp);
   const [editing, setEditing] = useState(false);
@@ -48,8 +52,8 @@ export function BudgetCell({
       setEditing(false);
       return;
     }
-    if (c < 200) {
-      onError('Minimum daily budget is $2.00 (Facebook minimum).');
+    if (c < minCents) {
+      onError(minCents <= 1 ? 'Enter a daily budget of at least $0.01.' : 'Minimum daily budget is $2.00 (Facebook minimum).');
       return;
     }
     setBusy(true);
@@ -72,7 +76,7 @@ export function BudgetCell({
         <input
           autoFocus
           type="number"
-          min={2}
+          min={minCents / 100}
           step="0.01"
           value={draft}
           disabled={busy}

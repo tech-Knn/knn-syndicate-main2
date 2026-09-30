@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   description: 'How KNN Syndicate collects, uses, and protects your data.',
 };
 
-const UPDATED = 'May 31, 2026';
+const UPDATED = 'September 30, 2026';
 
 const wrap: React.CSSProperties = {
   maxWidth: 760,
@@ -52,6 +52,12 @@ export default function PrivacyPage() {
           pages_read_engagement,</em> and <em>business_management</em>. We do not collect your Facebook password.
         </li>
         <li style={li}>
+          <strong>Whop data (via your authorization)</strong> — if you run ads through Whop, you give us your Whop
+          business ID and an Account API key from your Whop business. We store the key encrypted, show only its last four
+          characters, and use it to create and manage campaigns, read their performance, and send conversion events
+          through Whop&rsquo;s ads API. We do not collect your Whop password.
+        </li>
+        <li style={li}>
           <strong>Campaign &amp; performance data</strong> — the campaigns, ad sets, ads, creatives, budgets, and the
           delivery/cost/conversion metrics returned by the advertising and analytics services you connect.
         </li>
@@ -72,7 +78,8 @@ export default function PrivacyPage() {
       <h2 style={h2}>How we share information</h2>
       <p>
         We share data only as needed to provide the service: with <strong>Meta/Facebook</strong> (to manage your
-        campaigns and send conversion events you authorize), with advertising-monetization and analytics providers you
+        campaigns and send conversion events you authorize), with <strong>Whop</strong> (to manage ads you launch
+        through your Whop business and to send conversion events), with advertising-monetization and analytics providers you
         connect (such as <strong>Google AdSense</strong>), and with infrastructure providers that host the Platform. We do
         not sell your personal information.
       </p>
@@ -92,7 +99,8 @@ export default function PrivacyPage() {
         <a href="https://www.facebook.com/settings?tab=business_tools" style={{ color: 'var(--rust)' }}>
           Facebook Business Integrations
         </a>{' '}
-        settings. To request deletion, contact us using the details below.
+        settings. You can likewise disconnect a Whop business at any time, which deletes its stored API key; you can also
+        delete that key in your Whop business settings. To request deletion, contact us using the details below.
       </p>
 
       <h2 style={h2}>Cookies</h2>

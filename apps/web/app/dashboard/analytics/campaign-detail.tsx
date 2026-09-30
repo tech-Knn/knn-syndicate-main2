@@ -27,7 +27,7 @@ import { campaigns as campaignApi, stats } from '@/lib/api';
 import admin from '../admin.module.css';
 import styles from '../analytics.module.css';
 import { BudgetCell } from './budget-cell';
-import { fmtCount } from './columns';
+import { fmtCount, infoFor, networkTag, relabel } from './columns';
 
 type Tab = 'ads' | 'websites' | 'countries' | 'hours';
 
@@ -64,6 +64,7 @@ interface DetailCol<R> {
 }
 
 const RESULT_COLS: DetailCol<Row>[] = [
+  // Facebook wording on purpose: `relabel` names the campaign's own ad network where this is shown (Whop ad spend, for a Whop one).
   { key: 'spend', label: 'Spend', info: 'Facebook ad spend.', cell: (r) => formatUsd(r.spendUsd) },
   { key: 'revenue', label: 'Revenue', est: true, info: 'Estimated — Google reports revenue per campaign, so it is split by Facebook conversions.', cell: (r) => formatUsd(r.revenueUsd) },
   {
@@ -190,8 +191,8 @@ function WebsiteCells({ r }: { r: WebsiteNums }) {
 }
 
 /** Why an ad's revenue split isn't the usual conversion share (shown under the ad name). */
-function basisNote(basis: AdPerf['basis']): string | null {
-  if (basis === 'clicks') return 'revenue split by visits (no Facebook conversions)';
+function basisNote(basis: AdPerf['basis'], whop: boolean): string | null {
+  if (basis === 'clicks') return whop ? 'revenue split by visits (no ad-click conversions recorded)' : 'revenue split by visits (no Facebook conversions)';
   if (basis === 'impressions') return 'revenue split by impressions (no visits)';
   if (basis === 'unallocated') return 'revenue not assigned to ads yet';
   return null;
@@ -238,6 +239,9 @@ export function CampaignDetail({
 
   const dimRows = tab === 'countries' ? dim.countries : tab === 'hours' ? dim.hours : null;
   const dimWord = tab === 'countries' ? 'country' : 'hour';
+  // Columns that come from the ad network are named after it: (FB) for a Facebook campaign, (Whop) for a Whop one (D33).
+  const whop = bd?.campaign.adProvider === 'WHOP';
+  const tag = networkTag([whop ? 'WHOP' : 'FACEBOOK']);
 
   return (
     <div className={styles.detail}>
@@ -269,8 +273,17 @@ export function CampaignDetail({
             <>
               <p className={styles.detailNote}>
                 <span className={styles.estChip}>Estimated</span> Revenue, profit, ROI, EPV and RPC per ad are estimates: Google reports revenue per
-                campaign, so it&apos;s split across ads by their Facebook conversions. Spend, visits, keyword clicks, ad clicks and Facebook&apos;s
-                numbers are exact.
+                {whop ? (
+                  <>
+                    {' '}campaign, so it&apos;s split across ads by the ad clicks recorded for each (Whop&apos;s own count is used only on a day we recorded
+                    none). Spend, visits, keyword clicks, ad clicks and Whop&apos;s numbers are exact.
+                  </>
+                ) : (
+                  <>
+                    {' '}campaign, so it&apos;s split across ads by their Facebook conversions. Spend, visits, keyword clicks, ad clicks and Facebook&apos;s
+                    numbers are exact.
+                  </>
+                )}
               </p>
               <div className={styles.detailScroll}>
                 <table className={`${admin.table} ${styles.detailTable}`}>
@@ -280,14 +293,14 @@ export function CampaignDetail({
                         Ad set / Ad
                       </th>
                       {AD_COLS.map((c) => (
-                        <HeadCell key={c.key} label={c.label} info={c.info} est={c.est} />
+                        <HeadCell key={c.key} label={relabel(c.label, tag)} info={infoFor(c.key === 'revenue' ? 'detail:revenue' : c.key, c.info, tag)} est={c.est} />
                       ))}
-                      <HeadCell label="Budget" info="The ad set's daily budget. Click to edit — goes live on Facebook." />
+                      <HeadCell label="Budget" info={`The ad set's daily budget. Click to edit — goes live on ${whop ? 'Whop' : 'Facebook'}.`} />
                     </tr>
                   </thead>
                   <tbody>
                     {bd.adSets.map((set) => (
-                      <SetRows key={set.id} campaignId={campaignId} set={set} onError={onError} />
+                      <SetRows key={set.id} campaignId={campaignId} set={set} whop={whop} minBudgetCents={whop ? 1 : 200} onError={onError} />
                     ))}
                   </tbody>
                   <tfoot>
@@ -362,7 +375,11 @@ export function CampaignDetail({
         ) : dimRows === null ? (
           <Skeleton className={admin.rowSkel} />
         ) : dimRows.length === 0 ? (
-          <p className={admin.subtle}>No {dimWord} data yet — it appears once the campaign is delivering on Facebook.</p>
+          <p className={admin.subtle}>
+            {whop
+              ? `Whop doesn't report a ${dimWord} breakdown, so there is nothing to show here for a Whop campaign.`
+              : `No ${dimWord} data yet — it appears once the campaign is delivering on Facebook.`}
+          </p>
         ) : (
           <>
             <p className={styles.detailNote}>
@@ -378,7 +395,7 @@ export function CampaignDetail({
                       {tab === 'countries' ? 'Country' : 'Hour (ad account time)'}
                     </th>
                     {DIM_COLS.map((c) => (
-                      <HeadCell key={c.key} label={c.label} info={c.info} est={c.est} />
+                      <HeadCell key={c.key} label={relabel(c.label, tag)} info={infoFor(c.key === 'revenue' ? 'detail:revenue' : c.key, c.info, tag)} est={c.est} />
                     ))}
                   </tr>
                 </thead>
@@ -407,7 +424,7 @@ export function CampaignDetail({
   );
 }
 
-function SetRows({ campaignId, set, onError }: { campaignId: string; set: CampaignBreakdown['adSets'][number]; onError: (msg: string) => void }) {
+function SetRows({ campaignId, set, whop, minBudgetCents, onError }: { campaignId: string; set: CampaignBreakdown['adSets'][number]; whop: boolean; minBudgetCents: number; onError: (msg: string) => void }) {
   return (
     <>
       <tr className={styles.setRow}>
@@ -422,13 +439,14 @@ function SetRows({ campaignId, set, onError }: { campaignId: string; set: Campai
             cents={set.dailyBudgetCents}
             editable={set.editableBudget}
             label={set.name}
+            minCents={minBudgetCents}
             save={(c) => campaignApi.setAdSetBudget(campaignId, set.id, c)}
             onError={onError}
           />
         </td>
       </tr>
       {set.ads.map((ad) => {
-        const note = basisNote(ad.basis);
+        const note = basisNote(ad.basis, whop);
         return (
           <tr key={ad.id}>
             <th scope="row" className={`${admin.thLeft} ${styles.adIndent}`}>
