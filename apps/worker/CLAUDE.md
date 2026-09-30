@@ -18,7 +18,7 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
   then split each campaign's gross USD across its ads via `allocateCampaignRevenue` (`@knn/shared`)
   — conversions → clicks → impressions → `unallocated` (OPEN_QUESTIONS #1) — apply the revenue cut
   (buyer override ?? org default) → `ad_revenue_daily`. The `ATTRIBUTION` queue runs `hourly`
-  (today) + `finalize` (trailing FB/AdSense windows, §5.8).
+  (today; plus yesterday's Whop spend during the first 6 hours after midnight IST, because Whop's figures for a day arrive hours late) + `finalize` (trailing FB/AdSense windows, §5.8).
 - **A day's AdSense revenue belongs to the campaign that HELD the channel that day** (`channel_assignments.for_day`), in both
   `campaign_revenue_daily` and `offer_revenue_daily`. Channels are reused by many campaigns and every pull re-reads the
   trailing days, so never credit a report day to whoever holds the channel now (an earlier version did: a new campaign

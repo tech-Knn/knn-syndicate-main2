@@ -5,10 +5,12 @@ import { markConnectionBroken, resolveCampaignReadAuth } from '../lib/fb-read-au
 import {
   AFS_CLICK_SUPPRESSION_THRESHOLD,
   type AdSignals,
+  DEFAULT_BUSINESS_TZ,
   FINALIZATION,
   allocateCampaignRevenue,
   applyRevenueCut,
   businessDay,
+  timeZoneOffsetMs,
   toUsdMinor,
   zonedStartOfDayUtc,
 } from '@knn/shared';
@@ -538,12 +540,28 @@ export async function runAttribution(
   await allocateRevenue(days);
 }
 
-/** Hourly refresh: re-pull + re-allocate today's IST business day. */
+/**
+ * Whop's (like Meta's) figures for a day keep arriving for hours after it ends: the first read right after midnight found nothing
+ * for a campaign that spent 85% of its budget in the last half hour of the day (2026-09-30). The hourly pass only reads today, so
+ * yesterday then sat at zero until the six-hourly finalization. For this many hours after midnight the hourly pass re-reads
+ * yesterday's Whop spend too (one extra call per business, 6 times a day).
+ */
+export const LATE_WHOP_HOURS = 6;
+
+/** Yesterday's business day while `now` is still within the first LATE_WHOP_HOURS of today, else null. */
+export function lateWhopDay(now: Date): string | null {
+  const hour = new Date(now.getTime() + timeZoneOffsetMs(now, DEFAULT_BUSINESS_TZ)).getUTCHours();
+  return hour < LATE_WHOP_HOURS ? recentDays(businessDay(now), 2)[0]! : null;
+}
+
+/** Hourly refresh: re-pull + re-allocate today's IST business day (plus yesterday's Whop spend early in the day). */
 export async function runHourlyAttribution(
   now: Date = new Date(),
   deps: AttributionDeps = defaultDeps,
 ): Promise<void> {
   await runAttribution([businessDay(now)], deps);
+  const late = lateWhopDay(now);
+  if (late) await pullWhopStatsSafely(late, late, deps);
 }
 
 /**
