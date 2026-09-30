@@ -10,6 +10,15 @@ main = "src/worker.ts"
 compatibility_date = "2026-05-01"
 workers_dev = false
 
+# Workers Logs are ON for the live Worker (switched on in the dashboard). `wrangler deploy` applies THIS file over the
+# dashboard's settings, so leaving the block out turns the logs off: at the D33 go-live (2026-09-30) wrangler warned
+# `logs.enabled: true → false` and the deploy did switch them off. Keep it.
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+
 # KV holding redirect:{redirectId} configs, write-through-synced from the origin.
 [[kv_namespaces]]
 binding = "REDIRECTS"
