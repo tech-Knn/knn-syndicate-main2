@@ -16,7 +16,7 @@ import { clearWhopIds, discardWhopCampaign, whopLeftover } from './whop-cleanup.
 import { pickWhiteDomain, resolveBuyerFunnelMode, resolveRedirectBase, syncCampaignRedirectConfigs } from './launch-routing.js';
 
 /**
- * Launching a campaign on Whop (D32, phase 2). The Facebook launch (`launch.service.ts`) builds one Meta
+ * Launching a campaign on Whop (D33, phase 2). The Facebook launch (`launch.service.ts`) builds one Meta
  * campaign → ad set → ad tree in a single pass and relies on a rate-limit park for retries. Whop differs in the ways
  * that matter here:
  *

@@ -1,5 +1,5 @@
 /**
- * The Whop pixel for ONE business, as a ready-to-insert `<script>` tag (D32). Used by the white Worker and
+ * The Whop pixel for ONE business, as a ready-to-insert `<script>` tag (D33). Used by the white Worker and
  * the article server, which render it only when a request carries a valid signed scope (whop-scope.ts).
  *
  * ⚠️ Neither of those apps may import a workspace package, so this is a deliberate copy of the canonical

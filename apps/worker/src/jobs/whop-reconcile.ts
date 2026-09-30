@@ -25,7 +25,7 @@ import {
 } from '../lib/whop-auth.js';
 
 /**
- * Whop campaign reconciliation (D32, phase 2): the Whop twin of `meta-rejection.ts`. Whop runs the Meta ads, and
+ * Whop campaign reconciliation (D33, phase 2): the Whop twin of `meta-rejection.ts`. Whop runs the Meta ads, and
  * Meta's ad review happens AFTER launch, so neither a rejection nor a pause/resume done in Whop's own dashboard
  * reaches us by itself. A cron reads each business's campaigns (one bulk call per 100, not one per campaign) and
  * their ads, and reconciles our rows against what Whop reports:

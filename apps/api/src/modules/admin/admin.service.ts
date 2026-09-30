@@ -330,7 +330,7 @@ export async function setOrgCloaking(
 }
 
 /**
- * Whop Ads gate (SUPER-ADMIN only, D32): turn Whop Ads on or off for a company. Off by default; with it
+ * Whop Ads gate (SUPER-ADMIN only, D33): turn Whop Ads on or off for a company. Off by default; with it
  * off no Whop screen, route or job is active for the company's users.
  */
 export async function setOrgWhop(actor: AuthContext, orgId: string, whopEnabled: boolean): Promise<OrgSettings> {

@@ -6,7 +6,7 @@ import { type WhopApi, type WhopClickFields, type WhopApiError, buildWhopEvent, 
 import { type WorkerNotification, sendNotification } from './lib/notify.js';
 
 /**
- * Whop dispatch (conversion tracking, D32): the Whop sibling of `capi-dispatch.ts`. One `WHOP_DISPATCH` job
+ * Whop dispatch (conversion tracking, D33): the Whop sibling of `capi-dispatch.ts`. One `WHOP_DISPATCH` job
  * takes a pending `ConversionEvent` whose provider is 'whop', resolves the business's API key, and reports the
  * conversion to Whop's Events API server-to-server. The money page carries no Whop pixel (only the page Whop's
  * ad check sees does), so this is how Whop learns of a real visit, keyword click or ad click.

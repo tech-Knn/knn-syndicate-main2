@@ -5,7 +5,7 @@ import { notify } from '../../lib/notify.js';
 import { type WhopCampaignRef, resolveCampaignConnection, whopSession } from '../whop/whop.internal.js';
 
 /**
- * Taking a Whop campaign back to a DRAFT (D32, phase 2).
+ * Taking a Whop campaign back to a DRAFT (D33, phase 2).
  *
  * A draft must never point at Whop objects: `updateCampaign` replaces a draft's ad sets and ads wholesale, so ids
  * kept on a draft would be lost with the rows and the next launch would create a second set beside the old

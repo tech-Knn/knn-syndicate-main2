@@ -3,7 +3,7 @@ import type { WhopClient } from './client.js';
 import { WhopApiError } from './errors.js';
 
 /**
- * Whop's ads API (D32, phase 2): campaign → ad group → ad, plus the direct-upload flow for creatives.
+ * Whop's ads API (D33, phase 2): campaign → ad group → ad, plus the direct-upload flow for creatives.
  *
  * Whop's hierarchy: an ad CAMPAIGN holds the objective (and optionally the budget), an AD GROUP holds targeting,
  * placements, the optimized event and (by default) the budget, an AD holds the copy, the creatives and the

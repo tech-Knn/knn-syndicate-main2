@@ -18,9 +18,9 @@ Single source of truth for the data model. Exposes one shared `PrismaClient` sin
   --to-schema-datamodel prisma/schema.prisma --script` prints the SQL; **delete the drift lines** (`DROP INDEX
   "articles_embedding_idx"` and the `redirect_domains` `DROP DEFAULT`), save the rest as
   `migrations/<timestamp>_<name>/migration.sql`, `migrate deploy`, `generate`. An additive change (a column, an enum, a
-  unique index on a brand-new column) is safe this way. D32 phase 2 (`20260930120029_whop_launch_columns`,
+  unique index on a brand-new column) is safe this way. D33 phase 2 (`20260930120029_whop_launch_columns`,
   `20260930150000_whop_key_epoch`) was done like this.
-- **Provider columns (D32)**: `campaigns.ad_provider` (`FACEBOOK` default) says which ad network runs a campaign. A Whop
+- **Provider columns (D33)**: `campaigns.ad_provider` (`FACEBOOK` default) says which ad network runs a campaign. A Whop
   campaign uses `whop_*` columns (campaign, ad set, ad, file ids, all unique) and **never** an `fb_*` one: `ads.fb_ad_id`
   being set is what arms the cloaker's enforce mode. Ask `isLaunched()` (`@knn/shared`), not `fb_campaign_id IS NOT NULL`.
   `campaigns.whop_key_epoch` is part of every Whop idempotency key and is bumped wherever the Whop ids are cleared.
@@ -35,6 +35,15 @@ Single source of truth for the data model. Exposes one shared `PrismaClient` sin
   the buyer's custom RSOC `terms_override` live on `campaigns`; `redirect_id` (unique) lives on `ads`.
   The ONE per-ad exception is `ads.rac_value`, an optional Referrer Ad Creative override (D27; null → the
   campaign's). Read it through `effectiveRac()` (`@knn/shared`). Don't add other per-ad offer fields.
+- **Facebook ids & the resumable launch**: `campaigns.fb_campaign_id` non-null ⇔ the WHOLE Facebook structure
+  (campaign → ad sets → ads) is built — every reader (auto-launch gate, meta-rejection/attribution scans,
+  google-signals `live`, the launch's own "already launched" check, the BATCHED re-drive) treats it as "launched",
+  so **never set it early**. A launch interrupted by a rate limit or failure records what already exists in
+  `campaigns.fb_pending_campaign_id` + `ad_sets.fb_ad_set_id` + `ads.fb_ad_id`, each written the moment its object is
+  created; the next launch resumes from those and creates only the rest. Child ids are only valid under a non-null
+  `fb_pending_campaign_id`. A launch-completing write moves pending → `fb_campaign_id` and flips the status in one
+  commit; reopen / relaunch pause + clear an unfinished build so an edited campaign never resumes stale objects.
+  A rate-limited (BATCHED) campaign therefore still has `fb_campaign_id IS NULL` — a "BATCHED and not launched" query keeps working.
 
 Phase 0 has only `platform_settings`. The full schema (orgs, users, campaigns, adsets, ads,
 channels, articles, revenue, …) is built phase by phase.

@@ -27,7 +27,7 @@ import { assertRcTextsAllowed } from './rc-terms.service.js';
 
 type Campaign = Awaited<ReturnType<typeof loadOwnedCampaign>>;
 
-/** A launched campaign has redirect configs at the edge → an edit must re-sync them. Provider-neutral (D32). */
+/** A launched campaign has redirect configs at the edge → an edit must re-sync them. Provider-neutral (D33). */
 function isLive(c: Pick<Campaign, 'adProvider' | 'fbCampaignId' | 'whopCampaignId' | 'status'>): boolean {
   return isLaunched(c);
 }

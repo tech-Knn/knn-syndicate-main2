@@ -31,7 +31,7 @@ CLOAK_TELEMETRY_URL = "https://app.staging.rsoc.app/api/telemetry/cloak"
 # Unset → the Worker emits the legacy plaintext Location (current behavior). Deploy the token-aware
 # article (observe) BEFORE setting this, so a token-only 302 always meets an article that can decode it.
 
-# WHOP_SCOPE_SECRET is NOT set here either (D32, Whop Ads). Set it out-of-band, the SAME value as the white
+# WHOP_SCOPE_SECRET is NOT set here either (D33, Whop Ads). Set it out-of-band, the SAME value as the white
 # Worker's and the article's, so a Whop link's non-paid landing carries a signed `_ws` scope and can show the
 # business's Whop pixel (Whop checks an ad's destination for it). Unset → no Whop pixel anywhere (current behaviour):
 #   cd apps/redirect && pnpm dlx wrangler secret put WHOP_SCOPE_SECRET

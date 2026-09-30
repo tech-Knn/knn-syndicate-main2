@@ -41,7 +41,7 @@ export interface AttributionDeps {
   getRate: (tx: TxClient, day: string, currency: string) => Promise<number>;
   /** Refresh FX rates for the days before pulling (best-effort; omitted in tests). */
   ensureFx?: (days: string[]) => Promise<void>;
-  /** Whop spend pull (D32) overrides, for tests. Off unless `WHOP_ADS_ENABLED`. */
+  /** Whop spend pull (D33) overrides, for tests. Off unless `WHOP_ADS_ENABLED`. */
   whopStats?: WhopStatsDeps;
 }
 

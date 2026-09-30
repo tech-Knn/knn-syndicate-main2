@@ -1,7 +1,7 @@
 /**
  * Whop Ads — definitions shared by the API, the Whop client package and the dashboard.
  *
- * Whop Ads is a second ad provider next to the direct Facebook connection (D32). Whop owns the Meta
+ * Whop Ads is a second ad provider next to the direct Facebook connection (D33). Whop owns the Meta
  * ad account; we talk to Whop's REST API with an Account API key + the `biz_` business id.
  */
 

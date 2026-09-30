@@ -1,5 +1,5 @@
 /**
- * Which ad network runs a campaign (D32). Facebook is every campaign that existed before Whop Ads; a Whop campaign
+ * Which ad network runs a campaign (D33). Facebook is every campaign that existed before Whop Ads; a Whop campaign
  * has no Facebook ids at all. The two never share columns: "no Facebook ids" must never be read as "not
  * launched", and a Whop id must never be stored in a Facebook column (the Facebook jobs are id-gated, and that
  * gate is what keeps them off Whop rows).

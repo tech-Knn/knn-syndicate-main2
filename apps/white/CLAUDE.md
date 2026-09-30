@@ -14,7 +14,7 @@ IDs** — so a reviewer landing here sees a normal site.
 - Article TEXT is fetched from our public API **server-side** (invisible to external scanners);
   only the white domain's DNS/IP/cert/content/IDs are inspectable, and those are all clean.
 - Never add Google Analytics / AdSense / a FB pixel / any shared ID here.
-  - **The one exception (D32, Whop Ads):** Whop will not create an ad until it finds *its* pixel on the ad's
+  - **The one exception (D33, Whop Ads):** Whop will not create an ad until it finds *its* pixel on the ad's
     destination. It loads the go-link, follows the redirect to this site and reads the HTML. So a page carries
     the Whop pixel **only** when the request has a valid signed `_ws` scope (`src/whop-scope.ts`, minted by the
     redirect Worker for a Whop link): a direct visit, a crawler or a forged link sees the same clean page as

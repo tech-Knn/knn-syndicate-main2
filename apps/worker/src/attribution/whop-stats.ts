@@ -23,7 +23,7 @@ import {
 import { getUsdRate } from './fx.service.js';
 
 /**
- * Whop spend -> `ad_stats_daily` (D32, phase 2): the Whop twin of the Facebook insights pull. Whop reports each ad's
+ * Whop spend -> `ad_stats_daily` (D33, phase 2): the Whop twin of the Facebook insights pull. Whop reports each ad's
  * delivery over a window, so one bulk read per business per IST day (an explicit window in `Asia/Kolkata`, the business
  * day everything else keys on, D4) fills a row per ad. The revenue allocation downstream (D8) is unchanged: it reads these
  * rows exactly as it reads Facebook's.

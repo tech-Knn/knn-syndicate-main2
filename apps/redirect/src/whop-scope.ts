@@ -1,6 +1,6 @@
 /**
  * Whop scope token — a signed hint from the redirect Worker to the page a go-link lands on, saying WHICH
- * Whop business's pixel that page should carry (D32). Whop checks an ad's destination by loading the URL,
+ * Whop business's pixel that page should carry (D33). Whop checks an ad's destination by loading the URL,
  * following redirects and reading the final page for its pixel; so the page our link ends on when nobody
  * proves they are a real ad click (the white site, or the plain article in normal funnel mode) carries it.
  *

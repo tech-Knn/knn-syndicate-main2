@@ -402,7 +402,7 @@ describe('edge failures + URL budget (D27)', () => {
   });
 });
 
-describe('live-ness is provider-neutral (D32)', () => {
+describe('live-ness is provider-neutral (D33)', () => {
   const whopCampaign = async (status: 'ACTIVE' | 'PROCESSING', whopCampaignId: string | null): Promise<string> => {
     const c = await withSystem((tx) =>
       tx.campaign.create({

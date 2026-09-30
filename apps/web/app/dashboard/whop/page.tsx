@@ -17,7 +17,7 @@ import { useAuth } from '../../providers';
 import styles from './whop.module.css';
 
 /**
- * Whop Ads (D32). Whop owns the Meta ad account; the user connects their Whop business with its ID and an
+ * Whop Ads (D33). Whop owns the Meta ad account; the user connects their Whop business with its ID and an
  * API key, and this page shows, per connection, what Whop still needs before ads can launch. Each
  * line is one plain sentence with one button to fix it. The three steps only the Whop account owner can
  * do (sign the agreement, add a payment method, approve Meta access) link out to Whop.

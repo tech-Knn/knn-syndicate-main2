@@ -33,7 +33,7 @@ through-synced from the origin (Postgres = source of truth) on launch/update. Ho
   → YES: 302 to the article with params. NO (organic/bot/ad-library): 302 to `fallback_url`.
 - Ad traffic split: weighted random destination (weights sum to 100), then append params.
 
-## Whop Ads (D32)
+## Whop Ads (D33)
 
 A config with a `whop: { bizId }` block is a Whop campaign; Facebook configs never have one and route exactly as
 before. For a Whop config the Worker: (1) counts Whop's own click signal (valid `wacid`/`wasid`/`waid`, or

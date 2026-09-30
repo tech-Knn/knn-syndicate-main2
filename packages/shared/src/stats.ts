@@ -137,7 +137,7 @@ export interface CampaignPerf extends FunnelCounts {
   id: string;
   name: string;
   status: string;
-  /** Which ad network runs it (D32): the row's live controls and budget floor depend on it. */
+  /** Which ad network runs it (D33): the row's live controls and budget floor depend on it. */
   adProvider: 'FACEBOOK' | 'WHOP';
   channelLabel: string | null;
   /** The owning buyer + company — used by the Analytics workbench filters. */

@@ -254,7 +254,7 @@ export default function AnalyticsPage() {
   }, [rows, debouncedSearch, statusSel, buyerSel, companySel, profitSel, sortKey, sortDir]);
 
   const totals = useMemo(() => sumInputs(filtered), [filtered]);
-  // Network-sourced columns are labelled by where their numbers come from: (FB), (Whop), or (FB/Whop) for a mix (D32).
+  // Network-sourced columns are labelled by where their numbers come from: (FB), (Whop), or (FB/Whop) for a mix (D33).
   const tag = useMemo(() => networkTag(filtered.map((r) => r.adProvider)), [filtered]);
   const cellCtx = useMemo<CellCtx>(
     () => ({ maxSpend: Math.max(0, ...filtered.map((r) => r.spendUsd)), maxRevenue: Math.max(0, ...filtered.map((r) => r.revenueUsd)) }),

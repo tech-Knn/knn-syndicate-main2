@@ -41,7 +41,7 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
   BullMQ retries (status stays `pending`); already-`sent` → no-op. Idempotent on `event_id = clickId`
   (Facebook also dedupes against the in-browser pixel). Don't move token resolution earlier or add a retry
   on the terminal cases.
-- **Whop dispatch (D32, `src/whop-dispatch.ts`, `WHOP_DISPATCH` queue):** the Whop sibling of the above. A
+- **Whop dispatch (D33, `src/whop-dispatch.ts`, `WHOP_DISPATCH` queue):** the Whop sibling of the above. A
   `conversion_events` row with `provider = 'whop'` is reported to Whop's Events API with `@knn/whop`
   `buildWhopEvent`. The business, the landing URL and Whop's click ids are **frozen on the row at ingest**
   (`provider_context`), because this job cannot read the edge KV; the API key is resolved **fresh here**
@@ -54,7 +54,7 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
   (Whop refuses 28). Idempotent: Whop keeps one copy of an `event_name` + `event_id` (= the click id). The
   Facebook and Whop paths never share a row, a queue or a retry policy: one row is one send.
 
-- **Whop status sync + spend (D32 phase 2, `src/jobs/whop-reconcile.ts`, `src/attribution/whop-stats.ts`, `src/lib/whop-auth.ts`):**
+- **Whop status sync + spend (D33 phase 2, `src/jobs/whop-reconcile.ts`, `src/attribution/whop-stats.ts`, `src/lib/whop-auth.ts`):**
   the Whop twins of the Facebook reconcile and insights pull, run inside the same crons (`META_REJECTION_CHECK` and
   `ATTRIBUTION`: no new queue; each provider runs independently, so one's failure never stops the other).
   - **Sync:** one bulk `listCampaigns` per business, `listAds` only for the campaigns it listed (a batch Whop refuses is

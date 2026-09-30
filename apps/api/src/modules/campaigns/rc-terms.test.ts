@@ -22,7 +22,10 @@ const suffix = Date.now().toString(36);
 const PW = 'rc-pw-123';
 const buyerEmail = `rc-b-${suffix}@a.com`;
 const superEmail = `rc-s-${suffix}@a.com`;
-const W = `zqx${suffix}`; // synthetic trigger word for the learner
+// Synthetic trigger word for the learner. It ends in a fixed "q" on purpose: stem() folds plurals of
+// all-letter words, so a digit-free base-36 suffix ending in "s" would make the learner store the
+// folded word instead of W. Every stem() rule needs a final "s", so W can never be altered.
+const W = `zqx${suffix}q`;
 const MANUAL = `zqm${suffix.replace(/\d/g, (d) => 'abcdefghij'[Number(d)]!)}x`; // letters only (plural folding applies)
 
 let app: FastifyInstance;

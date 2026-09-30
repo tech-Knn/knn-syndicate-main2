@@ -10,7 +10,7 @@ import { requireWhopConnection, whopFailure, whopSession } from '../whop/whop.in
 import { syncCampaignRedirectConfigs } from './launch-routing.js';
 
 /**
- * The controls of a LIVE Whop campaign (D32, phase 2): pause / resume, and the two budget edits. Each mirrors its
+ * The controls of a LIVE Whop campaign (D33, phase 2): pause / resume, and the two budget edits. Each mirrors its
  * Facebook twin in `launch.service.ts` (same phases, same scope rules, same audit entries) and differs only in what
  * it calls. Order matters for pause and resume: Whop is told FIRST and the local status only follows once Whop
  * agreed, so the two can never disagree in the dangerous direction (we say "paused", Whop keeps spending).

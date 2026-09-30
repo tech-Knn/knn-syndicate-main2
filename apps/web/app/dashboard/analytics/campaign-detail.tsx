@@ -239,7 +239,7 @@ export function CampaignDetail({
 
   const dimRows = tab === 'countries' ? dim.countries : tab === 'hours' ? dim.hours : null;
   const dimWord = tab === 'countries' ? 'country' : 'hour';
-  // Columns that come from the ad network are named after it: (FB) for a Facebook campaign, (Whop) for a Whop one (D32).
+  // Columns that come from the ad network are named after it: (FB) for a Facebook campaign, (Whop) for a Whop one (D33).
   const whop = bd?.campaign.adProvider === 'WHOP';
   const tag = networkTag([whop ? 'WHOP' : 'FACEBOOK']);
 

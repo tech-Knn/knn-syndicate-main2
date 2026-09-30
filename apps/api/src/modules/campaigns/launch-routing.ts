@@ -39,8 +39,13 @@ export async function resolveBuyerFunnelMode(orgId: string, buyerId: string): Pr
  * already on it) so a flagged domain has minimal blast radius. Falls back to the legacy default, then
  * env `REDIRECT_DOMAIN`, so launches never break before the super-admin has populated the pool.
  * Returns both the base URL and the bare host (recorded on the campaign).
+ *
+ * `keepHost`: when RESUMING an unfinished build, the ads already created on Facebook link to that
+ * host — so the rest of the build stays on it while it is still eligible. Otherwise the ranking
+ * shifts between attempts (exactly when rate limits hit, under load) and one campaign ends up with
+ * creatives on several hosts while only the last one is recorded for blast-radius reporting.
  */
-export async function resolveRedirectBase(mode: FunnelMode, orgId: string): Promise<{ base: string; host: string }> {
+export async function resolveRedirectBase(mode: FunnelMode, orgId: string, keepHost?: string | null): Promise<{ base: string; host: string }> {
   const eligible = await withSystem((tx) =>
     tx.redirectDomain.findMany({
       where: { mode, isActive: true, healthy: true, OR: [{ ownerOrgId: orgId }, { ownerOrgId: null }] },
@@ -50,6 +55,7 @@ export async function resolveRedirectBase(mode: FunnelMode, orgId: string): Prom
   const exclusive = eligible.filter((d) => d.ownerOrgId === orgId);
   const pool = (exclusive.length ? exclusive : eligible).map((d) => d.host);
   if (pool.length > 0) {
+    if (keepHost && pool.includes(keepHost)) return { base: `https://${keepHost}`, host: keepHost };
     // Least-loaded rotation: spread campaigns evenly so one flagged host affects the fewest.
     const loads = await withSystem((tx) =>
       tx.campaign.groupBy({ by: ['redirectDomainHost'], where: { redirectDomainHost: { in: pool } }, _count: { _all: true } }),
@@ -76,11 +82,14 @@ export async function resolveRedirectBase(mode: FunnelMode, orgId: string): Prom
  * Pick a white domain from the active + healthy pool, rotating LEAST-LOADED (fewest campaigns already
  * on it) so cloaker ads spread across the pool instead of all sharing one display URL. Returns the
  * host, or undefined when the pool is empty → no white auto-fill (the buyer's own display/fallback stand).
+ * `keepHost`: RESUMING an unfinished build keeps the white domain its earlier ads already display
+ * (their FB display link can't change), while it is still in the pool.
  */
-export async function pickWhiteDomain(): Promise<string | undefined> {
+export async function pickWhiteDomain(keepHost?: string | null): Promise<string | undefined> {
   const pool = await withSystem((tx) => tx.whiteDomain.findMany({ where: { isActive: true, healthy: true }, select: { host: true } }));
   const hosts = pool.map((d) => d.host);
   if (hosts.length === 0) return undefined;
+  if (keepHost && hosts.includes(keepHost)) return keepHost;
   const loads = await withSystem((tx) =>
     tx.campaign.groupBy({ by: ['whiteDomainHost'], where: { whiteDomainHost: { in: hosts } }, _count: { _all: true } }),
   );
@@ -112,7 +121,7 @@ export function withCustomTerms(url: string, termsOverride: readonly string[] | 
  * in `launchCampaign` (kept in sync deliberately — launch stays inline to avoid coupling
  * the critical, stress-tested launch path to this helper).
  *
- * `forceActive` writes `active: true` whatever the status says. The Whop launch (D32) needs it: Whop loads the
+ * `forceActive` writes `active: true` whatever the status says. The Whop launch (D33) needs it: Whop loads the
  * go-link while the ads are being created, before the campaign is ACTIVE, and the config must already look the way
  * it will when real clicks arrive. A failed launch rewrites it without the flag, which derives `active` from the
  * (reverted) status again.

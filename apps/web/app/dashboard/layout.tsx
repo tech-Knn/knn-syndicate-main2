@@ -88,7 +88,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
-  // Whop Ads is invisible until a super-admin turns it on for the company (D32).
+  // Whop Ads is invisible until a super-admin turns it on for the company (D33).
   const [whopEnabled, setWhopEnabled] = useState(false);
 
   useEffect(() => {

@@ -3,7 +3,7 @@
 Everything that talks to Whop's REST API (`api.whop.com/api/v1`, sandbox `sandbox-api.whop.com/api/v1`): the
 client, error classification, pacing, the connection health check, and a mock Whop server for tests. Pure
 library — no DB, no HTTP server. The API app owns persistence, notifications and the routes
-(`apps/api/src/modules/whop`). Background: `docs/WHOP.md`, decision D32.
+(`apps/api/src/modules/whop`). Background: `docs/WHOP.md`, decision D33.
 
 ## Invariants / footguns
 

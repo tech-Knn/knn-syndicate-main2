@@ -905,8 +905,8 @@ describe('updateAdSetBudget — per-ad-set live budget (multi-ad-set ABO)', () =
     const res = await updateAdSetBudget(auth(), campId, setId, { dailyBudgetCents: 1200 });
     expect(res).toMatchObject({ id: campId, adSetId: setId, dailyBudgetCents: 1200 });
     expect(fb.updateFbAdSetBudget).toHaveBeenCalledWith('fbadset-as-a', 'act_1', 'tok', 1200, 'DATA');
-    // Sort by name, not createdAt: both sets are created in one transaction, so their created_at ties and
-    // the read order (after set A's UPDATE moves its row) is otherwise undefined.
+    // Order by name, not createdAt: A and B are created back-to-back so createdAt can tie (same ms), and a tied
+    // ORDER BY returns rows in whatever order the plan happens to produce (Seq Scan vs Index Scan differ here).
     const sets = await withSystem((tx) => tx.adSet.findMany({ where: { campaignId: campId }, orderBy: { name: 'asc' }, select: { dailyBudgetCents: true } }));
     expect(sets.map((s) => s.dailyBudgetCents)).toEqual([1200, 400]); // only set A changed
   });

@@ -258,7 +258,7 @@ white.use('*', async (c, next) => {
   await addWhopPixel(c);
 });
 
-// The ONE exception to "no IDs here" (D32). Whop will not create an ad until it finds its pixel on the
+// The ONE exception to "no IDs here" (D33). Whop will not create an ad until it finds its pixel on the
 // destination: it loads the go-link, follows the redirect to THIS page and reads the HTML. The redirect Worker
 // tags that hop with a signed scope naming the business (`_ws`); only a request carrying a valid one gets the
 // pixel, so a direct visit, a crawler or a forged link sees the same clean page as always. Never a static or

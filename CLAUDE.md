@@ -38,7 +38,7 @@ buyers see real-time ROI. Multi-tenant (companies), ~50–200 buyers, ~1500–20
   every 30 min (no reliable webhook).
 - **AI (D16)**: articles + compliance via Claude; embeddings via OpenAI `text-embedding-3-small`
   (1536-dim) in pgvector (ivfflat, cosine, reuse ≥0.70).
-- **Whop Ads (D32)**: a second ad provider — Whop owns the Meta ad account and the buyer connects a business
+- **Whop Ads (D33)**: a second ad provider — Whop owns the Meta ad account and the buyer connects a business
   ID + API key. Its own tables (`whop_*`), package (`@knn/whop`) and routes (`/api/ad-providers/whop/*`);
   the Facebook code paths are untouched. Off unless `WHOP_ADS_ENABLED` **and** the company's switch are on. A campaign
   picks its network in the wizard (`Campaign.adProvider`); launch, pause / resume, budgets and relaunch route by provider

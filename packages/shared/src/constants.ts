@@ -109,7 +109,7 @@ export const QUEUES = {
   CHANNEL_MAINTENANCE: 'channel-maintenance',
   FB_LAUNCH: 'fb-launch',
   CAPI_DISPATCH: 'capi-dispatch',
-  /** Conversions reported to Whop's Events API (D32): the Whop sibling of CAPI_DISPATCH. */
+  /** Conversions reported to Whop's Events API (D33): the Whop sibling of CAPI_DISPATCH. */
   WHOP_DISPATCH: 'whop-dispatch',
   TOKEN_REFRESH: 'token-refresh',
   ARTICLE_GENERATION: 'article-generation',

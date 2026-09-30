@@ -67,7 +67,7 @@ model Organization {
   /// The org's default funnel mode for its buyers (only effective when cloakingEnabled). A buyer
   /// inherits this unless a per-buyer override is set (User.funnelMode).
   defaultFunnelMode    FunnelMode @default(NORMAL) @map("default_funnel_mode")
-  /// Whop Ads gate (SUPER-ADMIN only, D32): when false no Whop screen, route or job is active for
+  /// Whop Ads gate (SUPER-ADMIN only, D33): when false no Whop screen, route or job is active for
   /// this company. Off by default — nothing Whop-related shows until a super-admin turns it on.
   whopEnabled          Boolean   @default(false) @map("whop_enabled")
   createdAt            DateTime  @default(now()) @map("created_at")
@@ -228,7 +228,7 @@ enum WhopConnectionStatus {
   BROKEN
 }
 
-/// A user's connected Whop business (D32): the `biz_` id + an Account API key, stored encrypted at rest
+/// A user's connected Whop business (D33): the `biz_` id + an Account API key, stored encrypted at rest
 /// (AES-256-GCM, same as the Facebook tokens). Whop owns the Meta ad account; we reach it through this
 /// key. Deliberately NOT stored in fb_connections: every Facebook lookup is provider-blind, so a Whop
 /// row there could be handed to Graph calls.
@@ -367,7 +367,7 @@ enum CampaignObjective {
   OUTCOME_APP_PROMOTION
 }
 
-/// Which ad network runs a campaign (D32). FACEBOOK is every campaign that existed before Whop Ads.
+/// Which ad network runs a campaign (D33). FACEBOOK is every campaign that existed before Whop Ads.
 enum AdProvider {
   FACEBOOK
   WHOP
@@ -427,15 +427,23 @@ model Campaign {
   articleId String? @map("article_id") @db.Uuid
   channelId String? @map("channel_id") @db.Uuid
 
-  /// Populated on launch (Phase 8).
+  /// Populated on launch (Phase 8). Non-null means the WHOLE Facebook structure (campaign → ad sets →
+  /// ads) is built and recorded — every reader treats it as "launched". Never set it early.
   fbCampaignId String? @map("fb_campaign_id")
+  /// The Facebook campaign of a launch that has NOT finished building (rate-limited or failed
+  /// mid-way). Recorded the moment it exists, together with `ad_sets.fb_ad_set_id` / `ads.fb_ad_id`
+  /// as each of those is created, so the next attempt resumes and skips what is already on Facebook
+  /// instead of building a second structure. It becomes `fbCampaignId` (and this is cleared) when the
+  /// build completes, and is cleared when the unfinished build is discarded (reopen / relaunch).
+  /// Child ids are only meaningful under a non-null value here.
+  fbPendingCampaignId String? @map("fb_pending_campaign_id")
   /// The STABLE Meta ad-account id (the `act_…` numeric body) this campaign launched under.
   /// Unlike `adAccountId` (an internal fb_ad_accounts row id that is deleted when a connection is
   /// disconnected), this survives reconnects/app-switches — so reads (status reconcile, insights)
   /// resolve a live token by the Meta id, never a session-bound row that can vanish (D-fix #3).
   fbAccountId String? @map("fb_account_id")
 
-  /// Which ad network runs this campaign (D32). Every campaign that existed before Whop Ads is FACEBOOK.
+  /// Which ad network runs this campaign (D33). Every campaign that existed before Whop Ads is FACEBOOK.
   adProvider       AdProvider @default(FACEBOOK) @map("ad_provider")
   /// Whop campaigns only. The connection that launched it (a scalar ref, no FK, like `adAccountId`: a
   /// disconnect must not delete campaigns), the business frozen at launch (it survives a reconnect), and the
@@ -1064,7 +1072,7 @@ model ConversionEvent {
   fbp            String?
 
   /// Which ad provider this event is reported to: 'facebook' (CAPI: the default, and every existing row) or
-  /// 'whop' (Whop's Events API, D32). One row is one send, so a campaign is one or the other — never add a
+  /// 'whop' (Whop's Events API, D33). One row is one send, so a campaign is one or the other — never add a
   /// second row per provider (Analytics counts these rows, D30).
   provider         String    @default("facebook")
   /// Whop only. What the dispatch job needs, frozen at ingest because the job has no access to the edge KV:

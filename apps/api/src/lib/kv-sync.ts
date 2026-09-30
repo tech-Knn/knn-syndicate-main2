@@ -28,7 +28,7 @@ export interface RedirectConfigPayload {
   fallbackUrl?: string;
   splits?: RedirectSplitPayload[];
   /**
-   * Whop Ads campaigns only (D32): the Whop business this link belongs to. Makes the edge Worker recognise
+   * Whop Ads campaigns only (D33): the Whop business this link belongs to. Makes the edge Worker recognise
    * a click on a Whop ad, record Whop's click parameters beside the click, and tag the non-paid landing
    * with a signed scope so that page carries the business's pixel. Absent for Facebook. Mirrors
    * `apps/redirect/src/resolve.ts#RedirectConfig.whop`. A Whop campaign's config is built ONLY by
@@ -92,7 +92,7 @@ export interface ClickRecord {
    *  added — the service layer falls back to the beacon-time IP. */
   clientIp?: string;
   /**
-   * Whop Ads clicks only (D32), written by the edge Worker for a config that has a `whop` block: the business
+   * Whop Ads clicks only (D33), written by the edge Worker for a config that has a `whop` block: the business
    * the link belongs to, Whop's own click ids, and the landing URL Whop sent the visitor to (our go-link plus
    * Whop's parameters only). Whop resolves which ad drove a visit from those, so a conversion reports them
    * back. Absent on Facebook clicks and on legacy records.

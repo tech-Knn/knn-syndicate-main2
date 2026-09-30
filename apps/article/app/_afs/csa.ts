@@ -13,7 +13,7 @@
  *  (sent via pageOptions.channel) and should be treated by Google as such, not ignored.
  *  `t` = the signed cloak token (opaque base64 blob) — must be ignored so Google doesn't
  *  parse it as a search context signal (it's just carrier metadata for our SSR to decode).
- *  `_ws` = the signed Whop scope the redirect Worker adds to a Whop link's NON-paid landing (D32): an
+ *  `_ws` = the signed Whop scope the redirect Worker adds to a Whop link's NON-paid landing (D33): an
  *  unlisted page-URL param hides the RSOC unit (D28), so it must be listed like `t`. */
 export const AFS_TRACKING_PARAMS =
   't,rc,terms,txid,clickid,utm_source,utm_content,utm_campaign,utm_medium,utm_term,fbclid,hl,styleId,placement,s1,ds,camp_id,_ws';

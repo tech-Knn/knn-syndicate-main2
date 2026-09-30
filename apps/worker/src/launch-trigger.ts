@@ -18,18 +18,29 @@ export interface AutoLaunchDeps {
  */
 export const launchJobId = (campaignId: string): string => `launch-${campaignId}`;
 
+/** The slice of a BullMQ queue the launch enqueue needs — injectable, so the job options are testable without Redis. */
+interface LaunchQueue {
+  add(
+    name: string,
+    data: FbLaunchJob,
+    opts: { jobId: string; attempts: number; removeOnComplete: number; removeOnFail: number },
+  ): Promise<unknown>;
+}
+
 /** Enqueue an FB_LAUNCH job (deduped). The launch runs on the API side. */
-async function defaultEnqueueLaunch(campaignId: string): Promise<void> {
-  await getQueue(QUEUES.FB_LAUNCH).add(
+export async function enqueueFbLaunch(campaignId: string, queue: LaunchQueue = getQueue(QUEUES.FB_LAUNCH)): Promise<void> {
+  await queue.add(
     'launch',
     { campaignId } satisfies FbLaunchJob,
     {
-      // De-dupe concurrent triggers for the same campaign (jobId). The launch is only
-      // idempotent on FULL success (fbCampaignId set) — a non-rate-limit failure can
-      // leave FB objects half-created, so we do NOT auto-retry (attempts:1) to avoid a
-      // duplicate FB campaign. A rate-limit is NOT a job failure: the API parks the
-      // campaign in BATCHED (a 200) for the stats/meta crons to re-drive. A genuinely
-      // failed job lands in Bull-Board for an admin to retry via the manual launch.
+      // De-dupe concurrent triggers for the same campaign (jobId). attempts:1 — a launch that
+      // fails for any reason OTHER than a rate limit is never retried by BullMQ: a blind retry
+      // repeats a deterministic rejection and worsens an ad-account security hold (FB 368). The
+      // build itself is resumable (D32: each FB id is recorded as its object is created), so a
+      // MANUAL relaunch after such a failure continues from what already exists instead of
+      // duplicating it. A rate-limit is NOT a job failure: the API parks the campaign in BATCHED
+      // (a 200) for a later re-drive, which resumes the same way. A genuinely failed job lands in
+      // Bull-Board for an admin to retry via the manual launch.
       jobId: launchJobId(campaignId),
       attempts: 1,
       removeOnComplete: 200,
@@ -38,7 +49,7 @@ async function defaultEnqueueLaunch(campaignId: string): Promise<void> {
   );
 }
 
-const defaultAutoLaunchDeps: AutoLaunchDeps = { enqueueLaunch: defaultEnqueueLaunch };
+const defaultAutoLaunchDeps: AutoLaunchDeps = { enqueueLaunch: (campaignId) => enqueueFbLaunch(campaignId) };
 
 /**
  * Auto-launch trigger (Phase 8, org toggle). Called right after a campaign acquires
@@ -103,9 +114,10 @@ const defaultRunFbLaunchDeps: RunFbLaunchDeps = {
 
 /**
  * Process one `FB_LAUNCH` job: POST the API's token-guarded internal launch endpoint
- * (the launch must run on the API process). A non-2xx response throws so BullMQ
- * retries with backoff; an FB rate-limit lands the campaign in BATCHED on the API
- * side (still a 200 here) and the meta/stats crons drive it forward.
+ * (the launch must run on the API process). A non-2xx response throws so the job FAILS — it is
+ * never retried automatically (attempts:1, D19) and lands in Bull-Board for a manual launch; an FB
+ * rate-limit lands the campaign in BATCHED on the API side (still a 200 here) for a later re-drive,
+ * which resumes the build where it stopped (D32).
  */
 export async function runFbLaunch(
   job: FbLaunchJob,

@@ -479,7 +479,7 @@ describe('funnel counts come from our own tracking — visits, keyword clicks, a
   });
 });
 
-describe('the provider shows in Analytics (D32)', () => {
+describe('the provider shows in Analytics (D33)', () => {
   it('tells each campaign row its ad network, and lets a live Whop ad set be edited by its Whop ad group id', async () => {
     const b1 = await withSystem((tx) => tx.user.findUniqueOrThrow({ where: { email: buyerA1 } }));
     const whop = await withSystem(async (tx) => {

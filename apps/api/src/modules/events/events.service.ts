@@ -29,7 +29,7 @@ export interface ConversionInput {
 export interface ConversionDeps {
   readClick: (txid: string) => Promise<ClickRecord | null>;
   enqueueDispatch: (conversionEventId: string) => Promise<void>;
-  /** Whop's sibling of `enqueueDispatch` (D32). Only called for a Whop click; defaults to the real queue. */
+  /** Whop's sibling of `enqueueDispatch` (D33). Only called for a Whop click; defaults to the real queue. */
   enqueueWhopDispatch?: (conversionEventId: string) => Promise<void>;
 }
 
@@ -96,7 +96,7 @@ export async function recordConversion(
     if (!ad) return null;
 
     // A Whop ad's click (the redirect Worker wrote a `whop` block: the link belongs to a Whop business)
-    // is reported to Whop's Events API instead of Facebook's CAPI (D32). One row is one send: it is never
+    // is reported to Whop's Events API instead of Facebook's CAPI (D33). One row is one send: it is never
     // also a CAPI row, and it is still exactly one row for Analytics (D30) either way.
     const whopBizId = click.whop?.bizId && WHOP_BIZ_ID_RE.test(click.whop.bizId) ? click.whop.bizId : undefined;
     let pixelFbId = '';
@@ -167,7 +167,7 @@ export async function recordConversion(
         clickTimeMs: click.ts ? BigInt(click.ts) : null,
         // Server-minted `_fbp` from the edge (nullable — legacy KV records may omit it).
         fbp: click.fbp ?? null,
-        // Whop (D32): what the dispatch job needs, frozen now because the job cannot read the edge KV.
+        // Whop (D33): what the dispatch job needs, frozen now because the job cannot read the edge KV.
         ...(click.whop
           ? {
               provider: 'whop',

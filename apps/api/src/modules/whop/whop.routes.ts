@@ -19,7 +19,7 @@ import {
 } from './whop.service.js';
 
 /**
- * Whop Ads connection routes, mounted at `/api/ad-providers/whop` (D32). Kept apart from
+ * Whop Ads connection routes, mounted at `/api/ad-providers/whop` (D33). Kept apart from
  * `/api/facebook/*`, which stays exactly as it is. Every route answers 404 unless Whop Ads is enabled
  * for the caller (global flag + the company switch), so the feature is invisible until turned on.
  * Ownership is enforced in the service: a user touches only their own connections; a super-admin any.

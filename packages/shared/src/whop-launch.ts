@@ -2,7 +2,7 @@ import { FUNNEL_STAGES, type FunnelStage } from './conversions.js';
 import { WHOP_EVENT_FOR_STAGE, WHOP_MAIN_CONVERSION_EVENT } from './whop.js';
 
 /**
- * Whop's launch vocabulary (D32, phase 2): how our campaign structure maps onto Whop's, and everything Whop
+ * Whop's launch vocabulary (D33, phase 2): how our campaign structure maps onto Whop's, and everything Whop
  * cannot express. Pure data and functions, shared by the API (which builds the requests), the wizard (which
  * offers only what Whop can do) and the submit gate (which refuses what it cannot).
  *

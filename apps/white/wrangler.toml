@@ -21,7 +21,7 @@ workers_dev = false
 # WHOP_SCOPE_SECRET is NOT set here (a secret must never be committed). Set it on the WHITE account, the
 # SAME value as the redirect Worker's, so a Whop link's landing page can carry the business's Whop pixel:
 #   cd apps/white && pnpm dlx wrangler secret put WHOP_SCOPE_SECRET
-# Unset → this site never renders a pixel (current behaviour). See apps/white/CLAUDE.md (D32 exception).
+# Unset → this site never renders a pixel (current behaviour). See apps/white/CLAUDE.md (D33 exception).
 
 [vars]
 # Public API the white site pulls article CONTENT from, server-side. This fetch is invisible to

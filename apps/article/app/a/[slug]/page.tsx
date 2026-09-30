@@ -101,7 +101,7 @@ export default async function ArticlePage({
   // page ALWAYS renders its unit (Google's crawler must see it to serve ads — see cloak-gate.ts), so
   // this only chooses the param source: token if valid, else the plaintext query.
   const gate = await resolveCloakGate(sp, Date.now());
-  // Whop Ads (D32): Whop will not create an ad until it finds its pixel on the destination. In NORMAL funnel
+  // Whop Ads (D33): Whop will not create an ad until it finds its pixel on the destination. In NORMAL funnel
   // mode a non-paid click (Whop's ad check included) lands on this page, tagged by the redirect Worker with a
   // signed `_ws` scope naming the business. Only a valid one renders the pixel; a paid visitor (signed `t`
   // token, no `_ws`), a crawler or a forged link gets the page exactly as before. Unset secret = never.

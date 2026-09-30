@@ -78,7 +78,7 @@ export function sumInputs(rows: readonly MetricInputs[]): MetricInputs {
 }
 
 /**
- * Columns that come from the ad network are labelled by source (D32): "(FB)" for Facebook rows, "(Whop)" for Whop rows,
+ * Columns that come from the ad network are labelled by source (D33): "(FB)" for Facebook rows, "(Whop)" for Whop rows,
  * "(FB/Whop)" when the rows in view are a mix, so a buyer never reads Whop's numbers under a "Facebook" heading. The
  * registry below keeps its Facebook wording (one definition per metric); this relabels it at render time, and leaves
  * the text untouched when every row is Facebook, which is how it always read.

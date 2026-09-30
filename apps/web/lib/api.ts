@@ -291,7 +291,7 @@ export const facebook = {
 
 const WHOP = '/api/ad-providers/whop';
 
-/** Whop Ads connections (D32). Every call answers 404 when Whop Ads is off for the user's company. */
+/** Whop Ads connections (D33). Every call answers 404 when Whop Ads is off for the user's company. */
 export const whop = {
   status: async (): Promise<WhopStatus> => parse(await authedFetch(`${WHOP}/status`)),
   connections: async (): Promise<WhopConnection[]> =>

@@ -82,7 +82,7 @@ export async function ensureFxRatesForDays(days: string[], deps: FxDeps = { fetc
   const [accounts, whop, stored] = await withSystem((tx) =>
     Promise.all([
       tx.fbAdAccount.findMany({ distinct: ['currency'], select: { currency: true } }),
-      // Whop businesses report spend in their reporting currency (D32).
+      // Whop businesses report spend in their reporting currency (D33).
       tx.whopConnection.findMany({ where: { reportingCurrency: { not: null } }, distinct: ['reportingCurrency'], select: { reportingCurrency: true } }),
       // Whop reports each ad's spend in the currency it was charged in, which need not be the business's reporting currency:
       // any currency already stored for these days needs a rate too (the next run then re-converts with it).

@@ -1,5 +1,5 @@
 /**
- * What Whop reports about a launched campaign, and what the status sync does with it (D32, phase 2). Pure, so the
+ * What Whop reports about a launched campaign, and what the status sync does with it (D33, phase 2). Pure, so the
  * worker's reconcile job and its tests share one table, like `campaign-status.ts` does for our own states.
  *
  * Whop has two words per entity. `status` is the configured lifecycle (active, paused, draft, in_review, flagged, ...;

@@ -1,6 +1,6 @@
 # Whop Ads
 
-A second ad provider next to the direct Facebook connection (decision **D32**, `docs/DECISIONS.md`).
+A second ad provider next to the direct Facebook connection (decision **D33**, `docs/DECISIONS.md`).
 Whop resells Meta advertising and owns the Meta ad account. A buyer connects their Whop business here with
 its **business ID** and an **API key**; this page then checks everything Whop needs before ads can launch.
 
@@ -352,7 +352,7 @@ private, no-store`. Then ask Whop the same question with the connection's key: `
 with `{ "account_id": "biz_…", "url": "<the go-link>" }` must answer `installed: true`. A Facebook link must
 show no pixel at all.
 
-**Trade-offs** (full reasoning: D32 addendum): the white site's "no shared ID" rule has one narrow exception;
+**Trade-offs** (full reasoning: D33 addendum): the white site's "no shared ID" rule has one narrow exception;
 the business id is visible in that page's source to visitors who came through that business's link; and Whop's
 check sees the white page, not the money page.
 

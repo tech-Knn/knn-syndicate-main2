@@ -12,7 +12,7 @@ import {
 import type { CreateAdCampaignInput, CreateAdGroupInput, CreateAdInput, WhopDemographics, WhopDevices, WhopPlacements, WhopRegions } from './ads.js';
 
 /**
- * Our campaign structure -> Whop's REQUEST BODIES (D32, phase 2). Pure: plain data in, bodies out, no database and
+ * Our campaign structure -> Whop's REQUEST BODIES (D33, phase 2). Pure: plain data in, bodies out, no database and
  * no network, so every translation is unit-tested and the launch service only loads rows and calls Whop. The
  * vocabulary (objective, placement and category tables, what Whop cannot express) lives in `@knn/shared`
  * (`whop-launch.ts`) so the wizard and the submit gate use the very same tables.

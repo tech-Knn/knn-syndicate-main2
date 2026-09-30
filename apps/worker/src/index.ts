@@ -140,7 +140,7 @@ async function main(): Promise<void> {
     console.error(`[worker] ${QUEUES.CAPI_DISPATCH} job ${job?.id} failed:`, err.message);
   });
 
-  // Conversion → Whop's Events API (S2S, D32): the Whop sibling of the CAPI worker above. A Whop ad's money
+  // Conversion → Whop's Events API (S2S, D33): the Whop sibling of the CAPI worker above. A Whop ad's money
   // page carries no Whop pixel, so each funnel event is reported from here. Retries with backoff on rate-limit
   // or transient errors; a rejected key or a refusal is terminal; when BullMQ's retries run out the row is
   // settled as failed (CAPI leaves such rows pending forever; this one must not).
@@ -163,7 +163,7 @@ async function main(): Promise<void> {
   const metaRejectionWorker = new Worker(
     QUEUES.META_REJECTION_CHECK,
     async () => {
-      // Facebook and Whop (D32) are reconciled independently: neither's failure may keep the other from running.
+      // Facebook and Whop (D33) are reconciled independently: neither's failure may keep the other from running.
       // A Facebook failure still fails the job (as before); a Whop failure is logged and surfaces in the result.
       let facebook: Awaited<ReturnType<typeof reconcileCampaigns>> | undefined;
       let facebookError: unknown;

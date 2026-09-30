@@ -129,7 +129,7 @@ const EnvSchema = z.object({
   // business-login dialog currently uses; override if Meta moves it again.
   FB_VERIFY_API_VERSION: z.string().default('v25.0'),
 
-  // Whop Ads (D32). All optional with safe defaults: config is parsed at import by every app and
+  // Whop Ads (D33). All optional with safe defaults: config is parsed at import by every app and
   // test, so none of these may be required. With WHOP_ADS_ENABLED off nothing Whop-related is active.
   WHOP_ADS_ENABLED: booleanish.default(false),
   // Allow connecting a Whop SANDBOX business (own accounts/keys/data, no real money). Super-admins can

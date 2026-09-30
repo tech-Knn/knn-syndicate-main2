@@ -216,7 +216,7 @@ export const campaignDraftSchema = z.object({
   // Landing-page angle that drives article generation (Phase 5).
   query: z.string().trim().max(300).optional(),
   fallbackUrl: optionalUrl,
-  // Which ad network runs it (D32). Omitted = Facebook, so every existing draft, preset and clone stays valid.
+  // Which ad network runs it (D33). Omitted = Facebook, so every existing draft, preset and clone stays valid.
   adProvider: z.enum(AD_PROVIDERS).default('FACEBOOK'),
   // Facebook assets (a Whop campaign has none).
   adAccountId: uuid.optional(),

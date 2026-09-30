@@ -172,7 +172,7 @@ export interface Campaign {
   racValue: string | null;
   query: string | null;
   fallbackUrl: string | null;
-  /** Which ad network runs it (D32). Every campaign from before Whop Ads is FACEBOOK. */
+  /** Which ad network runs it (D33). Every campaign from before Whop Ads is FACEBOOK. */
   adProvider: AdProvider;
   adAccountId: string | null;
   pageId: string | null;
@@ -443,7 +443,7 @@ export interface RcLearningRunResult {
   added: { term: string; suppressedCampaigns: number; campaignsUsing: number; keywordClicksPer100: number }[];
 }
 
-// ── Whop Ads (D32) ──────────────────────────────────────────────────────────────────────────────
+// ── Whop Ads (D33) ──────────────────────────────────────────────────────────────────────────────
 
 /** Whether the user may use Whop Ads (global flag AND their company's switch). */
 export interface WhopStatus {

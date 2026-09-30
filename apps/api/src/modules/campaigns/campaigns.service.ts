@@ -86,7 +86,7 @@ async function carryAdRacValues(
 export interface CampaignAssetLabels {
   adAccount: { id: string; fbAccountId: string; name: string } | null;
   page: { id: string; fbPageId: string; name: string } | null;
-  /** A Whop campaign's business and page (D32), resolved the same way, so a reviewer sees what the buyer picked. */
+  /** A Whop campaign's business and page (D33), resolved the same way, so a reviewer sees what the buyer picked. */
   whopBusiness: { bizId: string; label: string | null } | null;
   whopPage: { whopId: string; name: string | null } | null;
 }
@@ -188,7 +188,7 @@ async function ownedAssetIds(
 
 /**
  * A Whop campaign may reference only the acting user's own Whop connection, and a page that belongs to it; and
- * only while Whop Ads is on for the company (D32). Returns the business id to freeze on the campaign.
+ * only while Whop Ads is on for the company (D33). Returns the business id to freeze on the campaign.
  */
 async function assertWhopAssetsOwned(tx: TxClient, auth: { userId: string; orgId: string }, input: CampaignDraft): Promise<{ whopBizId: string | null }> {
   if (!env.WHOP_ADS_ENABLED) throw new AppError(409, "Whop Ads isn't switched on.");
@@ -243,7 +243,7 @@ function adSetCreateInputs(orgId: string, input: CampaignDraft): Prisma.AdSetCre
     advantageAudience: set.advantageAudience,
     placementMode: set.placementMode,
     placements: set.placements,
-    // A Whop campaign has no Facebook pixel: Whop owns the pixel (D32).
+    // A Whop campaign has no Facebook pixel: Whop owns the pixel (D33).
     pixelId: input.adProvider === 'WHOP' ? null : set.pixelId ?? null,
     pxeEvent: set.pxeEvent,
     conversionType: set.conversionType,
@@ -375,7 +375,7 @@ async function buildCloneSource(
     const draftRaw = toDraft(source);
     let draft: CampaignDraft;
     if (draftRaw.adProvider === 'WHOP') {
-      // Same rule for a Whop source (D32): keep the business only while its connection is healthy, and the page
+      // Same rule for a Whop source (D33): keep the business only while its connection is healthy, and the page
       // only while that business still has it. A Whop campaign has no Facebook ad account, page or pixel.
       const conn = draftRaw.whopConnectionId
         ? await tx.whopConnection.findFirst({
@@ -560,7 +560,7 @@ export function toDraft(campaign: CampaignWithChildren): CampaignDraft {
 }
 
 /**
- * A Whop campaign can only be submitted while its Whop business is usable (D32): Whop Ads is on for the company
+ * A Whop campaign can only be submitted while its Whop business is usable (D33): Whop Ads is on for the company
  * and the connection exists and works. Deliberately NOT the connection's `canLaunch` checklist: a missing payment
  * method or page is something Whop tells the buyer at launch, in its own words, and the buyer can fix it in Whop
  * after approval without the campaign having to go back through review.
@@ -675,6 +675,13 @@ export async function reopenCampaign(
     if (!canTransitionCampaign(campaign.status, CAMPAIGN_STATUS.DRAFT)) {
       throw new AppError(409, `Cannot reopen a campaign in ${campaign.status} state`);
     }
+    // A launch that was interrupted mid-build left objects on Facebook (recorded in
+    // `fb_pending_campaign_id` + the ad set / ad ids). Reopening would let the buyer edit the config and
+    // a later launch RESUME those stale objects — so the caller must pause + forget them first, which is
+    // what `reopenCampaignForEdit` (launch.service) does before it calls this. Fail closed.
+    if (campaign.fbPendingCampaignId) {
+      throw new AppError(409, 'This campaign has an unfinished launch on Facebook — reopen it from its campaign page so the unfinished Facebook campaign is paused first.');
+    }
     // Conditional on the status we just read: a launch that claimed the campaign between the read and this write
     // (PROCESSING -> LAUNCHING) must not be reopened underneath itself, or it would finish ACTIVE with no channel.
     const flipped = await tx.campaign.updateMany({
@@ -689,7 +696,7 @@ export async function reopenCampaign(
       },
     });
     if (flipped.count === 0) throw new AppError(409, 'The campaign changed while it was being reopened. Check it, then try again.');
-    // A Whop campaign (D32): a draft must not reference Whop objects, so forget them here, in the same transaction, and
+    // A Whop campaign (D33): a draft must not reference Whop objects, so forget them here, in the same transaction, and
     // delete the Whop campaign once this commits (see whop-cleanup.ts). Clearing ALWAYS moves the campaign to its next key
     // epoch, even when no Whop id was saved: a create that reached Whop but whose answer was lost is replayed by Whop for 24 h
     // under the old key, and would hand the OLD campaign (old budget, old objective) back to the edited draft.

@@ -102,7 +102,7 @@ worker.get('/go/:id', async (c) => {
     const fbp = `fb.1.${clickTimeMs}.${rand10}`;
     const clientIp = c.req.header('cf-connecting-ip') || undefined;
     // A Whop ad's click also records Whop's own ids + the landing URL Whop sent the visitor to: Whop
-    // attributes a server-reported conversion from those (D32). Facebook clicks have no `whop` block.
+    // attributes a server-reported conversion from those (D33). Facebook clicks have no `whop` block.
     const whop = config.whop?.bizId
       ? { bizId: config.whop.bizId, click: extractWhopClick(reqUrl.searchParams) ?? undefined, landing: whopLandingUrl(reqUrl) }
       : undefined;

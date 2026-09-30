@@ -12,7 +12,7 @@ import { whopToAppError } from '../../lib/whop-errors.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 
 /**
- * Whop Ads connections (D32). A user connects a Whop business with its `biz_` id + an Account API key.
+ * Whop Ads connections (D33). A user connects a Whop business with its `biz_` id + an Account API key.
  * The key is encrypted at rest (AES-256-GCM, same as our other tokens) and never returned, logged or
  * put in an error. Whop has its OWN tables: fb_* lookups are provider-blind, so a Whop row there could
  * be handed to Facebook calls.

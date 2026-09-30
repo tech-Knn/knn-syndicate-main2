@@ -54,7 +54,7 @@ export interface RedirectConfig {
    *  revenue risk). 'enforce': require the ad-id match for paid traffic. Set globally by the Worker. */
   verifyMode?: 'observe' | 'enforce';
   /**
-   * Present only for a Whop Ads campaign (D32). The Whop business whose ad this link belongs to. It makes
+   * Present only for a Whop Ads campaign (D33). The Whop business whose ad this link belongs to. It makes
    * the Worker (a) also recognise a click from a Whop ad (Whop's own ids) as paid, (b) record Whop's click
    * parameters beside the click so the conversion can be reported back, and (c) tag the page a non-paid
    * visitor lands on with a signed scope so it carries that business's pixel. Absent for Facebook.

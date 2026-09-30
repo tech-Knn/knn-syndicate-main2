@@ -10,7 +10,7 @@ import { type Campaign, type CampaignAdSet } from '@/lib/types';
 import { GoogleSignalsEditor } from './google-signals-editor';
 import { OffersEditor } from './offers-editor';
 
-/** The ad network a campaign runs on, in words (D32). Every live control says it instead of assuming Facebook. */
+/** The ad network a campaign runs on, in words (D33). Every live control says it instead of assuming Facebook. */
 const networkName = (c: Pick<Campaign, 'adProvider'>): string => (c.adProvider === 'WHOP' ? 'Whop' : 'Facebook');
 /**
  * The smallest daily budget the UI lets a buyer type, in cents. Facebook's floor is $2.00; Whop states its own and
@@ -235,7 +235,7 @@ function AdSetBudgetRow({
 }
 
 /**
- * What Whop reports about a Whop campaign (D32): its delivery state, and the issues on it, which is where Meta's ad
+ * What Whop reports about a Whop campaign (D33): its delivery state, and the issues on it, which is where Meta's ad
  * review rejections arrive, in words. Also the reason a launch was stopped (payment method, page, pixel, ...), so a
  * buyer whose auto-launch failed while they were away sees why without reading a log.
  */
@@ -343,9 +343,11 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
     const ok = await confirm({
       title: 'Reopen for editing?',
       body:
-        c.adProvider === 'WHOP' && c.whopCampaignId
-          ? 'This returns the campaign to a draft, releases its assigned channel back to the pool, and deletes the half-built campaign on Whop (nothing has spent). You can resubmit when you are done.'
-          : 'This returns the campaign to a draft and releases its assigned channel back to the pool. You can resubmit when you are done.',
+        c.adProvider === 'WHOP'
+          ? c.whopCampaignId
+            ? 'This returns the campaign to a draft, releases its assigned channel back to the pool, and deletes the half-built campaign on Whop (nothing has spent). You can resubmit when you are done.'
+            : 'This returns the campaign to a draft and releases its assigned channel back to the pool. You can resubmit when you are done.'
+          : 'This returns the campaign to a draft and releases its assigned channel back to the pool. If part of it was already created on Facebook (for example the launch was rate-limited), that unfinished Facebook campaign is paused first. You can resubmit when you are done.',
       confirmLabel: 'Reopen',
     });
     if (!ok) return;
@@ -442,7 +444,9 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
         >
           {c.status === 'QUEUED_NO_CHANNEL'
             ? 'No AdSense channel is free for this campaign yet. Reopen to edit it, or leave it queued.'
-            : `A channel is assigned. Launching generates the article, wires the redirect, and creates the ads on ${networkName(c)}. Need to fix something first? Reopen to edit.`}
+            : c.status === 'BATCHED'
+              ? `${networkName(c)} rate-limited the launch part-way. Whatever was already created there is kept, and Launch continues from where it stopped — nothing is created twice. Need to fix something first? Reopen to edit.`
+              : `A channel is assigned. Launching generates the article, wires the redirect, and creates the ads on ${networkName(c)}. Need to fix something first? Reopen to edit.`}
         </Banner>
       )}
       {note && (

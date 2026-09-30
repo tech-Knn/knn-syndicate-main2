@@ -5,7 +5,7 @@ import { whopToAppError } from '../../lib/whop-errors.js';
 import { markWhopConnectionBroken, whopClientFor, whopEnabledForOrg } from './whop.service.js';
 
 /**
- * Whop access for campaign flows that have no signed-in Whop user behind them (D32, phase 2): the launch that
+ * Whop access for campaign flows that have no signed-in Whop user behind them (D33, phase 2): the launch that
  * the worker triggers as the buyer, the status sync, the spend pull. `whop.service.ts` resolves a connection from
  * the caller's own `auth`; here it is resolved from the CAMPAIGN, because the campaign is what names the business.
  */

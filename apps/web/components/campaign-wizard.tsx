@@ -159,7 +159,7 @@ interface CampaignForm {
   racValue: string;
   query: string;
   fallbackUrl: string;
-  /** Which ad network runs it (D32). Facebook unless the buyer switches to Whop. */
+  /** Which ad network runs it (D33). Facebook unless the buyer switches to Whop. */
   adProvider: AdProvider;
   adAccountId: string;
   pageId: string;
@@ -608,7 +608,7 @@ export function CampaignWizard({ campaign }: { campaign?: Campaign }) {
   const [pages, setPages] = useState<FbPage[]>([]);
   const [pixels, setPixels] = useState<FbPixel[]>([]);
   const [fbAssetsLoading, setFbAssetsLoading] = useState(true);
-  // Whop Ads (D32): offered only when it is on for the buyer's company; otherwise the wizard is exactly as it was.
+  // Whop Ads (D33): offered only when it is on for the buyer's company; otherwise the wizard is exactly as it was.
   const [whopOn, setWhopOn] = useState(false);
   const [connections, setConnections] = useState<WhopConnection[]>([]);
   // Whether the Whop status and businesses have answered (or failed), so a list that has not arrived yet is never shown as
@@ -1126,7 +1126,7 @@ function OfferStep({
   patch: (p: Partial<CampaignForm>) => void;
   onObjectiveChange: (objective: CampaignForm['objective']) => void;
   onProviderChange: (provider: AdProvider) => void;
-  /** Whop Ads is on for this buyer's company (D32). */
+  /** Whop Ads is on for this buyer's company (D33). */
   whopOn: boolean;
   /** The Whop businesses could not be loaded: an empty list then means "unknown", never "none connected". */
   whopLoadFailed: boolean;
@@ -1955,7 +1955,7 @@ function ReviewStep({ form, accounts, pages, connections, whopOn, offers, issues
   const totalAds = form.adSets.reduce((n, s) => n + s.ads.length, 0);
   const budget = form.budgetMode === 'CAMPAIGN' ? centsOrUndef(form.dailyBudget) ?? 0 : form.adSets.reduce((n, s) => n + (centsOrUndef(s.dailyBudget) ?? 0), 0);
 
-  // Whop (D32): the business and page are the connected business's, labelled server-side so a reviewer sees them too. The saved
+  // Whop (D33): the business and page are the connected business's, labelled server-side so a reviewer sees them too. The saved
   // labels describe the SAVED choice only: once the buyer picks another business or page, the live lists name it instead.
   const connection = connections.find((c) => c.id === form.whopConnectionId);
   const savedBusiness = campaign && campaign.whopConnectionId === form.whopConnectionId ? campaign.whopBusiness : null;
