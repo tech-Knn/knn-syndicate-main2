@@ -187,7 +187,10 @@ campaign deleted in Whop) the next one uses new keys: `campaigns.whop_key_epoch`
     redirect no longer sends it traffic, so a still-delivering ad would only burn money; the buyer is told whether that
     worked), routing stopped (below), buyer told why, in Meta's words. **Some** ads rejected does NOT stop the campaign
     (unlike Facebook's D14): Whop never serves a rejected ad and the rest can still earn, so the buyer is told once per
-    rejected ad ("2 of 12 ads … the campaign keeps running") and the ads show as disapproved;
+    rejected ad ("2 of 12 ads … the campaign keeps running") and the ads show as disapproved. **A campaign already stopped as
+    rejected is revived by the same sync** once Whop has ads that can deliver again (an appeal won, or it was stopped under the old
+    "any ad" rule): it gets a channel again (only if one is free; otherwise the next tick tries), goes back to ACTIVE, or PAUSED
+    if Whop has it paused (then use Resume), and its edge config is re-published: same links, article and data, nothing cloned;
   - paused or resumed in Whop → mirrored (the channel is kept). The edge config must follow: if it cannot be updated the
     status is given back and nothing is announced, so the database and the edge agree and the next tick does it all again
     (a resumed campaign whose edge still says "inactive" would send paid clicks to the white page while it runs);

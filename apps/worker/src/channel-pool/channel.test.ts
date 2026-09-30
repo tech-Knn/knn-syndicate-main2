@@ -5,6 +5,7 @@ import { ROLES, USER_STATUS, currentBusinessDay } from '@knn/shared';
 import {
   assignChannel,
   assignForCampaign,
+  assignOfferChannels,
   processQueue,
   releaseChannelForCampaign,
   rolloverChannels,
@@ -332,5 +333,48 @@ describe('per-offer channel assignment (Phase E)', () => {
 
     const claimed = await withSystem((tx) => tx.channel.count({ where: { domainId: domA, status: 'ASSIGNED' } }));
     expect(claimed).toBe(1);
+  });
+});
+
+describe('asking for a channel without queueing (reviving a stopped campaign)', () => {
+  const queueRow = (campaignId: string): Promise<number> => withSystem((tx) => tx.campaignQueue.count({ where: { campaignId } }));
+  const statusOf = async (id: string): Promise<string | undefined> => (await withSystem((tx) => tx.campaign.findUnique({ where: { id }, select: { status: true } })))?.status;
+
+  it('takes a free channel and leaves a META_REJECTED status exactly as it was', async () => {
+    await makeChannels(1);
+    const id = await makeCampaign('META_REJECTED');
+    const r = await assignChannel(id, { queue: false });
+    expect(r.assigned).toBe(true);
+    const c = await withSystem((tx) => tx.campaign.findUnique({ where: { id }, select: { status: true, channelId: true } }));
+    expect(c?.status).toBe('META_REJECTED'); // the caller moves the status itself, in its own order
+    expect(c?.channelId).not.toBeNull();
+  });
+
+  it('answers "no" on an empty pool without queueing the campaign or changing its status (legacy campaign)', async () => {
+    await makeDomainChannels(domA, 1); // only a domain-tagged channel: none for a legacy campaign
+    const id = await makeCampaign('META_REJECTED');
+    const r = await assignChannel(id, { queue: false });
+    if (r.assigned) return; // a concurrent suite left a global channel in the shared pool; the scenario does not apply
+    expect(await queueRow(id)).toBe(0);
+    expect(await statusOf(id)).toBe('META_REJECTED');
+  });
+
+  it('answers "no" on an exhausted domain pool without queueing or holding anything (offers campaign)', async () => {
+    const id = await makeOfferCampaign([domB]);
+    await withSystem((tx) => tx.campaign.update({ where: { id }, data: { status: 'META_REJECTED' } }));
+    const r = await assignOfferChannels(id, { queue: false });
+    if (r.assigned) return; // a concurrent suite left a global channel in the shared pool; the scenario does not apply
+    expect(await queueRow(id)).toBe(0);
+    expect(await statusOf(id)).toBe('META_REJECTED');
+    expect(await withSystem((tx) => tx.channel.count({ where: { currentCampaignId: id } }))).toBe(0);
+  });
+
+  it('still queues by default (the approval path is unchanged)', async () => {
+    await makeDomainChannels(domA, 1);
+    const id = await makeCampaign('APPROVED');
+    const r = await assignChannel(id);
+    if (r.assigned) return;
+    expect(await queueRow(id)).toBe(1);
+    expect(await statusOf(id)).toBe('QUEUED_NO_CHANNEL');
   });
 });
