@@ -23,7 +23,7 @@ import {
   uploadFbAdImage,
   uploadFbAdVideo,
 } from '@knn/fb';
-import { CAMPAIGN_STATUS, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, canTransitionCampaign, effectiveRac, goalRequiresPixel, pxeToCustomEventType } from '@knn/shared';
+import { CAMPAIGN_STATUS, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, isLaunched, canTransitionCampaign, effectiveRac, goalRequiresPixel, pxeToCustomEventType } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { requestChannelsForResumedCampaign } from '../../lib/channel-queue.js';
@@ -37,6 +37,7 @@ import { type CampaignWithChildren, campaignInclude, reopenCampaign, toDraft } f
 import { pickWhiteDomain, resolveBuyerFunnelMode, resolveRedirectBase, syncCampaignRedirectConfigs, withCustomTerms } from './launch-routing.js';
 import { setWhopCampaignActive, updateWhopAdSetBudget, updateWhopCampaignBudget } from './whop-controls.service.js';
 import { type WhopLaunchDeps, launchWhopCampaign, relaunchWhopCampaign } from './whop-launch.service.js';
+import { domainOwnershipProblems } from './domain-ownership.js';
 
 // Existing callers import these from here; they now live in launch-routing.ts (shared with the Whop launch).
 export { syncCampaignRedirectConfigs, withCustomTerms };
@@ -926,6 +927,13 @@ export async function launchCampaign(
     if (auth.role === ROLES.MEDIA_BUYER && c.buyerId !== auth.userId) throw new AppError(404, 'Campaign not found');
     return c;
   });
+
+  // A campaign that is not live yet must still own the right to its websites: a domain given to another company since the offers were
+  // saved cannot be launched on (a running campaign is never re-checked: it keeps running, pause / resume untouched).
+  if (!isLaunched(campaign)) {
+    const lostDomains = await runScoped(auth, (tx) => domainOwnershipProblems(tx, campaign.orgId, campaignId));
+    if (lostDomains.length > 0) throw new AppError(409, lostDomains[0]!);
+  }
 
   // Whop has its own launch (D33): draft-first, resumable, and it checks the pixel at the end of our go-link.
   if (campaign.adProvider === 'WHOP') return launchWhopCampaign(auth, campaign, deps);

@@ -28,6 +28,7 @@ import { type OfferInput, setOffers } from './offers.service.js';
 import { clearWhopIds, discardWhopCampaign, whopLeftover } from './whop-cleanup.js';
 import { blockedRcHits } from './rc-terms.service.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
+import { domainOwnershipProblems } from './domain-ownership.js';
 
 export const campaignInclude = {
   adSets: { orderBy: { createdAt: 'asc' }, include: { ads: { orderBy: { createdAt: 'asc' } } } },
@@ -605,6 +606,7 @@ export async function submitCampaign(
       issues.push('Add at least one paid offer (a website to send traffic to) before submitting');
     }
     // D28: an rc with a word that makes Google hide the keyword block can't go live.
+    issues.push(...(await domainOwnershipProblems(tx, existing.orgId, id)));
     const rcHits = await blockedRcHits([existing.racValue, ...existing.adSets.flatMap((s) => s.ads.map((a) => a.racValue))]);
     if (rcHits.length > 0) issues.push(rcBlockedMessage(rcHits));
     if (issues.length > 0) {
