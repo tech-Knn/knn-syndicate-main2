@@ -4,6 +4,7 @@ import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useRouter } from 'next/navigation';
 import { type CompanyRollup, addBusinessDays, currentBusinessDay, formatUsd } from '@knn/shared';
 import { Badge, Banner, Button, Card, type DateRange, DateRangePicker, Skeleton, useConfirm } from '@/components/ui';
+import { ResetLinkDialog, type IssuedResetLink, issueResetLink } from '@/components/reset-link';
 import { admin, stats } from '@/lib/api';
 import { type AuditRow, type FunnelMode, type OrgRow, type PublicUser } from '@/lib/types';
 import { useAuth } from '../../../providers';
@@ -76,6 +77,19 @@ export default function CompaniesPage() {
   // Expandable per-company member lists.
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [membersByOrg, setMembersByOrg] = useState<Record<string, PublicUser[] | null>>({});
+
+  // Single-use password reset link for a member (no email), shown once in a dialog.
+  const [resetLink, setResetLink] = useState<IssuedResetLink | null>(null);
+  async function resetMemberPassword(m: PublicUser): Promise<void> {
+    setBusy(m.id + 'reset');
+    try {
+      setResetLink(await issueResetLink(m));
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : 'Could not create a reset link.');
+    } finally {
+      setBusy(null);
+    }
+  }
 
   // Revenue by company + cut editing.
   const [revRange, setRevRange] = useState<DateRange>(() => rangeFor(30));
@@ -520,6 +534,14 @@ export default function CompaniesPage() {
                                     <td>
                                       <button
                                         type="button"
+                                        className={styles.actionBtn}
+                                        disabled={busy === m.id + 'reset'}
+                                        onClick={() => void resetMemberPassword(m)}
+                                      >
+                                        Reset password
+                                      </button>{' '}
+                                      <button
+                                        type="button"
                                         className={`${styles.actionBtn} ${styles.actionDanger}`}
                                         disabled={busy === m.id}
                                         onClick={() => void removeMember(o.id, m)}
@@ -700,6 +722,7 @@ export default function CompaniesPage() {
         </Card>
         </div>
       )}
+      <ResetLinkDialog link={resetLink} onClose={() => setResetLink(null)} />
     </div>
   );
 }

@@ -240,6 +240,16 @@ export const auth = {
     return data.user;
   },
 
+  /** Set a new password with a single-use link an admin issued (no email). Resolves on success; an invalid/used/expired link is an ApiError. */
+  async resetPassword(token: string, password: string): Promise<void> {
+    const res = await rawFetch('/api/auth/reset-password', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ token, password }),
+    });
+    await parse<void>(res);
+  },
+
   /** Public buyer signup → PENDING (a company admin approves). Needs the company slug. */
   async signup(input: { name: string; email: string; password: string; companySlug: string }): Promise<{ status: string }> {
     return parse(await rawFetch('/api/auth/signup', { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(input) }));
@@ -514,6 +524,9 @@ export const admin = {
         }),
       )
     ).user,
+  /** Issue a single-use password reset link for a user (no email). The raw token is shown once; build the link from it. */
+  issuePasswordReset: async (id: string): Promise<{ token: string; expiresAt: string; user: { id: string; name: string; email: string } }> =>
+    parse(await authedFetch(`/api/admin/users/${id}/password-reset`, { method: 'POST' })),
   deleteUser: async (id: string): Promise<{ id: string }> =>
     parse<{ id: string }>(await authedFetch(`/api/admin/users/${id}`, { method: 'DELETE' })),
   orgUsers: async (orgId: string): Promise<PublicUser[]> =>

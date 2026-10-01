@@ -38,6 +38,7 @@ import {
   createOrganization,
   deleteUser,
   getActingOrg,
+  issuePasswordReset,
   listAuditLog,
   listOrgUsers,
   listOrganizations,
@@ -185,6 +186,23 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         const { action } = userActionSchema.parse(req.body);
         const user = await setUserStatus(req.auth, req.params.id, action);
         return reply.send({ user });
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  // Issue a single-use password reset link (D37): the raw token is returned once, only its hash is stored.
+  // Super-admin: anyone but a super admin. Company admin: the buyers of their own company.
+  app.post<{ Params: { id: string } }>(
+    '/users/:id/password-reset',
+    { preHandler: [authenticate, requireRole(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        const { token, expiresAt, user } = await issuePasswordReset(req.auth, req.params.id);
+        reply.header('Cache-Control', 'no-store');
+        return reply.code(201).send({ token, expiresAt: expiresAt.toISOString(), user });
       } catch (err) {
         return handleRouteError(err, reply);
       }

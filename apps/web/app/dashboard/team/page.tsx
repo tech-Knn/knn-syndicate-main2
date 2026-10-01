@@ -9,6 +9,7 @@ import {
   formatUsd,
 } from '@knn/shared';
 import { Badge, Card, type DateRange, DateRangePicker, Skeleton, useConfirm, useToast } from '@/components/ui';
+import { ResetLinkDialog, type IssuedResetLink, issueResetLink } from '@/components/reset-link';
 import { admin, stats } from '@/lib/api';
 import { type PublicUser, type UserAction } from '@/lib/types';
 import { useAuth } from '../../providers';
@@ -98,6 +99,22 @@ export default function TeamPage() {
       setBusy(null);
     }
   };
+
+  // Hand a member a single-use link to choose a new password (no email): shown once in a dialog to copy.
+  const [resetLink, setResetLink] = useState<IssuedResetLink | null>(null);
+  const resetPassword = async (m: PublicUser): Promise<void> => {
+    setBusy(m.id);
+    try {
+      setResetLink(await issueResetLink(m));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not create a reset link.');
+    } finally {
+      setBusy(null);
+    }
+  };
+  // A company admin resets their buyers; the platform resets anyone but another platform admin. Never yourself.
+  const canReset = (m: PublicUser): boolean =>
+    m.id !== user?.id && m.role !== 'SUPER_ADMIN' && (user?.role === 'SUPER_ADMIN' || (user?.role === 'COMPANY_ADMIN' && m.role === 'MEDIA_BUYER'));
 
   // Super-admin only: permanently delete a user (frees their email for re-use).
   const remove = async (m: PublicUser): Promise<void> => {
@@ -227,6 +244,11 @@ export default function TeamPage() {
                               {a.label}
                             </button>
                           ))}
+                        {canReset(m) && (
+                          <button type="button" className={styles.actionBtn} disabled={busy === m.id} onClick={() => void resetPassword(m)}>
+                            Reset password
+                          </button>
+                        )}
                         {user?.role === 'SUPER_ADMIN' && m.id !== user?.id && m.role !== 'SUPER_ADMIN' && (
                           <button
                             type="button"
@@ -246,6 +268,7 @@ export default function TeamPage() {
           </div>
         )}
       </Card>
+      <ResetLinkDialog link={resetLink} onClose={() => setResetLink(null)} />
     </div>
   );
 }
