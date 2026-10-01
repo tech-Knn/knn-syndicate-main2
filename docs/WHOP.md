@@ -97,6 +97,7 @@ category is a compliance declaration, and a placement or bid strategy shapes del
 | Account | Ad account + page + pixel | A connected Whop business + a Facebook page of that business. No pixel to pick: Whop owns it |
 | Daily budget floor | $2.00 | **$5.00** to submit and launch (Whop refuses to launch below it: "Budget must be greater than or equal to 5.0", "Daily budget must be at least $5.00"; `WHOP_MIN_DAILY_BUDGET_CENTS`). A draft can still be saved from $1.00 (the draft schema's floor, for every network) |
 | Special ad categories | any | With a category Whop knows, every ad set must be age **18 to 65**: Whop refuses a narrowed range ("Special ad category campaigns must use minimum age 18 (cannot narrow age range)"). The wizard resets the ages when the category is ticked and flags it; submit refuses it |
+| Objective Sales | allowed | Whop refuses to optimize a Sales campaign for the ad click ("Conversion event 'SUBMIT_APPLICATION' is not valid for objective 'sales'"). Use Leads or Engagement (every Engagement campaign on staging launched with the ad click). The wizard flags it; submit and launch refuse it |
 | Test launch (PAUSED) | Yes | No: Whop checks a campaign when its ads are created |
 | Headline and primary text | Optional | Required |
 | Placements | All | Whop has no name for Facebook video feeds or the Messenger inbox: not offered (one already chosen is kept, marked and reported) |

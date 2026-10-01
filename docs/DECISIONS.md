@@ -1223,3 +1223,10 @@ with min age 20). Our wizard let a buyer enter $1.00 and any age, so the refusal
 Not changed: the **live** budget edit of a running Whop campaign (`updateWhopCampaignBudget`) still only refuses what cannot be a budget; Whop applies
 its own floor and the error says so. Campaigns already stuck need their budget or age fixed (Reopen -> edit -> submit), they do not repair themselves.
 
+**Amendment to D39 (same day): Sales cannot optimize for the ad click.** A third refusal: "Conversion event 'SUBMIT_APPLICATION' is not valid for objective
+'sales'" (valid there: purchase, add to cart, initiated checkout, add payment info, complete registration, content view, search, donate, start trial,
+subscribe). Our money event, the ad click, is a `submit_application`, so `whopLaunchProblems` now refuses an `OUTCOME_SALES` ad set whose optimized event is the
+ad click and tells the buyer to pick Leads or Engagement. Evidence the other objectives are fine: all 40 non-draft Whop campaigns on staging that
+reached Whop with the ad click used Engagement (12 live), and Leads is the default. A Sales campaign could optimize for add-to-cart or content view, but the
+wizard has no "Optimize for" picker yet (planned), so for now the answer is the objective.
+

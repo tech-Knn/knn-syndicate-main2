@@ -2,6 +2,8 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
+_Last updated: 2026-10-01 — **A third Whop refusal is now caught before launch: Sales + ad click (D39 amendment).** Whop will not optimize a Sales campaign for `submit_application`, our ad click. The shared `whopLaunchProblems` now refuses it (wizard hint under Objective, submit, launch) and says to pick Leads or Engagement. Deploy: web + api.
+
 _Last updated: 2026-10-01 — **Whop launch rules from real refusals (D39).** Whop refuses a daily budget under **$5.00** and a special-ad-category campaign whose age range is narrowed (it must be 18 to 65). The wizard let both through, which left seven campaigns stuck in PROCESSING on staging. Both rules are now in the shared `whopLaunchProblems`, so the wizard (budget hint and floor $5.00, ages reset when a category is ticked, flagged when narrowed), the submit gate and the launch all refuse them with Whop's own wording first. The stuck campaigns still need to be reopened, fixed and relaunched by their buyers. Live budget edits are unchanged. Deploy: web + api. DECISIONS D39.
 
 _Last updated: 2026-10-01 — **Whop click-time check: Whop's own preview link no longer counts as a real click (D38 amendment).** Whop's preview URLs carry `utm_meta_ad_id=123456789`; the first version accepted any 6-30 digit id. A real Meta ad id must now be 10-19 digits (real clicks: 18; Meta publishes no length, so it is loose on purpose). Still observe-only. Deploy: the redirect Worker.

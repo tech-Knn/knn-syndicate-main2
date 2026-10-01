@@ -172,6 +172,12 @@ export function whopLaunchProblems(campaign: WhopLaunchCampaign, adSets: readonl
     if ((set.bidStrategy === 'COST_CAP' || set.bidStrategy === 'LOWEST_COST_WITH_BID_CAP') && !(set.costCapCents && set.costCapCents > 0)) out.push(`The bid strategy needs a cost or bid cap amount${label}.`);
     if (set.dailyBudgetCents != null && set.dailyBudgetCents <= 0) out.push(`The daily budget must be above zero${label}.`);
     if (set.countries.length === 0) out.push(`Pick at least one country${label}.`);
+    // Whop: "Conversion event 'SUBMIT_APPLICATION' is not valid for objective 'sales'" (valid there: purchase, add to cart, content view,
+    // search, ...). The ad click, our money event, is a submit_application, so a Sales campaign cannot optimize for it. Leads and Engagement can
+    // (every Engagement campaign on staging launched with it).
+    if (campaign.objective === 'OUTCOME_SALES' && whopConversionEvent(set.pxeEvent) === WHOP_MAIN_CONVERSION_EVENT) {
+      out.push(`Whop does not accept optimizing for ad clicks on a Sales campaign: choose the Leads or Engagement objective${label}.`);
+    }
     if (campaign.specialAdCategories.some((c) => WHOP_SPECIAL_CATEGORY[c]) && (set.ageMin !== WHOP_SPECIAL_AGE_MIN || set.ageMax < WHOP_SPECIAL_AGE_MAX)) {
       out.push(`Whop does not let a special ad category campaign narrow the age range: set ${WHOP_SPECIAL_AGE_MIN} to ${WHOP_SPECIAL_AGE_MAX}${label}.`);
     }
