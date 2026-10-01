@@ -2,6 +2,7 @@ import type { TxClient } from '@knn/db';
 import { CAMPAIGN_STATUS, ROLES } from '@knn/shared';
 import { isWhopError } from '@knn/whop';
 import { writeAudit } from '../../lib/audit.js';
+import { requestChannelsForResumedCampaign } from '../../lib/channel-queue.js';
 import { AppError } from '../../lib/errors.js';
 import type { writeRedirectConfigs } from '../../lib/kv-sync.js';
 import { runScoped } from '../../lib/scope.js';
@@ -34,7 +35,7 @@ export async function setWhopCampaignActive(
   auth: AuthContext,
   campaignId: string,
   active: boolean,
-  deps: { writeRedirectConfigs: typeof writeRedirectConfigs },
+  deps: { writeRedirectConfigs: typeof writeRedirectConfigs; requestChannels?: (campaignId: string) => Promise<void> },
 ): Promise<{ id: string; status: string }> {
   const target = active ? CAMPAIGN_STATUS.ACTIVE : CAMPAIGN_STATUS.PAUSED;
   const campaign = await loadScoped(auth, (tx) =>
@@ -80,6 +81,9 @@ export async function setWhopCampaignActive(
   await syncCampaignRedirectConfigs(campaignId, deps).catch((e) =>
     console.warn(`[setWhopCampaignActive] edge KV resync failed for ${campaignId}: ${e instanceof Error ? e.message : String(e)}`),
   );
+  // The rollover took the channel of a campaign paused across midnight: ask for one back (after the sync above, so the
+  // worker's own edge write, which carries the channel, is the last one).
+  if (active) await (deps.requestChannels ?? requestChannelsForResumedCampaign)(campaignId);
   return updated;
 }
 

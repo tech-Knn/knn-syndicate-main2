@@ -492,6 +492,20 @@ describe('pause, resume and budgets of a live Whop campaign', () => {
     expect(lastConfigs()[0]!.config.active).toBe(true);
   });
 
+  it('resume asks for the campaign\'s channel back (a rollover takes a paused campaign\'s); pause does not', async () => {
+    const id = await makeCampaign();
+    await launchCampaign(auth(), id, deps());
+    const requestChannels = vi.fn(async (_id: string): Promise<void> => undefined);
+    const d = { writeRedirectConfigs: deps().writeRedirectConfigs, requestChannels };
+
+    await setCampaignActive(auth(), id, false, d);
+    expect(requestChannels).not.toHaveBeenCalled();
+
+    await setCampaignActive(auth(), id, true, d);
+    expect(requestChannels).toHaveBeenCalledTimes(1);
+    expect(requestChannels).toHaveBeenCalledWith(id);
+  });
+
   it('leaves our status alone when Whop refuses the pause (it must never say paused while Whop spends)', async () => {
     const id = await makeCampaign();
     await launchCampaign(auth(), id, deps());

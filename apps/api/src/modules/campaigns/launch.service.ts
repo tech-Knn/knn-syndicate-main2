@@ -26,6 +26,7 @@ import {
 import { CAMPAIGN_STATUS, ROLES, WEBSITE_DESTINATION_GOALS, campaignSubmitIssues, canTransitionCampaign, effectiveRac, goalRequiresPixel, pxeToCustomEventType } from '@knn/shared';
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
+import { requestChannelsForResumedCampaign } from '../../lib/channel-queue.js';
 import { KvNotConfiguredError, type RedirectConfigPayload, writeRedirectConfigs } from '../../lib/kv-sync.js';
 import { notify } from '../../lib/notify.js';
 import { runScoped } from '../../lib/scope.js';
@@ -285,7 +286,7 @@ export async function setCampaignActive(
   auth: AuthContext,
   campaignId: string,
   active: boolean,
-  deps: Pick<LaunchDeps, 'writeRedirectConfigs'> = { writeRedirectConfigs },
+  deps: Pick<LaunchDeps, 'writeRedirectConfigs' | 'requestChannels'> = { writeRedirectConfigs },
 ): Promise<{ id: string; status: string }> {
   if ((await campaignProvider(auth, campaignId)) === 'WHOP') return setWhopCampaignActive(auth, campaignId, active, deps);
   const target = active ? CAMPAIGN_STATUS.ACTIVE : CAMPAIGN_STATUS.PAUSED;
@@ -362,6 +363,8 @@ export async function setCampaignActive(
   await syncCampaignRedirectConfigs(campaignId, deps).catch((e) =>
     console.warn(`[setCampaignActive] edge KV resync failed for ${campaignId}:`, e instanceof Error ? e.message : String(e)),
   );
+  // The midnight rollover releases a paused campaign's channel; resume asks the worker for one back (see the Whop twin).
+  if (active) await (deps.requestChannels ?? requestChannelsForResumedCampaign)(campaignId);
   return updated;
 }
 
@@ -881,6 +884,8 @@ export interface LaunchDeps {
   sleep?: (ms: number) => Promise<void>;
   /** Test seam for the Whop launch: how a finished launch is saved. Unused by Facebook. */
   saveLaunched?: WhopLaunchDeps['saveLaunched'];
+  /** Test seam for resume: asks the worker to give the resumed campaign its channel(s) back. Defaults to the real queue. */
+  requestChannels?: (campaignId: string) => Promise<void>;
 }
 const defaultLaunchDeps: LaunchDeps = {
   generateArticle: (auth, id) => generateArticleForCampaign(auth, id),

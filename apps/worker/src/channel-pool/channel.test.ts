@@ -8,6 +8,7 @@ import {
   assignOfferChannels,
   processQueue,
   releaseChannelForCampaign,
+  restoreChannelsForActiveCampaigns,
   rolloverChannels,
   seedChannels,
 } from './channel.service.js';
@@ -376,5 +377,120 @@ describe('asking for a channel without queueing (reviving a stopped campaign)', 
     if (r.assigned) return;
     expect(await queueRow(id)).toBe(1);
     expect(await statusOf(id)).toBe('QUEUED_NO_CHANNEL');
+  });
+});
+
+describe('restoring channels for ACTIVE campaigns (resume after the midnight rollover)', () => {
+  const sweep = (): ReturnType<typeof restoreChannelsForActiveCampaigns> => restoreChannelsForActiveCampaigns({ orgId });
+  const statusOf = async (id: string): Promise<string | undefined> => (await withSystem((tx) => tx.campaign.findUnique({ where: { id }, select: { status: true } })))?.status;
+  const offerRefs = async (id: string): Promise<(string | null)[]> =>
+    (await withSystem((tx) => tx.offer.findMany({ where: { campaignId: id, kind: 'PAID' }, orderBy: { createdAt: 'asc' }, select: { channelRef: true } }))).map((o) => o.channelRef);
+
+  /** A campaign that held a channel, was paused, and had it released by the rollover; then came back ACTIVE. */
+  async function pausedAcrossMidnightThenResumed(): Promise<{ id: string; ref: string }> {
+    const id = await makeOfferCampaign([domA]);
+    const ref = (await assignForCampaign(id)).channelRefs![0]!;
+    await withSystem(async (tx) => {
+      await tx.campaign.update({ where: { id }, data: { status: 'PAUSED' } });
+      await tx.channel.update({ where: { id: ref }, data: { lockedForDay: '2000-01-01' } }); // held on an earlier day
+    });
+    await rolloverChannels(currentBusinessDay());
+    expect(await offerRefs(id)).toEqual([null]); // the premise: the rollover really took it
+    await withSystem((tx) => tx.campaign.update({ where: { id }, data: { status: 'ACTIVE' } })); // resumed
+    return { id, ref };
+  }
+
+  it('gives a resumed campaign a channel again, on its offer, with today\'s attribution span, and leaves it ACTIVE', async () => {
+    await makeDomainChannels(domA, 1);
+    const { id, ref } = await pausedAcrossMidnightThenResumed();
+
+    const r = await sweep();
+    expect(r.assigned).toEqual([id]);
+    expect(r.waiting).toEqual([]);
+    expect(await offerRefs(id)).toEqual([ref]);
+    expect(await statusOf(id)).toBe('ACTIVE'); // never PROCESSING, never queued
+    const ch = await withSystem((tx) => tx.channel.findUnique({ where: { id: ref }, select: { status: true, currentCampaignId: true, lockedForDay: true } }));
+    expect(ch).toMatchObject({ status: 'ASSIGNED', currentCampaignId: id, lockedForDay: currentBusinessDay() });
+    const span = await withSystem((tx) => tx.channelAssignment.findFirst({ where: { campaignId: id, channelRef: ref, releasedAt: null }, select: { forDay: true } }));
+    expect(span?.forDay).toBe(currentBusinessDay()); // today's revenue will be credited to it
+  });
+
+  it('is idempotent: a campaign that holds every channel is left alone, a second pass does nothing', async () => {
+    await makeDomainChannels(domA, 1);
+    const { id } = await pausedAcrossMidnightThenResumed();
+    expect((await sweep()).assigned).toEqual([id]);
+    const refs = await offerRefs(id);
+    const again = await sweep();
+    expect(again).toEqual({ assigned: [], waiting: [] });
+    expect(await offerRefs(id)).toEqual(refs);
+  });
+
+  it('on an empty pool leaves the ACTIVE campaign live and unqueued, reports it waiting, and serves it once a channel frees up', async () => {
+    const id = await makeOfferCampaign([domB]);
+    await withSystem((tx) => tx.campaign.update({ where: { id }, data: { status: 'ACTIVE' } }));
+    const first = await sweep();
+    if (first.assigned.includes(id)) return; // a concurrent suite left a global channel in the shared pool; the scenario does not apply
+    expect(first.waiting).toEqual([id]);
+    expect(await statusOf(id)).toBe('ACTIVE');
+    expect(await withSystem((tx) => tx.campaignQueue.count({ where: { campaignId: id } }))).toBe(0);
+    expect(await offerRefs(id)).toEqual([null]);
+
+    await makeDomainChannels(domB, 1);
+    const second = await sweep();
+    expect(second.assigned).toEqual([id]);
+    expect((await offerRefs(id))[0]).not.toBeNull();
+    expect(await statusOf(id)).toBe('ACTIVE');
+  });
+
+  it('fills only the offers that lack a channel, and keeps the one it has', async () => {
+    await makeDomainChannels(domA, 1);
+    await makeDomainChannels(domB, 1);
+    const id = await makeOfferCampaign([domA, domB]);
+    const [first] = (await assignForCampaign(id)).channelRefs!;
+    // One offer lost its channel (e.g. released by hand), the other still holds its own.
+    const lost = await withSystem(async (tx) => {
+      const offers = await tx.offer.findMany({ where: { campaignId: id }, orderBy: { createdAt: 'asc' } });
+      const victim = offers.find((o) => o.channelRef === first)!;
+      await tx.channel.update({ where: { id: first! }, data: { status: 'AVAILABLE', currentCampaignId: null, assignedAt: null, lockedForDay: '2000-01-01' } });
+      await tx.channelAssignment.updateMany({ where: { channelRef: first!, releasedAt: null }, data: { releasedAt: new Date() } });
+      await tx.offer.update({ where: { id: victim.id }, data: { channelRef: null } });
+      await tx.campaign.update({ where: { id }, data: { status: 'ACTIVE' } });
+      return victim.id;
+    });
+    const keptRef = (await withSystem((tx) => tx.offer.findMany({ where: { campaignId: id, id: { not: lost } }, select: { channelRef: true } })))[0]!.channelRef;
+
+    expect((await sweep()).assigned).toEqual([id]);
+    const offers = await withSystem((tx) => tx.offer.findMany({ where: { campaignId: id }, select: { id: true, channelRef: true } }));
+    expect(offers.every((o) => o.channelRef != null)).toBe(true);
+    expect(offers.find((o) => o.id !== lost)!.channelRef).toBe(keptRef); // untouched
+  });
+
+  it('does not touch campaigns that are not ACTIVE (paused, rejected, still processing)', async () => {
+    await makeDomainChannels(domA, 3);
+    const ids: string[] = [];
+    for (const status of ['PAUSED', 'META_REJECTED', 'PROCESSING', 'ARCHIVED']) {
+      const id = await makeOfferCampaign([domA]);
+      await withSystem((tx) => tx.campaign.update({ where: { id }, data: { status: status as never } }));
+      ids.push(id);
+    }
+    expect(await sweep()).toEqual({ assigned: [], waiting: [] });
+    for (const id of ids) expect(await offerRefs(id)).toEqual([null]);
+    expect(await withSystem((tx) => tx.channel.count({ where: { domainId: domA, status: 'ASSIGNED' } }))).toBe(0);
+  });
+
+  it('respects the same-day cooldown: a channel used earlier today is not handed to a different campaign today', async () => {
+    await makeDomainChannels(domA, 1);
+    const earlier = await makeOfferCampaign([domA]);
+    const ref = (await assignForCampaign(earlier)).channelRefs![0]!;
+    await releaseChannelForCampaign(earlier); // freed mid-day: locked for today
+    const id = await makeOfferCampaign([domA]);
+    await withSystem((tx) => tx.campaign.update({ where: { id }, data: { status: 'ACTIVE' } }));
+
+    const r = await sweep();
+    if (r.assigned.includes(id)) {
+      expect(await offerRefs(id)).not.toContain(ref); // only possible through a global channel, never the cooled-down one
+    } else {
+      expect(r.waiting).toEqual([id]);
+    }
   });
 });

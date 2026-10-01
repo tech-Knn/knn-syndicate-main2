@@ -24,6 +24,12 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
   trailing days, so never credit a report day to whoever holds the channel now (an earlier version did: a new campaign
   showed the channel's previous week as its own earnings, and those days were counted twice). A day nobody held writes no
   row; the pull also deletes per-offer rows for that channel and day that belong to a different campaign.
+- **Resume gets the channel back (D34, `restoreChannelsForActiveCampaigns`):** the midnight rollover releases PAUSED campaigns'
+  channels, so a campaign resumed afterwards has none. The API's resume enqueues `rebalance`, and the 30-minute
+  `META_REJECTION_CHECK` job ends with this sweep (after both reconciles, so a resume mirrored from Whop / Meta is seen):
+  every `ACTIVE` campaign with a PAID offer lacking `channelRef` gets one via `assignOfferChannels(id, { queue: false })`, then
+  its edge config is re-published (`resyncOffersToKv`). Never queue or re-status a live campaign: an empty pool leaves it
+  `ACTIVE` and it is retried next pass. Tests pass `{ orgId }` to scope the sweep (shared DB); production sweeps everyone.
 - **Storage is DAILY, not the plan's `ad_stats_hourly`** — attribution + AFS reporting are daily and
   FB's hourly breakdown is timezone-fragile; the cron PULLS hourly to keep "today" fresh. Day key =
   IST business day (FB uses the ad-account tz; OPEN_QUESTIONS #14).
