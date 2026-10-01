@@ -64,6 +64,21 @@ export interface WhopLaunchAd {
   cta: string;
 }
 
+/**
+ * Whop's smallest daily budget, in USD cents, for a campaign (budget optimization on) or for an ad group (off). Whop refuses to launch below it
+ * ("Budget must be greater than or equal to 5.0", "Daily budget must be at least $5.00"), so we say so while the buyer is still building.
+ * The draft schema still accepts $1.00 so a half-built draft can be saved.
+ */
+export const WHOP_MIN_DAILY_BUDGET_CENTS = 500;
+
+/**
+ * Whop does not let a campaign with a special ad category narrow its audience's age: the range must be 18 to 65 (the top of our scale,
+ * which Meta reads as "65+"). Whop says: "Special ad category campaigns must use minimum age 18 (cannot narrow age range)". Gender is not
+ * checked here: Whop has not complained about it.
+ */
+export const WHOP_SPECIAL_AGE_MIN = 18;
+export const WHOP_SPECIAL_AGE_MAX = 65;
+
 /** Our objective → Whop's. Facebook's APP_PROMOTION has no Whop equivalent. */
 export const WHOP_OBJECTIVE: Readonly<Record<string, WhopObjectiveName | undefined>> = {
   OUTCOME_LEADS: 'leads',
@@ -157,8 +172,21 @@ export function whopLaunchProblems(campaign: WhopLaunchCampaign, adSets: readonl
     if ((set.bidStrategy === 'COST_CAP' || set.bidStrategy === 'LOWEST_COST_WITH_BID_CAP') && !(set.costCapCents && set.costCapCents > 0)) out.push(`The bid strategy needs a cost or bid cap amount${label}.`);
     if (set.dailyBudgetCents != null && set.dailyBudgetCents <= 0) out.push(`The daily budget must be above zero${label}.`);
     if (set.countries.length === 0) out.push(`Pick at least one country${label}.`);
+    if (campaign.specialAdCategories.some((c) => WHOP_SPECIAL_CATEGORY[c]) && (set.ageMin !== WHOP_SPECIAL_AGE_MIN || set.ageMax < WHOP_SPECIAL_AGE_MAX)) {
+      out.push(`Whop does not let a special ad category campaign narrow the age range: set ${WHOP_SPECIAL_AGE_MIN} to ${WHOP_SPECIAL_AGE_MAX}${label}.`);
+    }
   }
-  if (campaign.budgetMode === 'CAMPAIGN' && !(campaign.dailyBudgetCents && campaign.dailyBudgetCents > 0)) out.push('Set a daily budget for the campaign.');
-  if (campaign.budgetMode === 'AD_SET') for (const set of adSets) if (!(set.dailyBudgetCents && set.dailyBudgetCents > 0)) out.push(`Set a daily budget${adSets.length > 1 ? ` for ad set "${set.name}"` : ''}.`);
+  const floor = `$${(WHOP_MIN_DAILY_BUDGET_CENTS / 100).toFixed(2)}`;
+  if (campaign.budgetMode === 'CAMPAIGN') {
+    if (!(campaign.dailyBudgetCents && campaign.dailyBudgetCents > 0)) out.push('Set a daily budget for the campaign.');
+    else if (campaign.dailyBudgetCents < WHOP_MIN_DAILY_BUDGET_CENTS) out.push(`Whop's minimum daily budget is ${floor}: raise the campaign budget.`);
+  }
+  if (campaign.budgetMode === 'AD_SET') {
+    for (const set of adSets) {
+      const label = adSets.length > 1 ? ` for ad set "${set.name}"` : '';
+      if (!(set.dailyBudgetCents && set.dailyBudgetCents > 0)) out.push(`Set a daily budget${label}.`);
+      else if (set.dailyBudgetCents < WHOP_MIN_DAILY_BUDGET_CENTS) out.push(`Whop's minimum daily budget is ${floor}: raise the budget${label}.`);
+    }
+  }
   return out;
 }

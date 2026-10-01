@@ -40,6 +40,9 @@ import {
   isValidPerformanceGoal,
   racValueIssues,
   rcBlockedMessage,
+  WHOP_MIN_DAILY_BUDGET_CENTS,
+  WHOP_SPECIAL_AGE_MAX,
+  WHOP_SPECIAL_AGE_MIN,
   whopLaunchProblems,
   whopUnsupportedProblems,
 } from '@knn/shared';
@@ -364,15 +367,24 @@ function toDraft(form: CampaignForm, tz: string): CampaignDraftInput {
 }
 
 /**
- * The smallest daily budget we let through, in cents. Facebook's floor is $2.00. A Whop campaign has no Facebook floor, but
- * the draft schema (the same one Save draft runs through on the API) refuses anything under $1.00 for every network, so that
- * is the floor here: a figure below it would pass the wizard and then fail the save with a bare "Validation failed". Whop
- * states its own minimum at launch and the launch shows what it says when it is higher.
+ * The smallest daily budget a DRAFT may be saved with, in cents. Facebook's floor is $2.00. The draft schema (the one Save draft
+ * runs through on the API) refuses anything under $1.00 for every network, so that is the floor for a Whop draft: a figure below
+ * it would pass the wizard and then fail the save with a bare "Validation failed".
  */
 const minBudgetCents = (form: CampaignForm): number => (form.adProvider === 'WHOP' ? 100 : 200);
 const minBudgetText = (form: CampaignForm): string => (form.adProvider === 'WHOP' ? '$1.00' : '$2.00');
+/**
+ * The smallest daily budget a campaign may be SUBMITTED / LAUNCHED with. Facebook: the same $2.00. Whop: its own $5.00 floor
+ * (it refuses to launch below it, which left five campaigns stuck on 2026-10-01), so the step check says so before the buyer submits.
+ */
+const launchMinBudgetCents = (form: CampaignForm): number => (form.adProvider === 'WHOP' ? WHOP_MIN_DAILY_BUDGET_CENTS : 200);
+const launchMinBudgetText = (form: CampaignForm): string => `$${(launchMinBudgetCents(form) / 100).toFixed(2)}`;
 const budgetHint = (form: CampaignForm): string =>
-  form.adProvider === 'WHOP' ? '$1.00 daily minimum here. Whop applies its own and tells you at launch if it is higher.' : '$2.00 daily minimum (Facebook).';
+  form.adProvider === 'WHOP' ? `${launchMinBudgetText(form)} daily minimum (Whop refuses to launch below it).` : '$2.00 daily minimum (Facebook).';
+
+/** A Whop campaign with a special ad category cannot narrow its audience's age (Whop refuses to launch it): 18 to 65 only. */
+const whopAgeLocked = (form: CampaignForm): boolean => form.adProvider === 'WHOP' && form.specialAdCategories.some((c) => Boolean(WHOP_SPECIAL_CATEGORY[c]));
+const WHOP_AGE_RULE_TEXT = `Whop does not let a special ad category campaign narrow the age range: set ${WHOP_SPECIAL_AGE_MIN} to ${WHOP_SPECIAL_AGE_MAX}.`;
 
 /**
  * Mandatory-field errors for ONE wizard step. Surfaced inline (banner) when the buyer clicks Next,
@@ -385,7 +397,7 @@ function stepErrorsFor(step: number, form: CampaignForm, offers: OfferDraft[]): 
     if (!form.name.trim()) e.push('Campaign name is required.');
     if (form.budgetMode === 'CAMPAIGN') {
       const c = centsOrUndef(form.dailyBudget);
-      if (c === undefined || c < minBudgetCents(form)) e.push(`Campaign daily budget must be at least ${minBudgetText(form)}.`);
+      if (c === undefined || c < launchMinBudgetCents(form)) e.push(`Campaign daily budget must be at least ${launchMinBudgetText(form)}.`);
     }
     if (whop) {
       if (!form.whopConnectionId) e.push('Select a Whop business.');
@@ -400,9 +412,10 @@ function stepErrorsFor(step: number, form: CampaignForm, offers: OfferDraft[]): 
       if (!s.name.trim()) e.push(`Ad set ${i + 1}: name is required.`);
       if (form.budgetMode === 'AD_SET') {
         const c = centsOrUndef(s.dailyBudget);
-        if (c === undefined || c < minBudgetCents(form)) e.push(`Ad set ${i + 1}: daily budget must be at least ${minBudgetText(form)}.`);
+        if (c === undefined || c < launchMinBudgetCents(form)) e.push(`Ad set ${i + 1}: daily budget must be at least ${launchMinBudgetText(form)}.`);
       }
       if (s.ageMax < s.ageMin) e.push(`Ad set ${i + 1}: max age must be ≥ min age.`);
+      if (whopAgeLocked(form) && (s.ageMin !== WHOP_SPECIAL_AGE_MIN || s.ageMax < WHOP_SPECIAL_AGE_MAX)) e.push(`Ad set ${i + 1}: ${WHOP_AGE_RULE_TEXT}`);
       if (s.countries.length === 0) e.push(`Ad set ${i + 1}: select at least one target country.`);
     });
   }
@@ -1261,7 +1274,7 @@ function OfferStep({
         {form.budgetMode === 'CAMPAIGN' && (
           <div className={styles.field}>
             <label className={styles.label} htmlFor={fid('cbo-budget')}>Campaign daily budget (USD)<Req /></label>
-            <input id={fid('cbo-budget')} className={styles.input} type="number" min={whop ? '1' : '2'} step={whop ? '0.01' : '1'} value={form.dailyBudget} onChange={(e) => patch({ dailyBudget: e.target.value })} aria-describedby={fid('cbo-budget-hint')} />
+            <input id={fid('cbo-budget')} className={styles.input} type="number" min={whop ? '5' : '2'} step={whop ? '0.01' : '1'} value={form.dailyBudget} onChange={(e) => patch({ dailyBudget: e.target.value })} aria-describedby={fid('cbo-budget-hint')} />
             <span id={fid('cbo-budget-hint')} className={styles.hint}>{budgetHint(form)}</span>
           </div>
         )}
@@ -1274,7 +1287,12 @@ function OfferStep({
               label: `${c.replace(/_/g, ' ').toLowerCase()}${whop && !WHOP_SPECIAL_CATEGORY[c] ? ' (not on Whop)' : ''}`,
             }))}
             selected={form.specialAdCategories}
-            onToggle={(v) => patch({ specialAdCategories: toggle(form.specialAdCategories, v) })}
+            onToggle={(v) => {
+              const next = toggle(form.specialAdCategories, v);
+              // On Whop a special category forbids narrowing the age range: put every ad set back to 18-65 instead of letting it fail at launch.
+              const lock = whop && next.some((c) => Boolean(WHOP_SPECIAL_CATEGORY[c]));
+              patch({ specialAdCategories: next, ...(lock ? { adSets: form.adSets.map((a) => ({ ...a, ageMin: WHOP_SPECIAL_AGE_MIN, ageMax: WHOP_SPECIAL_AGE_MAX })) } : {}) });
+            }}
             onClear={() => patch({ specialAdCategories: [] })}
             allLabel="None"
           />
@@ -1609,7 +1627,7 @@ function AdSetsStep({
             {!cbo && (
               <div className={styles.field}>
                 <label className={styles.label} htmlFor={`${set.key}-budget`}>Daily budget (USD)<Req /></label>
-                <input id={`${set.key}-budget`} className={styles.input} type="number" min={whop ? '1' : '2'} step={whop ? '0.01' : '1'} value={set.dailyBudget} onChange={(e) => patchAdSet(set.key, { dailyBudget: e.target.value })} aria-describedby={`${set.key}-budget-hint`} />
+                <input id={`${set.key}-budget`} className={styles.input} type="number" min={whop ? '5' : '2'} step={whop ? '0.01' : '1'} value={set.dailyBudget} onChange={(e) => patchAdSet(set.key, { dailyBudget: e.target.value })} aria-describedby={`${set.key}-budget-hint`} />
                 <span id={`${set.key}-budget-hint`} className={styles.hint}>{budgetHint(form)}</span>
               </div>
             )}
@@ -1643,6 +1661,13 @@ function AdSetsStep({
                 <label className={styles.label} htmlFor={`${set.key}-agemax`}>Age max</label>
                 <input id={`${set.key}-agemax`} className={styles.input} type="number" min={AGE_BOUND_MIN} max={AGE_BOUND_MAX} value={set.ageMax} onChange={(e) => patchAdSet(set.key, { ageMax: Number(e.target.value) })} />
               </div>
+              {whopAgeLocked(form) && (
+                <div className={`${styles.field} ${styles.full}`}>
+                  <span className={styles.hint} role={set.ageMin !== WHOP_SPECIAL_AGE_MIN || set.ageMax < WHOP_SPECIAL_AGE_MAX ? 'alert' : undefined} style={set.ageMin !== WHOP_SPECIAL_AGE_MIN || set.ageMax < WHOP_SPECIAL_AGE_MAX ? { color: 'var(--red-text)' } : undefined}>
+                    {WHOP_AGE_RULE_TEXT}
+                  </span>
+                </div>
+              )}
               <div className={styles.field}>
                 <span className={styles.label}>Gender</span>
                 <ChipGroup ariaLabel="Gender" options={GENDERS.map((g) => ({ value: g, label: g[0]!.toUpperCase() + g.slice(1) }))} selected={set.genders} onToggle={(g) => patchAdSet(set.key, { genders: toggle(set.genders, g) })} onClear={() => patchAdSet(set.key, { genders: [] })} allLabel="All" />
@@ -1969,7 +1994,7 @@ function ReviewStep({ form, accounts, pages, connections, whopOn, offers, issues
   // Pre-launch readiness — the things the ad network checks at launch, surfaced up front.
   const checks: { label: string; ok: boolean }[] = whop
     ? [
-        { label: `Daily budget set (have ${MONEY(budget)})`, ok: budget >= minBudgetCents(form) },
+        { label: `Daily budget set (have ${MONEY(budget)})`, ok: budget >= launchMinBudgetCents(form) },
         { label: 'Whop business selected', ok: businessSelected },
         // Only when the business is one the viewer can see (an admin reviewing a buyer's campaign cannot, and is told nothing wrong).
         ...(connection ? [{ label: 'Whop connection working', ok: connection.status !== 'BROKEN' }] : []),

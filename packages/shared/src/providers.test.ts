@@ -80,8 +80,11 @@ describe('campaignSubmitIssues for a Whop campaign', () => {
     expect(issues.join(' ')).not.toMatch(/ad account|pixel|\$2\.00|Facebook minimum/);
   });
 
-  it('has no $2.00 Facebook floor: Whop enforces its own at launch', () => {
-    expect(campaignSubmitIssues(whop({}, {}, { dailyBudgetCents: 150 }))).toEqual([]);
+  it('has no $2.00 Facebook floor: Whop\'s own floor is $5.00, and submit refuses anything under it', () => {
+    expect(campaignSubmitIssues(whop({}, {}, { dailyBudgetCents: 500 }))).toEqual([]);
+    const under = campaignSubmitIssues(whop({}, {}, { dailyBudgetCents: 150 })).join(' ');
+    expect(under).toContain("Whop's minimum daily budget is $5.00");
+    expect(under).not.toMatch(/\$2\.00|Facebook minimum/);
   });
 
   it('requires a creative, a headline and primary text on every ad (Whop\'s copy is not optional)', () => {
