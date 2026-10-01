@@ -30,6 +30,12 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
   every `ACTIVE` campaign with a PAID offer lacking `channelRef` gets one via `assignOfferChannels(id, { queue: false })`, then
   its edge config is re-published (`resyncOffersToKv`). Never queue or re-status a live campaign: an empty pool leaves it
   `ACTIVE` and it is retried next pass. Tests pass `{ orgId }` to scope the sweep (shared DB); production sweeps everyone.
+- **Facebook days are IST days (D35, `src/attribution/fb-day-buckets.ts`):** Facebook labels insights days in the AD ACCOUNT's
+  timezone, ours are IST. `ReadAuth.timezone` decides: an IST-clock account uses the daily read as before; any other account is
+  read with the `hour` breakdown over the window widened by one account-day each side (capped at the account's own today),
+  each hour placed at its real instant (`zonedInstantUtc`) and summed into its IST day, days outside the window dropped. The same
+  hourly rows feed the hour drill-down (ad account time). Never key a Facebook row on `date_start` for a non-IST account. Whop
+  needs nothing: its reads carry an explicit IST window and `time_zone`.
 - **Storage is DAILY, not the plan's `ad_stats_hourly`** — attribution + AFS reporting are daily and
   FB's hourly breakdown is timezone-fragile; the cron PULLS hourly to keep "today" fresh. Day key =
   IST business day (FB uses the ad-account tz; OPEN_QUESTIONS #14).

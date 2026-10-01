@@ -9,12 +9,15 @@ import {
   FINALIZATION,
   allocateCampaignRevenue,
   applyRevenueCut,
+  addBusinessDays,
   businessDay,
+  sharesBusinessClock,
   timeZoneOffsetMs,
   toUsdMinor,
   zonedStartOfDayUtc,
 } from '@knn/shared';
 import { liveAdsenseFetch } from './adsense-source.js';
+import { rebucketHourlyToBusinessDays } from './fb-day-buckets.js';
 import { type WhopStatsDeps, pullWhopStats } from './whop-stats.js';
 import { ensureFxRatesForDays, getUsdRate } from './fx.service.js';
 
@@ -127,14 +130,45 @@ async function pullFbStatsForCampaign(
       }
     };
 
-    const rows: FbAdInsightRow[] = await fetchOrDegrade({
-      fbCampaignId: campaign.fbCampaignId,
-      accountId: auth.fbAccountId,
-      accessToken: auth.token,
-      appKind: auth.appKind,
-      since,
-      until,
-    });
+    // Facebook labels its days in the AD ACCOUNT's timezone; ours are IST days. On an IST-clock account the two are the same
+    // and the daily rows are used as they come. On any other account (each buyer brings their own) Facebook's hourly rows are
+    // placed at their real instants and summed into IST days, so spend lands on the same day as that day's AdSense revenue.
+    // The range is widened by one account-day each side so the IST days at the edge of the window are complete, but never past
+    // the account's own today (Facebook has no hours there yet).
+    let hourlyRows: FbAdInsightRow[] | null = null;
+    let rows: FbAdInsightRow[];
+    if (sharesBusinessClock(auth.timezone)) {
+      rows = await fetchOrDegrade({
+        fbCampaignId: campaign.fbCampaignId,
+        accountId: auth.fbAccountId,
+        accessToken: auth.token,
+        appKind: auth.appKind,
+        since,
+        until,
+      });
+    } else {
+      const from = addBusinessDays(since, -1);
+      const accountToday = businessDay(new Date(), auth.timezone);
+      const wideUntil = addBusinessDays(until, 1);
+      const to = wideUntil > accountToday ? accountToday : wideUntil;
+      hourlyRows =
+        from > to
+          ? []
+          : await fetchOrDegrade({
+              fbCampaignId: campaign.fbCampaignId,
+              accountId: auth.fbAccountId,
+              accessToken: auth.token,
+              appKind: auth.appKind,
+              since: from,
+              until: to,
+              breakdown: 'hour',
+            });
+      const rebucketed = rebucketHourlyToBusinessDays(hourlyRows, auth.timezone, { since, until });
+      if (rebucketed.skipped > 0) {
+        console.error(`[attribution] ${rebucketed.skipped} hourly rows of campaign ${campaign.id} had an unreadable hour label and were left out`);
+      }
+      rows = rebucketed.rows;
+    }
 
     let n = 0;
     for (const row of rows) {
@@ -172,15 +206,19 @@ async function pullFbStatsForCampaign(
     // never affects the core cost/revenue attribution above.
     for (const dim of ['country', 'hour'] as const) {
       try {
-        const dimRows = await fetchOrDegrade({
-          fbCampaignId: campaign.fbCampaignId,
-          accountId: auth.fbAccountId,
-          accessToken: auth.token,
-          appKind: auth.appKind,
-          since,
-          until,
-          breakdown: dim,
-        });
+        // The hour drill-down is shown in ad account time, which is exactly what the hourly pull above already holds.
+        const dimRows =
+          dim === 'hour' && hourlyRows
+            ? hourlyRows
+            : await fetchOrDegrade({
+                fbCampaignId: campaign.fbCampaignId,
+                accountId: auth.fbAccountId,
+                accessToken: auth.token,
+                appKind: auth.appKind,
+                since,
+                until,
+                breakdown: dim,
+              });
         for (const row of dimRows) {
           const adId = adByFbId.get(row.fbAdId);
           if (!adId || !row.dimValue) continue;

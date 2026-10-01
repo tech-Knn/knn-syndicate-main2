@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma, withSystem } from '@knn/db';
-import { encryptToken, type FbAdInsightRow } from '@knn/fb';
+import { encryptToken, type FbAdInsightRow, type FetchAdInsightsParams } from '@knn/fb';
 import type { ChannelDayRevenue } from '@knn/adsense';
 import { ROLES, USER_STATUS } from '@knn/shared';
 import {
@@ -41,6 +41,8 @@ interface Seeded {
 async function seedCampaign(opts: {
   day?: string;
   currency?: string;
+  /** The ad account's reporting timezone (Facebook labels its days in it). Default IST. */
+  timezone?: string;
   adCount: number;
   buyerCut?: number | null;
 }): Promise<Seeded> {
@@ -51,7 +53,7 @@ async function seedCampaign(opts: {
       await tx.user.update({ where: { id: buyerId }, data: { revenueCutPct: opts.buyerCut } });
     }
     const account = await tx.fbAdAccount.create({
-      data: { orgId, connectionId: connId, fbAccountId: `act_${chCounter}`, name: 'Acct', currency, timezone: 'Asia/Kolkata', status: '1' },
+      data: { orgId, connectionId: connId, fbAccountId: `act_${chCounter}`, name: 'Acct', currency, timezone: opts.timezone ?? 'Asia/Kolkata', status: '1' },
     });
     const channelCh = `ch-${suffix}-${chCounter++}`;
     const channel = await tx.channel.create({ data: { channelId: channelCh, status: 'ASSIGNED' } });
@@ -437,5 +439,80 @@ describe('recentDays', () => {
   it('returns the trailing window inclusive of the end day, in order', () => {
     expect(recentDays('2026-05-20', 3)).toEqual(['2026-05-18', '2026-05-19', '2026-05-20']);
     expect(recentDays('2026-03-01', 2)).toEqual(['2026-02-28', '2026-03-01']);
+  });
+});
+
+describe('attribution — Facebook days are IST days whatever timezone the buyer\'s ad account is in', () => {
+  const hourLabel = (h: number): string => `${String(h).padStart(2, '0')}:00:00 - ${String(h).padStart(2, '0')}:59:59`;
+  const stats = (seed: Seeded) => withSystem((tx) => tx.adStatsDaily.findMany({ where: { campaignId: seed.campaignId }, orderBy: { day: 'asc' } }));
+
+  /** A fetcher that records every call and answers the hourly breakdown from `hourly` (nothing else has data). */
+  function recordingFetch(adId: string, hourly: { day: string; hour: number; spendMinor: number }[]): { calls: FetchAdInsightsParams[]; fetchInsights: AttributionDeps['fetchInsights'] } {
+    const calls: FetchAdInsightsParams[] = [];
+    return {
+      calls,
+      fetchInsights: async (params): Promise<FbAdInsightRow[]> => {
+        calls.push(params);
+        if (params.breakdown !== 'hour') return [];
+        return hourly.map((h) => ({ fbAdId: adId, day: h.day, impressions: 10, clicks: 2, conversions: 1, spendMinor: h.spendMinor, dimValue: hourLabel(h.hour) }));
+      },
+    };
+  }
+
+  it('a Los Angeles account: its hours are summed into the IST day they really fall in, on the day AdSense credits', async () => {
+    const seed = await seedCampaign({ adCount: 1, timezone: 'America/Los_Angeles' });
+    const adId = seed.ads[0]!.fbAdId;
+    // DAY = 2026-05-20 (IST) = 18:30 UTC May 19 .. 18:30 UTC May 20 = Los Angeles (PDT, UTC-7) May 19 11:30 .. May 20 11:30.
+    const rec = recordingFetch(adId, [
+      { day: '2026-05-19', hour: 10, spendMinor: 999 }, // 22:30 IST May 19: another IST day
+      { day: '2026-05-19', hour: 12, spendMinor: 300 }, // 00:30 IST May 20
+      { day: '2026-05-20', hour: 11, spendMinor: 200 }, // 23:30 IST May 20
+      { day: '2026-05-20', hour: 12, spendMinor: 888 }, // 00:30 IST May 21: another IST day
+    ]);
+    await runAttribution([DAY], {
+      fetchInsights: rec.fetchInsights,
+      fetchAdsense: async (): Promise<ChannelDayRevenue[]> => [{ channelId: seed.channelCh, day: DAY, revenueMinor: 1000, currency: 'USD', afsClicks: 20 }],
+      getRate: getUsdRate,
+    });
+
+    const rows = await stats(seed);
+    expect(rows.map((r) => [r.day, r.spendMinor])).toEqual([[DAY, 500]]); // 300 + 200: only this IST day, and the other days' hours dropped
+    const revRows = await withSystem((tx) => tx.adRevenueDaily.findMany({ where: { campaignId: seed.campaignId } }));
+    expect(revRows.map((r) => r.day)).toEqual([DAY]); // spend and revenue are on the SAME day
+
+    // One widened hourly read replaced the daily read (one account-day either side of the IST window); the hour table reuses it.
+    const hourCalls = rec.calls.filter((c) => c.breakdown === 'hour');
+    expect(hourCalls).toHaveLength(1);
+    expect(hourCalls[0]).toMatchObject({ since: '2026-05-19', until: '2026-05-21' });
+    expect(rec.calls.filter((c) => c.breakdown === undefined)).toHaveLength(0);
+    const dim = await withSystem((tx) => tx.adStatDimDaily.findMany({ where: { campaignId: seed.campaignId, dim: 'hour' } }));
+    expect(dim.length).toBeGreaterThan(0);
+  });
+
+  it('is idempotent: pulling the same window again does not double the spend', async () => {
+    const seed = await seedCampaign({ adCount: 1, timezone: 'America/New_York' });
+    const rec = recordingFetch(seed.ads[0]!.fbAdId, [
+      { day: '2026-05-20', hour: 3, spendMinor: 120 }, // 07:00 UTC = 12:30 IST May 20
+      { day: '2026-05-20', hour: 4, spendMinor: 80 },
+    ]);
+    const deps: AttributionDeps = { fetchInsights: rec.fetchInsights, getRate: getUsdRate };
+    await runAttribution([DAY], deps);
+    await runAttribution([DAY], deps);
+    expect((await stats(seed)).map((r) => [r.day, r.spendMinor])).toEqual([[DAY, 200]]);
+  });
+
+  it('an IST-clock account (Asia/Calcutta is IST) keeps the plain daily read', async () => {
+    const seed = await seedCampaign({ adCount: 1, timezone: 'Asia/Calcutta' });
+    const calls: FetchAdInsightsParams[] = [];
+    await runAttribution([DAY], {
+      fetchInsights: async (params): Promise<FbAdInsightRow[]> => {
+        calls.push(params);
+        return params.breakdown ? [] : [{ fbAdId: seed.ads[0]!.fbAdId, day: DAY, impressions: 10, clicks: 2, conversions: 1, spendMinor: 700 }];
+      },
+      getRate: getUsdRate,
+    });
+    expect(calls.filter((c) => c.breakdown === undefined)).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ since: DAY, until: DAY });
+    expect((await stats(seed)).map((r) => [r.day, r.spendMinor])).toEqual([[DAY, 700]]);
   });
 });

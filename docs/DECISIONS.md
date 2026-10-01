@@ -1138,3 +1138,18 @@ Clicks in that gap carry no channel; the sweep (at most 30 minutes) bounds it wh
 **Not changed:** channels are still released at rollover for PAUSED, `META_REJECTED`, etc.; a same-day pause/resume keeps its
 channel (the release only happens at midnight).
 
+### 2026-10-01 — D35: every buyer's data is in IST days, whatever timezone their ad account or Whop account uses
+
+**Requirement (Aman):** many buyers, each with their own timezone settings on Meta and Whop; the numbers in our tool must be IST-perfect regardless.
+
+**Audit (what decides a "day" at each source):**
+- **Whop** — already independent of the buyer. Every spend read sends an explicit window (`stats_from` / `stats_to` = the IST day's bounds as UTC instants) and `time_zone=Asia/Kolkata`. The account timezone setting in Whop's dashboard only changes what Whop's own screens show, its daily-budget reset and the times typed into its own scheduler. Our scheduled start/end times are exact instants.
+- **AdSense** — one platform account; its report days are IST-like (checked earlier), the same for every buyer.
+- **Facebook** — was NOT independent: insights days are labelled in the ad account's timezone (open question #14). With buyers on other zones, spend landed on the wrong day against that day's revenue (a Los Angeles "Sept 30" is 12:30 IST Sept 30 to 12:30 IST Oct 1).
+
+**Decision.** `ReadAuth` now carries the ad account's timezone. If it keeps IST's clock all year (`sharesBusinessClock`: IST and its `Asia/Calcutta` alias) the daily read is unchanged. Otherwise the pull asks Facebook for the **hourly** breakdown over the IST window widened by one account-day each side (never past the account's own today), places each hour at its real instant (`zonedInstantUtc`, DST-safe) and sums it into the IST day it falls in (`rebucketHourlyToBusinessDays`); days outside the window are dropped. The same rows feed the Analytics hour drill-down (shown in ad account time, as labelled), so there is no extra call. Cost: the hourly read is up to 24x the rows of the daily one, only for non-IST accounts, still through the per-account rate limiter.
+
+**Not covered:** the Analytics country drill-down for a non-IST account is still labelled in account days (display only; it never feeds spend, revenue or ROI). Unreadable hour labels are skipped and logged, never guessed.
+
+**Unverified against live Facebook:** staging has no launched campaign on a non-IST account. The hourly call is the same request the existing hour drill-down already makes for IST accounts; the re-bucketing is proven by unit and integration tests (including a conservation test and a DST test), not by a live non-IST account.
+
