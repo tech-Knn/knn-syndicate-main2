@@ -11,6 +11,7 @@ import {
   processQueue,
   rebalanceOfferChannels,
   releaseChannelForCampaign,
+  restoreChannelsForActiveCampaigns,
   rolloverChannels,
 } from './channel-pool/channel.service.js';
 import { sweepDomainHealth } from './jobs/domain-health.js';
@@ -176,9 +177,20 @@ async function main(): Promise<void> {
         console.error('[worker] Whop reconcile failed:', err instanceof Error ? err.message : String(err));
         return { error: err instanceof Error ? err.message : String(err) };
       });
+      // A campaign resumed (by us, or in the network's own dashboard and mirrored above) after the midnight rollover took
+      // its channel gets one again here, then its edge config is re-published so the redirect carries it.
+      const channels = await restoreChannelsForActiveCampaigns().catch((err: unknown) => {
+        console.error('[worker] channel restore failed:', err instanceof Error ? err.message : String(err));
+        return { assigned: [] as string[], waiting: [] as string[], error: err instanceof Error ? err.message : String(err) };
+      });
+      for (const id of channels.assigned) {
+        await resyncOffersToKv(id).catch((err: unknown) =>
+          console.error(`[worker] edge resync after restoring channels failed for ${id}:`, err instanceof Error ? err.message : String(err)),
+        );
+      }
       if (facebookError) throw facebookError;
       await markSyncRun(SYNC_KEYS.FB_STATUS); // freshness signal for the Analytics "last updated" indicator
-      return { ...facebook, whop };
+      return { ...facebook, whop, channels };
     },
     { connection, concurrency: 1 },
   );

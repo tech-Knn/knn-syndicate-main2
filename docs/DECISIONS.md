@@ -1112,3 +1112,29 @@ _Numbering: this was written as D32 and renumbered to D33 when it was merged wit
   launch is resumable and claim-guarded, so a re-drive never duplicates anything (D31's own "known gap", an unresumable
   Facebook build, does not exist for Whop). Keep its eligibility free of `fbCampaignId != null` meaning "launched", and expect
   a textual conflict in `apps/worker/src/index.ts` (both branches add crons) and `launch-trigger.ts` (its comment).
+
+### 2026-10-01 — D34: A resumed campaign gets a channel back (the rollover takes a paused campaign's)
+
+**Problem.** The 00:05 IST rollover releases the channels of every campaign that is not in a holding state
+(`PROCESSING / LAUNCHING / ACTIVE / BATCHED`), and `PAUSED` is not one: a paused campaign must not sit on a channel the pool needs.
+But nothing gave one back on resume, in either provider. A campaign paused across midnight came back `ACTIVE` holding nothing:
+its money-page clicks had no AFS channel and its revenue went unattributed (staging showed all 49 paused Facebook campaigns
+holding 0 channels, so every one of them would have resumed that way).
+
+**Decision.** Keep releasing paused campaigns' channels (the pool stays honest) and re-acquire on resume, two ways:
+1. **Resume asks (`requestChannelsForResumedCampaign`, API).** After the status change and the edge sync, `setCampaignActive`
+   (Facebook) and `setWhopCampaignActive` enqueue the existing `rebalance` job: assign what is missing (same
+   `SKIP LOCKED` claim, same same-day cooldown D25, status untouched on an ACTIVE campaign) and re-publish the edge config so it
+   carries the channel. Best-effort: the resume already succeeded. Bulk resume goes through the same function.
+2. **A sweep catches the rest (`restoreChannelsForActiveCampaigns`, worker).** Every 30 minutes, after both status reconciles,
+   every `ACTIVE` campaign with a PAID offer lacking a channel is given one (`assignOfferChannels(id, { queue: false })`) and its
+   edge config re-published. This covers a resume made in the network's own dashboard and mirrored by the sync, a lost request,
+   and an empty pool (retried each pass).
+
+**Why never queue or change status.** The campaign is live at the network. Queuing it (`QUEUED_NO_CHANNEL`) would not stop the
+spend, only hide it, and `ACTIVE -> PROCESSING` is not a legal move. It stays `ACTIVE` and is served when a channel frees up.
+Clicks in that gap carry no channel; the sweep (at most 30 minutes) bounds it when a channel is free.
+
+**Not changed:** channels are still released at rollover for PAUSED, `META_REJECTED`, etc.; a same-day pause/resume keeps its
+channel (the release only happens at midnight).
+

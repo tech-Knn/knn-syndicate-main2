@@ -732,6 +732,34 @@ describe('setCampaignActive — edge KV stays in sync with status (B1)', () => {
     expect(resumed.status).toBe('ACTIVE');
     expect(resumeWrite.mock.calls[0]![0][0]!.config.active).toBe(true);
   });
+
+  it('resume asks for the campaign\'s channel back (the midnight rollover releases a paused campaign\'s); pause and no-ops do not', async () => {
+    const c = await withSystem((tx) =>
+      tx.campaign.create({ data: { orgId, buyerId, name: 'Resume chan', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-rc' } }),
+    );
+    const requestChannels = vi.fn(async (_id: string): Promise<void> => undefined);
+    const writeRedirectConfigs = vi.fn(async (): Promise<void> => undefined);
+    const deps = { writeRedirectConfigs, requestChannels };
+
+    await setCampaignActive(auth(), c.id, false, deps);
+    expect(requestChannels).not.toHaveBeenCalled();
+
+    await setCampaignActive(auth(), c.id, true, deps);
+    expect(requestChannels).toHaveBeenCalledTimes(1);
+    expect(requestChannels).toHaveBeenCalledWith(c.id);
+
+    await setCampaignActive(auth(), c.id, true, deps); // already active: nothing changed, nothing asked
+    expect(requestChannels).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed resume asks for no channel', async () => {
+    const c = await withSystem((tx) =>
+      tx.campaign.create({ data: { orgId, buyerId, name: 'Resume fail', status: 'PROCESSING', keywords: ['x'] } }),
+    );
+    const requestChannels = vi.fn(async (_id: string): Promise<void> => undefined);
+    await expect(setCampaignActive(auth(), c.id, true, { writeRedirectConfigs: vi.fn(async () => undefined), requestChannels })).rejects.toMatchObject({ statusCode: 409 });
+    expect(requestChannels).not.toHaveBeenCalled();
+  });
 });
 
 describe('reopenCampaign (edit/relaunch a stuck pre-launch campaign)', () => {

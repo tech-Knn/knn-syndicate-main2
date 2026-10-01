@@ -337,6 +337,42 @@ export async function rolloverChannels(
   return { released, renewed };
 }
 
+/**
+ * Give a channel back to every ACTIVE campaign that lacks one for a PAID offer. The midnight rollover releases the
+ * channels of campaigns that are not in a holding state (PAUSED included), so a campaign paused across midnight comes
+ * back ACTIVE with no channel, and its clicks and revenue would go unattributed. A resume from our own buttons asks for
+ * a channel directly; this sweep is the safety net for the rest (a resume made in the network's own dashboard and
+ * mirrored by the status sync, a missed or failed request, a pool that was empty at that moment, which is retried
+ * every pass until a channel is free).
+ *
+ * Never queues a campaign and never changes its status (`queue: false`; the PROCESSING move is illegal from ACTIVE
+ * anyway): an ACTIVE campaign is live and must not drop out of it just because the pool is empty. Idempotent: a
+ * campaign whose offers all hold a channel is not selected. A failure on one campaign never stops the others.
+ * Returns the campaigns that got a channel so the caller can re-publish their edge config. `scope.orgId` narrows the
+ * sweep to one org (tests share a database with other suites; production sweeps everyone).
+ */
+export async function restoreChannelsForActiveCampaigns(scope: { orgId?: string } = {}): Promise<{ assigned: string[]; waiting: string[] }> {
+  const candidates = await withSystem((tx) =>
+    tx.campaign.findMany({
+      where: { status: CAMPAIGN_STATUS.ACTIVE, ...(scope.orgId ? { orgId: scope.orgId } : {}), offers: { some: { kind: 'PAID', channelRef: null } } },
+      select: { id: true },
+      orderBy: { updatedAt: 'asc' },
+    }),
+  );
+  const assigned: string[] = [];
+  const waiting: string[] = [];
+  for (const { id } of candidates) {
+    try {
+      const result = await assignOfferChannels(id, { queue: false });
+      (result.assigned ? assigned : waiting).push(id);
+    } catch (err) {
+      console.error('[channel-pool] restoring channels failed for', id, err);
+      waiting.push(id);
+    }
+  }
+  return { assigned, waiting };
+}
+
 /** Provision channels into the pool (idempotent on `channelId`). Returns created count. */
 export async function seedChannels(channelIds: string[]): Promise<number> {
   return withSystem(async (tx) => {

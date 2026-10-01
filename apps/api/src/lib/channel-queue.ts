@@ -32,3 +32,18 @@ export async function enqueueOfferRebalance(campaignId: string): Promise<void> {
     { removeOnComplete: 100, removeOnFail: 100 },
   );
 }
+
+/**
+ * A campaign was just RESUMED: make sure it holds a channel for every PAID offer. The midnight rollover releases the
+ * channels of paused campaigns, so one paused across midnight comes back without one and would run unattributed. The
+ * worker (single writer) assigns what is missing, never queues or re-statuses the live campaign, and re-publishes the
+ * edge config. Best-effort: the resume already succeeded, and the worker's 30-minute status job gives a channel to any
+ * ACTIVE campaign still missing one, so a lost request is repaired by itself.
+ */
+export async function requestChannelsForResumedCampaign(campaignId: string): Promise<void> {
+  try {
+    await enqueueOfferRebalance(campaignId);
+  } catch (err) {
+    console.error('[channel-queue] failed to enqueue channel restore for resumed campaign', campaignId, err);
+  }
+}
