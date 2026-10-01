@@ -128,10 +128,12 @@ const ID_SHAPE: Record<string, RegExp | undefined> = {
 export type WhopDynamicOutcome = 'match' | 'mismatch' | 'missing';
 
 /**
- * A REAL Meta ad id. Meta's ids are 15-19 digits (every real Whop click so far: 18). Whop's own preview link carries
- * `utm_meta_ad_id=123456789` (9 digits), which must not count as a real click, so this is stricter than `META_ID_RE`.
+ * A REAL Meta ad id. Meta documents its ids only as numeric strings (no stated length), so this deliberately does not bet on today's
+ * 18 digits (every real click so far, and every Facebook ad id in our own data): it accepts 10-19 digits (19 is the ceiling of a 64-bit
+ * id) and rejects the one value we know is fake, Whop's preview link `utm_meta_ad_id=123456789` (9 digits), and any shorter junk.
+ * Being too strict would send real paid clicks to the white page once enforced; being a little loose costs nothing new.
  */
-const REAL_META_AD_ID_RE = /^[0-9]{15,19}$/;
+const REAL_META_AD_ID_RE = /^[0-9]{10,19}$/;
 
 export function whopDynamicOutcome(query: Record<string, string | undefined>): WhopDynamicOutcome {
   if (query.fbclid) return 'match';

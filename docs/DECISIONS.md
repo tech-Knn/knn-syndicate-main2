@@ -1191,7 +1191,7 @@ carry Meta's real numeric ad id in `utm_meta_ad_id` (plus ad-set id, campaign id
 into the link and Meta fills it in when someone clicks.
 
 **Decision.** A new check for a Whop config (`whopDynamicOutcome`, `apps/redirect/src/whop-click.ts`): `match` = an `fbclid` or a numeric
-`utm_meta_ad_id` of 15-19 digits (real ones are 18); `mismatch` = `utm_meta_ad_id` present but not a real Meta id (the placeholder was
+`utm_meta_ad_id` of 10-19 digits (real ones are 18); `mismatch` = `utm_meta_ad_id` present but not a real Meta id (the placeholder was
 never filled in, or Whop's own preview link, which carries `123456789`: template, preview, copied URL); `missing` = neither. It is recorded in the existing cloaker counters (`verified_match` / `verified_mismatch` /
 `macro_missing`; no schema change). A separate switch, `WHOP_GATE_MODE` (`observe` default | `enforce`, in `wrangler.toml`), decides
 whether it routes:
@@ -1207,5 +1207,7 @@ template, previews and copied URLs. A stricter later step (pin an ad's Meta id f
 
 **Amendment (same day): Whop's preview link.** Whop's ad preview links carry `utm_meta_ad_id=123456789` (9 digits), `wacid=adcamp_preview` and
 so on. The first version accepted any 6-30 digit id, so a preview link counted as a real click: 4 such views had already reached money
-pages and fired events to Whop. Real Meta ids in the data are 18 digits (435 of 439), so the rule is now 15-19 digits.
+pages and fired events to Whop. Real Meta ids in our data are all 18 digits (614 clicks, 104 Facebook ad ids), but Meta documents ids only as
+numeric strings with no stated length, so the rule is deliberately loose: 10-19 digits (19 = a 64-bit id). Observe mode will show if a real click
+ever scores `mismatch`; look at that before any enforce.
 

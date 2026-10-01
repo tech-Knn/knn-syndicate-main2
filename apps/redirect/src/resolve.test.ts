@@ -251,11 +251,14 @@ describe('resolveRedirect — Whop click-time check (D38)', () => {
       expect(d.verify).toEqual({ route: 'money', outcome: 'mismatch' });
       expect(resolveRedirect({ ...whopCfg, whopGate: 'enforce' }, PREVIEW, { txid: 't' }).verify.route).toBe('white');
     });
-    it('real Meta ids of 15 to 19 digits match, 14 or 20 do not', () => {
-      expect(resolveRedirect(whopCfg, { ...STATIC, utm_meta_ad_id: '1'.repeat(15) }, { txid: 't' }).verify.outcome).toBe('match');
-      expect(resolveRedirect(whopCfg, { ...STATIC, utm_meta_ad_id: '1'.repeat(19) }, { txid: 't' }).verify.outcome).toBe('match');
-      expect(resolveRedirect(whopCfg, { ...STATIC, utm_meta_ad_id: '1'.repeat(14) }, { txid: 't' }).verify.outcome).toBe('mismatch');
-      expect(resolveRedirect(whopCfg, { ...STATIC, utm_meta_ad_id: '1'.repeat(20) }, { txid: 't' }).verify.outcome).toBe('mismatch');
+    it('a Meta id of 10 to 19 digits matches, 9 or fewer and 20 or more do not (Meta publishes no length, so the rule is loose on purpose)', () => {
+      const outcome = (digits: number) => resolveRedirect(whopCfg, { ...STATIC, utm_meta_ad_id: '1'.repeat(digits) }, { txid: 't' }).verify.outcome;
+      expect(outcome(10)).toBe('match');
+      expect(outcome(13)).toBe('match'); // an older-style Meta id
+      expect(outcome(18)).toBe('match'); // every real click so far
+      expect(outcome(19)).toBe('match');
+      expect(outcome(9)).toBe('mismatch');
+      expect(outcome(20)).toBe('mismatch');
     });
     it('an unfilled placeholder is "mismatch" (a link template, a preview or a copied URL), still money', () => {
       for (const placeholder of ['{{ad.id}}', '{ad.id}', '__AD_ID__', 'abc', '12345']) {
