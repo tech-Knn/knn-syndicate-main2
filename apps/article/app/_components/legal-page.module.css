@@ -2,12 +2,12 @@
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #ffffff;
-  color: #1a1a1a;
+  background: #01074b;
+  color: #fefefe;
 }
 .header {
-  border-bottom: 1px solid #e4e4e0;
-  background: #ffffff;
+  border-bottom: 1px solid rgba(254, 254, 254, 0.18);
+  background: #01074b;
 }
 .brand {
   display: block;
@@ -18,7 +18,7 @@
   font-size: 1.35rem;
   font-weight: 700;
   letter-spacing: -0.01em;
-  color: #111;
+  color: #fefefe;
   text-decoration: none;
 }
 .brand:hover {
@@ -35,17 +35,17 @@
   font-size: 2rem;
   line-height: 1.2;
   margin: 0 0 1.25rem;
-  color: #111;
+  color: #fefefe;
 }
 .prose {
   font-size: 1.02rem;
   line-height: 1.7;
-  color: #2a2a2a;
+  color: #fefefe;
 }
 .prose h2 {
   font-size: 1.3rem;
   line-height: 1.3;
-  color: #111;
+  color: #fefefe;
   margin: 1.75rem 0 0.6rem;
 }
 .prose p {
@@ -59,9 +59,9 @@
   margin: 0 0 0.4rem;
 }
 .prose a {
-  color: #1a0dab;
+  color: #cfd6ff;
 }
 .prose .updated {
-  color: #6a6a6a;
+  color: #d6d9ef;
   font-size: 0.9rem;
 }

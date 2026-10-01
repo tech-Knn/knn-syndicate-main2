@@ -28,6 +28,22 @@ export const AFS_TRACKING_PARAMS =
 export const DEFAULT_ADSAFE = 'low';
 
 /**
+ * Reference layout (D41) — the knobs a competitor audit found identical on 83 of 83 live landing pages that share
+ * our AdSense account (docs/DECISIONS.md D41). They are constants so the whole layout can be reverted in one place.
+ *
+ *  · `DEFAULT_AFS_STYLE_ID` — the style used when neither the domain (Domains admin) nor `NEXT_PUBLIC_AFS_STYLE_ID`
+ *    sets one. A domain's own style still wins.
+ *  · `RSOC_CHIPS_PER_UNIT` / `RSOC_UNITS` — the article page runs TWO related-search units of 6 chips each.
+ *  · `RESULTS_MAX_ADS` / `RESULTS_ORGANIC_COUNT` — the results page shows ONE top ad (`maxTop`) above ONE organic
+ *    result (Google's "ads ≤ results" rule still holds: 1 ≤ 1).
+ */
+export const DEFAULT_AFS_STYLE_ID = '8472563621';
+export const RSOC_UNITS = 2;
+export const RSOC_CHIPS_PER_UNIT = 6;
+export const RESULTS_MAX_ADS = 1;
+export const RESULTS_ORGANIC_COUNT = 1;
+
+/**
  * AFS monetization config for the CURRENT request's host (Phase D). Resolved
  * server-side from the registered Domain → its AFS account's pubId (+ the domain's
  * style/adsafe), so one article app serves many websites under their own accounts.

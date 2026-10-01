@@ -1,17 +1,18 @@
-/* RSOC results page — light, search-results look (AdSense-friendly).
+/* RSOC results page — dark-navy reference theme (D41: #01074b page, #fefefe text).
+   (Layout notes below were written for the earlier light theme; the structure is unchanged.)
    Natural block flow gives the order: header → ads → organic Web results (each block is
    max-width 720 + margin:auto, centered). No related-search unit here — the organic Web
    results ARE the search results the ads supplement (it stays on the content page only). */
 .page {
   min-height: 100vh;
-  background: #ffffff;
-  color: #1a1a1a;
+  background: #01074b;
+  color: #fefefe;
   padding: 1.5rem 1.25rem 4rem;
 }
 .header {
   max-width: 720px;
   margin: 0 auto 1.25rem;
-  border-bottom: 1px solid #ececec;
+  border-bottom: 1px solid rgba(254, 254, 254, 0.18);
   padding-bottom: 1rem;
 }
 .brand {
@@ -19,7 +20,7 @@
   font-family: Georgia, serif;
   font-weight: 700;
   font-size: 1.1rem;
-  color: #111;
+  color: #fefefe;
   text-decoration: none;
 }
 .brand:hover {
@@ -28,11 +29,11 @@
 .query {
   font-size: 1.1rem;
   font-weight: 400;
-  color: #555;
+  color: #d6d9ef;
   margin: 0.6rem 0 0;
 }
 .query strong {
-  color: #111;
+  color: #fefefe;
 }
 .ads {
   max-width: 720px;
@@ -50,12 +51,12 @@
   max-width: 720px;
   margin: 2.75rem auto 0;
   padding-top: 1.1rem;
-  border-top: 1px solid #f1f1f1;
+  border-top: 1px solid rgba(254, 254, 254, 0.1);
 }
 .webHead {
   font-size: 0.85rem;
   font-weight: 400;
-  color: #b6b6b6;
+  color: #515151;
   margin: 0 0 0.9rem;
 }
 .webItem {
@@ -65,27 +66,27 @@
   display: inline-block;
   font-size: 1.05rem;
   line-height: 1.3;
-  color: #a7a7a7;
+  color: #515151;
   text-decoration: none;
 }
 .webTitle:hover {
   text-decoration: underline;
 }
 .webTitle:focus-visible {
-  outline: 2px solid #c4c4c4;
+  outline: 2px solid #8a90c8;
   outline-offset: 2px;
   border-radius: 2px;
   text-decoration: underline;
 }
 .webCite {
   font-size: 0.8rem;
-  color: #bcbcbc;
+  color: #515151;
   margin: 0.1rem 0 0.2rem;
   word-break: break-all;
 }
 .webSnippet {
   font-size: 0.9rem;
   line-height: 1.5;
-  color: #b6b6b6;
+  color: #515151;
   margin: 0;
 }

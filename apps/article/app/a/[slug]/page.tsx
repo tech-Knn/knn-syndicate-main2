@@ -8,7 +8,7 @@ import { verifyWhopScope } from '../../_afs/whop-scope';
 import { resolveSiteConfig } from '../../_afs/site-config';
 import { SiteFooter } from '../../_components/site-footer';
 import { LanderBeacon } from '../../funnel-beacons';
-import { RelatedSearchUnit } from './related-search-unit';
+import { RelatedSearchBootstrap, RelatedSearchSlot } from './related-search-unit';
 import styles from './article.module.css';
 
 // Server-side base for the public article API. articles.<domain> is a different
@@ -181,13 +181,7 @@ export default async function ArticlePage({
               token (when present) is forwarded to /search so its params travel without plaintext. */}
           {gate.monetize && (
             <>
-              <RelatedSearchUnit
-                referrerAdCreative={referrerAdCreative}
-                terms={terms}
-                txid={txid}
-                channel={channel}
-                site={site}
-              />
+              <RelatedSearchSlot id="relatedsearches1" site={site} />
               {/* Tap/click the article title (h1) or any h2/h3 in the body → smooth-scroll to the
                   NEAREST chip strip that sits at or below the tapped heading. Falls back to the
                   nearest strip above only when the user is already past the last strip. This avoids
@@ -221,7 +215,8 @@ export default async function ArticlePage({
             </>
           )}
 
-          {/* One related-search unit per page (D26) — the one above, in <RelatedSearchUnit />. */}
+          {/* Two related-search units per page (D41): #relatedsearches1 above (under the lead) and
+              #relatedsearches2 below the body; ONE bootstrap fires both once both containers exist. */}
           <div className={styles.body}>
             {bodyBlocks.map((block, i) => {
               if (block.type === 'h2') return <h2 key={i}>{block.text}</h2>;
@@ -245,6 +240,18 @@ export default async function ArticlePage({
               return <p key={i}>{block.text}</p>;
             })}
           </div>
+          {gate.monetize && (
+            <>
+              <RelatedSearchSlot id="relatedsearches2" site={site} />
+              <RelatedSearchBootstrap
+                referrerAdCreative={referrerAdCreative}
+                terms={terms}
+                txid={txid}
+                channel={channel}
+                site={site}
+              />
+            </>
+          )}
         </article>
       </main>
 
