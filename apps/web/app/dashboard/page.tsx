@@ -94,7 +94,8 @@ function exportCsv(rows: CampaignPerf[]): void {
 
 export default function DashboardHome() {
   const { user } = useAuth();
-  const [range, setRange] = useState<DateRange>(() => rangeFor(7));
+  // Opens on today (a buyer checks what is happening now); the date picker widens it.
+  const [range, setRange] = useState<DateRange>(() => rangeFor(1));
   const [summary, setSummary] = useState<StatsSummary | null>(null);
   const [campaigns, setCampaigns] = useState<CampaignPerf[] | null>(null);
   const [loading, setLoading] = useState(true);
