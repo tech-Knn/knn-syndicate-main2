@@ -50,6 +50,7 @@ import {
   relabel,
   sumInputs,
 } from './columns';
+import { chipStatuses, defaultStatusSel, isDefaultStatusSel, statusSelForDeepLink } from './default-view';
 
 function rangeFor(days: number): DateRange {
   const to = currentBusinessDay();
@@ -139,7 +140,7 @@ export default function AnalyticsPage() {
 
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [statusSel, setStatusSel] = useState<Set<string>>(new Set());
+  const [statusSel, setStatusSel] = useState<Set<string>>(defaultStatusSel);
   const [buyerSel, setBuyerSel] = useState('');
   const [companySel, setCompanySel] = useState('');
   const [profitSel, setProfitSel] = useState<'all' | 'profit' | 'loss'>('all');
@@ -221,6 +222,7 @@ export default function AnalyticsPage() {
   useEffect(() => setPage(0), [debouncedSearch, statusSel, buyerSel, companySel, profitSel, range]);
 
   const statuses = useMemo(() => [...new Set((rows ?? []).map((r) => r.status))].sort(), [rows]);
+  const chips = useMemo(() => chipStatuses(statuses, statusSel), [statuses, statusSel]);
   const buyerOptions = useMemo<SearchOption[]>(() => {
     const m = new Map<string, string>();
     for (const r of rows ?? []) m.set(r.buyerId, r.buyerName);
@@ -321,6 +323,7 @@ export default function AnalyticsPage() {
     const want = new URLSearchParams(window.location.search).get('campaign');
     const row = want ? rows.find((r) => r.id === want) : undefined;
     if (!row) return;
+    setStatusSel((sel) => statusSelForDeepLink(sel, row.status)); // a paused campaign opened from its own page must not be hidden by the Active default
     setSearch(row.name);
     setDebouncedSearch(row.name);
     void toggleExpand(row.id);
@@ -375,12 +378,17 @@ export default function AnalyticsPage() {
   const clearAllFilters = (): void => {
     setSearch('');
     setDebouncedSearch('');
-    setStatusSel(new Set());
+    setStatusSel(defaultStatusSel());
     setBuyerSel('');
     setCompanySel('');
     setProfitSel('all');
   };
+  // Anything narrowing the list (the opening "Active" included): drives the empty-state wording.
   const hasFilters = search !== '' || statusSel.size > 0 || buyerSel !== '' || companySel !== '' || profitSel !== 'all';
+  // Anything different from the opening view: drives "Reset all", which returns to it.
+  const changedFromDefault = search !== '' || !isDefaultStatusSel(statusSel) || buyerSel !== '' || companySel !== '' || profitSel !== 'all';
+  // The opening view and nothing else: an empty list then means "nothing live", not "your filters are wrong".
+  const onlyLiveFilter = !changedFromDefault;
 
   const SortHead = ({ k, label, info, left, start, extraClass }: { k: SortKey; label: string; info?: string; left?: boolean; start?: boolean; extraClass?: string }): React.ReactNode => {
     const active = sortKey === k;
@@ -480,7 +488,7 @@ export default function AnalyticsPage() {
               { value: 'loss', label: 'Losing' },
             ]}
           />
-          {hasFilters && (
+          {changedFromDefault && (
             <Button variant="ghost" onClick={clearAllFilters}>
               Reset all
             </Button>
@@ -492,16 +500,16 @@ export default function AnalyticsPage() {
             Export CSV
           </button>
         </div>
-        {statuses.length > 0 && (
+        {chips.length > 0 && (
           <div className={styles.chips}>
-            {statuses.map((s) => (
+            {chips.map((s) => (
               <button key={s} type="button" aria-pressed={statusSel.has(s)} className={`${styles.chip} ${statusSel.has(s) ? styles.chipActive : ''}`} onClick={() => toggleStatus(s)}>
                 {statusLabel(s)}
               </button>
             ))}
             {statusSel.size > 0 && (
               <button type="button" className={styles.chip} onClick={() => setStatusSel(new Set())}>
-                Clear
+                Show all
               </button>
             )}
           </div>
@@ -515,17 +523,29 @@ export default function AnalyticsPage() {
           ))}
         </div>
       ) : filtered.length === 0 ? (
-        <EmptyState
-          title="No campaigns match"
-          description={hasFilters ? 'No campaigns match the current filters. Clear them or widen the date range.' : 'No campaign performance in this date range yet. Try a wider range.'}
-          action={
-            hasFilters ? (
-              <Button variant="secondary" onClick={clearAllFilters}>
-                Clear all filters
+        onlyLiveFilter ? (
+          <EmptyState
+            title="No live campaigns"
+            description="Nothing is active in this date range. Show every status to see paused, draft and archived campaigns."
+            action={
+              <Button variant="secondary" onClick={() => setStatusSel(new Set())}>
+                Show all statuses
               </Button>
-            ) : undefined
-          }
-        />
+            }
+          />
+        ) : (
+          <EmptyState
+            title="No campaigns match"
+            description={hasFilters ? 'No campaigns match the current filters. Clear them or widen the date range.' : 'No campaign performance in this date range yet. Try a wider range.'}
+            action={
+              hasFilters ? (
+                <Button variant="secondary" onClick={clearAllFilters}>
+                  Reset filters
+                </Button>
+              ) : undefined
+            }
+          />
+        )
       ) : (
         <>
           {/* At-a-glance totals for the current filter: the result, then the unit economics behind it. */}
