@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prisma, withSystem } from '@knn/db';
 import { encryptToken, type FbAdInsightRow, type FetchAdInsightsParams } from '@knn/fb';
 import type { ChannelDayRevenue } from '@knn/adsense';
@@ -10,6 +10,8 @@ import {
   lateWhopDay,
   recentDays,
   runAttribution,
+  runFastAttribution,
+  shouldRunFastJob,
 } from './attribution.service.js';
 import { getUsdRate } from './fx.service.js';
 
@@ -514,5 +516,80 @@ describe('attribution — Facebook days are IST days whatever timezone the buyer
     expect(calls.filter((c) => c.breakdown === undefined)).toHaveLength(1);
     expect(calls[0]).toMatchObject({ since: DAY, until: DAY });
     expect((await stats(seed)).map((r) => [r.day, r.spendMinor])).toEqual([[DAY, 700]]);
+  });
+});
+
+describe('runFastAttribution (quarter-hour Whop + AdSense refresh)', () => {
+  // 06:30 UTC = 12:00 IST on DAY: not in the early-morning window where yesterday's Whop spend is re-read.
+  const NOON = new Date(`${DAY}T06:30:00Z`);
+
+  it('never reads Facebook, reads AdSense once, and re-allocates today\'s revenue from the Facebook rows already stored', async () => {
+    const seed = await seedCampaign({ adCount: 2 });
+    // The hourly pass has already stored today's Facebook rows (3:1 conversions) and nothing from AdSense yet.
+    await runAttribution([DAY], depsFor(seed, [
+      { fbAdId: seed.ads[0]!.fbAdId, impressions: 100, clicks: 9, conversions: 3, spendMinor: 1500 },
+      { fbAdId: seed.ads[1]!.fbAdId, impressions: 100, clicks: 9, conversions: 1, spendMinor: 1500 },
+    ], null));
+    expect((await adRevByFbId(seed)).size).toBe(0);
+
+    const fetchInsights = vi.fn(async (): Promise<FbAdInsightRow[]> => { throw new Error('the quarter-hour pass must not read Facebook'); });
+    const fetchAdsense = vi.fn(async (_p: { since: string; until: string }): Promise<ChannelDayRevenue[]> => [{ channelId: seed.channelCh, day: DAY, revenueMinor: 4000, currency: 'USD', afsClicks: 40 }]);
+    const whopEnabled = vi.fn(() => false);
+    await runFastAttribution(NOON, { fetchInsights, fetchAdsense, getRate: getUsdRate, whopStats: { enabled: whopEnabled } });
+
+    expect(fetchInsights).not.toHaveBeenCalled();
+    expect(fetchAdsense).toHaveBeenCalledTimes(1);
+    expect(fetchAdsense.mock.calls[0]![0]).toMatchObject({ since: DAY, until: DAY });
+    expect(whopEnabled).toHaveBeenCalledTimes(1); // today's Whop pass was attempted (dormant here: no Whop business)
+    const rev = await adRevByFbId(seed);
+    expect(rev.get(seed.ads[0]!.fbAdId)!.allocated).toBe(3000); // the same 3:1 split of $40.00 the hourly pass would give
+    expect(rev.get(seed.ads[1]!.fbAdId)!.allocated).toBe(1000);
+  });
+
+  it('early in the IST day it also re-reads yesterday\'s Whop spend, like the hourly pass', async () => {
+    const whopEnabled = vi.fn(() => false);
+    await runFastAttribution(new Date(`${DAY}T19:30:00Z`), { fetchInsights: async () => [], fetchAdsense: async () => [], getRate: getUsdRate, whopStats: { enabled: whopEnabled } });
+    // 19:30 UTC on DAY = 01:00 IST on the next day: today = DAY+1, late day = DAY.
+    expect(whopEnabled).toHaveBeenCalledTimes(2);
+    await runFastAttribution(NOON, { fetchInsights: async () => [], fetchAdsense: async () => [], getRate: getUsdRate, whopStats: { enabled: whopEnabled } });
+    expect(whopEnabled).toHaveBeenCalledTimes(3); // midday: only today
+  });
+
+  it('is idempotent: running it again changes nothing', async () => {
+    const seed = await seedCampaign({ adCount: 1 });
+    await runAttribution([DAY], depsFor(seed, [{ fbAdId: seed.ads[0]!.fbAdId, impressions: 10, clicks: 2, conversions: 1, spendMinor: 500 }], null));
+    const deps: AttributionDeps = {
+      fetchInsights: async () => [],
+      fetchAdsense: async (): Promise<ChannelDayRevenue[]> => [{ channelId: seed.channelCh, day: DAY, revenueMinor: 2500, currency: 'USD', afsClicks: 30 }],
+      getRate: getUsdRate,
+      whopStats: { enabled: () => false },
+    };
+    await runFastAttribution(NOON, deps);
+    const first = await adRevByFbId(seed);
+    await runFastAttribution(NOON, deps);
+    await runFastAttribution(NOON, deps);
+    expect(await adRevByFbId(seed)).toEqual(first);
+    expect(await withSystem((tx) => tx.adRevenueDaily.count({ where: { campaignId: seed.campaignId, day: DAY } }))).toBe(1);
+  });
+});
+
+describe('shouldRunFastJob', () => {
+  const MIN = 60_000;
+  const now = 1_000_000_000_000;
+
+  it('runs a fresh job when nothing ran recently', () => {
+    expect(shouldRunFastJob({ enqueuedAt: now - MIN, now, lastFullRunAt: now - 14 * MIN, lastFastRunAt: now - 15 * MIN })).toEqual({ run: true });
+    expect(shouldRunFastJob({ enqueuedAt: now, now, lastFullRunAt: null, lastFastRunAt: null })).toEqual({ run: true });
+  });
+
+  it('drops a job that waited behind a long pass for more than 10 minutes', () => {
+    expect(shouldRunFastJob({ enqueuedAt: now - 11 * MIN, now, lastFullRunAt: null, lastFastRunAt: null })).toEqual({ run: false, reason: 'stale' });
+    expect(shouldRunFastJob({ enqueuedAt: now - 10 * MIN, now, lastFullRunAt: null, lastFastRunAt: null })).toEqual({ run: true });
+  });
+
+  it('skips one that starts within 5 minutes of a full pass or of the last quarter-hour pass', () => {
+    expect(shouldRunFastJob({ enqueuedAt: now - 2 * MIN, now, lastFullRunAt: now - 3 * MIN, lastFastRunAt: null })).toEqual({ run: false, reason: 'just-refreshed' });
+    expect(shouldRunFastJob({ enqueuedAt: now - 2 * MIN, now, lastFullRunAt: null, lastFastRunAt: now - 4 * MIN })).toEqual({ run: false, reason: 'just-refreshed' });
+    expect(shouldRunFastJob({ enqueuedAt: now - 2 * MIN, now, lastFullRunAt: now - 6 * MIN, lastFastRunAt: now - 20 * MIN })).toEqual({ run: true });
   });
 });

@@ -3,7 +3,7 @@ import cron from 'node-cron';
 import { env } from '@knn/config';
 import { QUEUES, closeQueues, createConnection, getQueue } from '@knn/queue';
 import { FINALIZATION } from '@knn/shared';
-import { runFinalization, runHourlyAttribution } from './attribution/attribution.service.js';
+import { runFastAttribution, runFinalization, runHourlyAttribution, shouldRunFastJob } from './attribution/attribution.service.js';
 import { type CapiDispatchJob, dispatchConversion } from './capi-dispatch.js';
 import { type WhopDispatchJob, dispatchWhopEvent, failExhaustedWhopEvent } from './whop-dispatch.js';
 import {
@@ -17,7 +17,7 @@ import {
 import { sweepDomainHealth } from './jobs/domain-health.js';
 import { reconcileCampaigns } from './jobs/meta-rejection.js';
 import { reconcileWhopCampaigns } from './jobs/whop-reconcile.js';
-import { SYNC_KEYS, markSyncRun } from './lib/sync-state.js';
+import { SYNC_KEYS, lastSyncRunAt, markSyncRun } from './lib/sync-state.js';
 import { refreshFbTokens } from './jobs/token-refresh.js';
 import { type FbLaunchJob, learnRcTermsNow, resyncOffersToKv, runFbLaunch, syncAllFbConnections, triggerAutoLaunch } from './launch-trigger.js';
 
@@ -204,7 +204,20 @@ async function main(): Promise<void> {
   // daily buckets via idempotent upserts, so re-runs never double-count.
   const attributionWorker = new Worker(
     QUEUES.ATTRIBUTION,
-    async (job: Job<{ kind: 'hourly' | 'finalize' }>) => {
+    async (job: Job<{ kind: 'hourly' | 'finalize' | 'fast' }>) => {
+      if (job.data.kind === 'fast') {
+        // Whop spend + AdSense revenue only (never Facebook). It must not stack up behind a long pass or repeat one that just ran.
+        const verdict = shouldRunFastJob({
+          enqueuedAt: job.timestamp,
+          now: Date.now(),
+          lastFullRunAt: await lastSyncRunAt(SYNC_KEYS.METRICS),
+          lastFastRunAt: await lastSyncRunAt(SYNC_KEYS.METRICS_FAST),
+        });
+        if (!verdict.run) return { skipped: verdict.reason };
+        await runFastAttribution();
+        await markSyncRun(SYNC_KEYS.METRICS_FAST); // NOT METRICS: the buyer-facing "last updated" is tied to the hourly pass that includes Facebook
+        return { ran: 'fast' };
+      }
       const result = job.data.kind === 'finalize' ? await runFinalization() : await runHourlyAttribution();
       await markSyncRun(SYNC_KEYS.METRICS); // freshness signal for spend/revenue
       return result;
@@ -268,6 +281,17 @@ async function main(): Promise<void> {
     { timezone: env.BUSINESS_TIMEZONE },
   );
 
+  // Quarter-hour refresh of Whop spend + AdSense revenue (:00, :30, :45; the hourly pass at :15 reads them too, so together
+  // they are read every 15 minutes). Facebook stays hourly. The handler drops a job that waited too long or that starts right
+  // behind a full pass.
+  const fastAttributionCron = cron.schedule(
+    '0,30,45 * * * *',
+    () => {
+      void getQueue(QUEUES.ATTRIBUTION).add('fast', { kind: 'fast' }, { removeOnComplete: 50, removeOnFail: 50 });
+    },
+    { timezone: env.BUSINESS_TIMEZONE },
+  );
+
   // Data finalization re-pull every REPULL_INTERVAL_HOURS (§5.8) — trailing FB/AdSense windows.
   const finalizationCron = cron.schedule(
     `0 */${FINALIZATION.REPULL_INTERVAL_HOURS} * * *`,
@@ -322,6 +346,7 @@ async function main(): Promise<void> {
     metaRejectionCron.stop();
     tokenRefreshCron.stop();
     attributionCron.stop();
+    fastAttributionCron.stop();
     finalizationCron.stop();
     domainHealthCron.stop();
     connectionSyncCron.stop();

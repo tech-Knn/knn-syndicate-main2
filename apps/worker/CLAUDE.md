@@ -36,6 +36,11 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
   each hour placed at its real instant (`zonedInstantUtc`) and summed into its IST day, days outside the window dropped. The same
   hourly rows feed the hour drill-down (ad account time). Never key a Facebook row on `date_start` for a non-IST account. Whop
   needs nothing: its reads carry an explicit IST window and `time_zone`.
+- **Quarter-hour refresh (D36, `runFastAttribution`, `ATTRIBUTION` job kind `fast`, cron `0,30,45 * * * *`):** Whop spend + AdSense
+  revenue for today, then allocation for today; NEVER Facebook (per-ad-account limits; it stays on the hourly pass). It writes
+  `sync.metrics_fast.at`, NOT `sync.metrics.at` (the buyer-facing "last updated" follows the hourly pass, which includes Facebook).
+  `shouldRunFastJob` drops a job older than 10 min and skips one within 5 min of a full pass, so a backlog behind a long
+  Facebook pass never runs back to back. Keep the quarter-hour pass free of anything per-campaign-expensive.
 - **Storage is DAILY, not the plan's `ad_stats_hourly`** — attribution + AFS reporting are daily and
   FB's hourly breakdown is timezone-fragile; the cron PULLS hourly to keep "today" fresh. Day key =
   IST business day (FB uses the ad-account tz; OPEN_QUESTIONS #14).

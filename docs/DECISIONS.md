@@ -1153,3 +1153,15 @@ channel (the release only happens at midnight).
 
 **Unverified against live Facebook:** staging has no launched campaign on a non-IST account. The hourly call is the same request the existing hour drill-down already makes for IST accounts; the re-bucketing is proven by unit and integration tests (including a conservation test and a DST test), not by a live non-IST account.
 
+### 2026-10-01 — D36: Whop spend and AdSense revenue refresh every 15 minutes; Facebook stays hourly
+
+**Why.** Aman asked for fresher Whop and AdSense numbers. Their quotas are not the limit (Whop: 600 requests a minute per operation and key, paced by us at 500, and a pass is one or two reads per business; AdSense: one report per AFS account per pass, against a project cap of 500/min and 10,000/day: about 100 calls a day per account at this cadence). Facebook is: about three insights calls per campaign per pass against per-ad-account limits, which is why it is not touched.
+
+**What runs.** A new `ATTRIBUTION` job kind `fast` on cron `0,30,45 * * * *` (IST); the hourly pass at :15 reads the same two sources, so together they are read every 15 minutes. `runFastAttribution`: Whop spend for today (plus yesterday's Whop spend in the first 6 hours of the IST day, like the hourly pass), AdSense revenue for today, then revenue allocation for today from the latest rows of every provider. Same upserts as before, so running it more often cannot double anything. The queue still runs one attribution job at a time.
+
+**Guards (`shouldRunFastJob`).** A `fast` job that waited more than 10 minutes behind a long Facebook pass is dropped (the next is already due), and one that starts within 5 minutes of a full pass or of the previous quarter-hour pass is skipped, so jobs never run back to back after a backlog and the 00/06/12/18 finalization is not repeated seconds later.
+
+**Freshness indicator.** The buyer-facing "last updated" (`sync.metrics.at`, hourly hint) is deliberately still written only by the hourly and finalization passes, so a Facebook campaign never looks fresher than it is. The quarter-hour pass writes its own `sync.metrics_fast.at` (not shown in the UI yet; the hint is therefore pessimistic for Whop-only buyers).
+
+**What it cannot fix.** The sources' own lag: Whop's figures for a window arrive hours late and AdSense's estimates are revised for days, so many quarter-hour reads will return the same numbers. That is why the 6-hourly finalization re-reads (3 days Whop, 8 days AdSense) stay.
+

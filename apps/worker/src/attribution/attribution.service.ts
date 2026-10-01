@@ -603,6 +603,49 @@ export async function runHourlyAttribution(
 }
 
 /**
+ * The quarter-hour refresh of the two sources that are cheap to read and slow to change: Whop spend and AdSense revenue
+ * (today's IST day, plus yesterday's Whop spend early in the day, exactly as the hourly pass). Facebook is deliberately NOT
+ * read here: it costs about three calls per campaign per pass against per-ad-account limits, which is why it stays hourly.
+ * Revenue is then re-allocated for today from the latest rows of every provider, so a Whop or AdSense change shows at once and a
+ * Facebook figure is simply the last hourly one. Same upserts as the hourly pass: running it more often cannot double anything.
+ * Per call this is one AdSense report per AFS account and one or two Whop reads per business.
+ */
+export async function runFastAttribution(
+  now: Date = new Date(),
+  deps: AttributionDeps = defaultDeps,
+): Promise<void> {
+  const today = businessDay(now);
+  await deps.ensureFx?.([today]);
+  await pullWhopStatsSafely(today, today, deps);
+  const late = lateWhopDay(now);
+  if (late) await pullWhopStatsSafely(late, late, deps);
+  await pullAdsenseRevenue(today, today, deps);
+  await allocateRevenue([today]);
+}
+
+/** A quarter-hour job older than this when it finally starts is dropped: the next one is already due. */
+export const FAST_JOB_MAX_AGE_MS = 10 * 60_000;
+/** ...and one that starts right behind a full pass (hourly or finalization, which read the same sources) adds nothing. */
+export const FAST_JOB_MIN_GAP_MS = 5 * 60_000;
+
+/**
+ * Whether a quarter-hour job should run at all. The attribution queue runs one job at a time, so a long Facebook pass can
+ * leave several waiting; they must not then run back to back. `lastFullRunAt` is when the hourly / finalization pass last
+ * finished, `lastFastRunAt` when the last quarter-hour pass did.
+ */
+export function shouldRunFastJob(p: {
+  enqueuedAt: number;
+  now: number;
+  lastFullRunAt: number | null;
+  lastFastRunAt: number | null;
+}): { run: true } | { run: false; reason: 'stale' | 'just-refreshed' } {
+  if (p.now - p.enqueuedAt > FAST_JOB_MAX_AGE_MS) return { run: false, reason: 'stale' };
+  const last = Math.max(p.lastFullRunAt ?? 0, p.lastFastRunAt ?? 0);
+  if (last > 0 && p.now - last < FAST_JOB_MIN_GAP_MS) return { run: false, reason: 'just-refreshed' };
+  return { run: true };
+}
+
+/**
  * Data finalization (§5.8): re-pull the trailing windows (FB last FB_REPULL_DAYS,
  * AdSense last ADSENSE_REPULL_DAYS) and re-allocate. Upserts make this idempotent.
  */
