@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   WHOP_CTAS,
+  WHOP_MIN_DAILY_BUDGET_CENTS,
   WHOP_PLACEMENT,
   type WhopLaunchAdSet,
   type WhopLaunchCampaign,
@@ -113,6 +114,47 @@ describe('whopLaunchProblems: what Whop cannot express is reported before anythi
   it('knows every one of our placement keys', () => {
     expect(Object.keys(WHOP_PLACEMENT)).toHaveLength(16);
     expect(Object.entries(WHOP_PLACEMENT).filter(([, v]) => v === null).map(([k]) => k)).toEqual(['facebook_video_feeds', 'messenger_inbox']);
+  });
+});
+
+describe('whopLaunchProblems: the two refusals Whop gave real campaigns (2026-10-01)', () => {
+  it('knows Whop\'s daily budget floor is $5.00', () => {
+    expect(WHOP_MIN_DAILY_BUDGET_CENTS).toBe(500);
+  });
+
+  it('refuses a campaign-level budget under $5.00, and accepts exactly $5.00', () => {
+    const cbo = { ...campaign, budgetMode: 'CAMPAIGN' as const };
+    expect(whopLaunchProblems({ ...cbo, dailyBudgetCents: 499 }, [{ ...adSet, dailyBudgetCents: null }])).toEqual(["Whop's minimum daily budget is $5.00: raise the campaign budget."]);
+    expect(whopLaunchProblems({ ...cbo, dailyBudgetCents: 100 }, [{ ...adSet, dailyBudgetCents: null }])).toHaveLength(1);
+    expect(whopLaunchProblems({ ...cbo, dailyBudgetCents: 500 }, [{ ...adSet, dailyBudgetCents: null }])).toEqual([]);
+  });
+
+  it('refuses an ad-set budget under $5.00 and names the ad set when there are several', () => {
+    expect(whopLaunchProblems(campaign, [{ ...adSet, dailyBudgetCents: 300 }])).toEqual(["Whop's minimum daily budget is $5.00: raise the budget."]);
+    expect(whopLaunchProblems(campaign, [adSet, { ...adSet, name: 'EU', dailyBudgetCents: 499 }])).toEqual(['Whop\'s minimum daily budget is $5.00: raise the budget for ad set "EU".']);
+    expect(whopLaunchProblems(campaign, [{ ...adSet, dailyBudgetCents: 500 }])).toEqual([]);
+  });
+
+  it('a special ad category campaign must not narrow the age range: 18 to 65', () => {
+    const employment = { ...campaign, specialAdCategories: ['EMPLOYMENT'] };
+    const msg = 'Whop does not let a special ad category campaign narrow the age range: set 18 to 65.';
+    expect(whopLaunchProblems(employment, [{ ...adSet, ageMin: 20, ageMax: 65 }])).toEqual([msg]); // the real refusal: min 20
+    expect(whopLaunchProblems(employment, [{ ...adSet, ageMin: 18, ageMax: 55 }])).toEqual([msg]);
+    expect(whopLaunchProblems(employment, [{ ...adSet, ageMin: 18, ageMax: 65 }])).toEqual([]);
+    expect(whopLaunchProblems({ ...campaign, specialAdCategories: ['CREDIT'] }, [{ ...adSet, ageMin: 18, ageMax: 65 }])).toEqual([]);
+  });
+
+  it('names the ad set for the age rule, and leaves a campaign with no special category free to narrow', () => {
+    const employment = { ...campaign, specialAdCategories: ['HOUSING'] };
+    expect(whopLaunchProblems(employment, [{ ...adSet, ageMin: 18 }, { ...adSet, name: 'Older', ageMin: 40 }])).toEqual([
+      'Whop does not let a special ad category campaign narrow the age range: set 18 to 65 (ad set "Older").',
+    ]);
+    expect(whopLaunchProblems(campaign, [{ ...adSet, ageMin: 35, ageMax: 55 }])).toEqual([]);
+  });
+
+  it('does not double-report a category Whop does not have (that is already its own message)', () => {
+    const problems = whopLaunchProblems({ ...campaign, specialAdCategories: ['ONLINE_GAMBLING_AND_GAMING'] }, [adSet]);
+    expect(problems).toEqual(['Whop has no "online gambling and gaming" special ad category.']);
   });
 });
 

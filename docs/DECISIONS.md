@@ -1211,3 +1211,15 @@ pages and fired events to Whop. Real Meta ids in our data are all 18 digits (614
 numeric strings with no stated length, so the rule is deliberately loose: 10-19 digits (19 = a 64-bit id). Observe mode will show if a real click
 ever scores `mismatch`; look at that before any enforce.
 
+### 2026-10-01 — D39: the Whop launch rules we learned from real refusals ($5.00 budget floor, no narrowing the age of a special category)
+
+Seven Whop campaigns sat in `PROCESSING` with a `knn-launch` issue: five were refused for "Budget must be greater than or equal to 5.0" / "Daily
+budget must be at least $5.00", one for "Special ad category campaigns must use minimum age 18 (cannot narrow age range)" (an EMPLOYMENT campaign
+with min age 20). Our wizard let a buyer enter $1.00 and any age, so the refusal came only at launch. Both rules now live in the shared
+`whopLaunchProblems` (`packages/shared/src/whop-launch.ts`), so the wizard, the submit gate and the launch all say the same thing before anything is sent:
+- **Budget:** `WHOP_MIN_DAILY_BUDGET_CENTS = 500`, on the campaign budget (CBO) or each ad set's (ABO). Saving a draft still needs only $1.00.
+- **Age:** with a special category Whop knows, every ad set must be 18 to 65 (`WHOP_SPECIAL_AGE_MIN/MAX`). Ticking the category in the wizard resets the ages; an
+  already-narrowed ad set is flagged. Gender is not checked: Whop has not complained about it.
+Not changed: the **live** budget edit of a running Whop campaign (`updateWhopCampaignBudget`) still only refuses what cannot be a budget; Whop applies
+its own floor and the error says so. Campaigns already stuck need their budget or age fixed (Reopen -> edit -> submit), they do not repair themselves.
+
