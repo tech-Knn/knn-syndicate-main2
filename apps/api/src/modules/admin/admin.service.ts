@@ -3,6 +3,7 @@ import { ROLES, USER_STATUS, type FunnelMode, type Role, type UserStatus } from 
 import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { hashPassword } from '../../lib/password.js';
+import { generateRefreshToken, hashRefreshToken } from '../../lib/tokens.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 import type { AddOrgUserInput, CreateOrgInput, UserAction } from './admin.schemas.js';
@@ -445,3 +446,45 @@ export async function setUserStatus(
     return toPublicUser(updated);
   });
 }
+
+/** How long an admin-issued reset link works. */
+export const PASSWORD_RESET_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Issue a single-use password reset link for a user (D37): no email, the admin hands the link over any channel they like and the
+ * user chooses their own password, so the admin never learns it. The raw token is returned ONCE here and only its hash is stored;
+ * issuing a new link deletes the user's earlier unused ones, so only the latest works.
+ *
+ * Who may reset whom: a SUPER_ADMIN anyone except another super admin; a COMPANY_ADMIN only the MEDIA_BUYERs of their own company
+ * (RLS hides other companies as a 404; an admin resetting a fellow admin would be an account takeover between peers). Nobody
+ * resets themselves through this: a locked-out admin asks another one.
+ */
+export async function issuePasswordReset(
+  actor: AuthContext,
+  userId: string,
+): Promise<{ token: string; expiresAt: Date; user: { id: string; name: string; email: string } }> {
+  if (actor.userId === userId) throw new AppError(400, 'Ask another admin to reset your password.');
+  return runScoped(actor, async (tx) => {
+    const target = await tx.user.findUnique({ where: { id: userId } });
+    if (!target) throw new AppError(404, 'User not found');
+    if (target.role === ROLES.SUPER_ADMIN) throw new AppError(403, 'Cannot reset a super admin’s password here');
+    if (actor.role === ROLES.COMPANY_ADMIN && target.role !== ROLES.MEDIA_BUYER) {
+      throw new AppError(403, 'Company admins can reset a media buyer’s password only');
+    }
+    const token = generateRefreshToken();
+    const expiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_MS);
+    await tx.passwordResetToken.deleteMany({ where: { userId, usedAt: null } });
+    await tx.passwordResetToken.create({
+      data: { userId, orgId: target.orgId, tokenHash: hashRefreshToken(token), expiresAt, createdById: actor.userId },
+    });
+    await writeAudit(tx, {
+      orgId: target.orgId,
+      actorId: actor.userId,
+      action: 'user.password_reset_issued',
+      entityType: 'user',
+      entityId: userId,
+    });
+    return { token, expiresAt, user: { id: target.id, name: target.name, email: target.email } };
+  });
+}
+

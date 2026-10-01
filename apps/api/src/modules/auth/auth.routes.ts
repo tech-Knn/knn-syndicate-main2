@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { env } from '@knn/config';
 import { handleRouteError } from '../../lib/http.js';
 import { authenticate } from '../../middleware/authenticate.js';
-import { loginSchema, refreshSchema, signupSchema } from './auth.schemas.js';
-import { getMe, login, logout, refresh, signup } from './auth.service.js';
+import { loginSchema, refreshSchema, resetPasswordSchema, signupSchema } from './auth.schemas.js';
+import { getMe, login, logout, refresh, resetPasswordWithToken, signup } from './auth.service.js';
 
 /** Tighter per-IP cap on credential endpoints (brute-force / signup-spam guard). */
 const authLimit = { config: { rateLimit: { max: env.RATE_LIMIT_AUTH_MAX, timeWindow: '1 minute' } } };
@@ -41,6 +41,16 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     try {
       const { refreshToken } = refreshSchema.parse(req.body);
       await logout(refreshToken);
+      return reply.code(204).send();
+    } catch (err) {
+      return handleRouteError(err, reply);
+    }
+  });
+
+  // Set a new password with a link an admin issued (no email). Public, rate-limited like the other credential endpoints.
+  app.post('/reset-password', authLimit, async (req, reply) => {
+    try {
+      await resetPasswordWithToken(resetPasswordSchema.parse(req.body));
       return reply.code(204).send();
     } catch (err) {
       return handleRouteError(err, reply);

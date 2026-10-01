@@ -1165,3 +1165,17 @@ channel (the release only happens at midnight).
 
 **What it cannot fix.** The sources' own lag: Whop's figures for a window arrive hours late and AdSense's estimates are revised for days, so many quarter-hour reads will return the same numbers. That is why the 6-hourly finalization re-reads (3 days Whop, 8 days AdSense) stay.
 
+### 2026-10-01 — D37: password reset without email — an admin issues a single-use link
+
+**Problem.** There was no way to reset a password (no "forgot password", no admin action, no email service): a password was only ever set when the account was created, so a buyer who lost theirs was locked out.
+
+**Decision.** An admin issues a **single-use reset link** and hands it over any channel (WhatsApp, Telegram, Slack...). The user opens it and chooses their own password, so the admin never learns it. Nothing needs email.
+- **Who may issue:** a SUPER_ADMIN, for anyone except another super admin; a COMPANY_ADMIN, for the MEDIA_BUYERs of their own company only. Never yourself ("ask another admin"). A company admin resetting a peer admin would be an account takeover between peers, and another company's users are invisible (RLS 404). A locked-out super admin uses the existing `pnpm db:reset-admin` (`packages/db/scripts/reset-superadmin.ts`).
+- **Token:** 256 random bits, returned to the admin ONCE and stored only as a SHA-256 hash (`password_reset_tokens`, migration `20261001150000`, RLS like `refresh_tokens`). Valid 24 hours, single use. Issuing a new link deletes the user's earlier unused ones.
+- **Using it (`POST /api/auth/reset-password`, public, rate-limited like login):** the link is claimed atomically (`updateMany` on "unused and not expired", so two requests with one link cannot both win); every failure (unknown, used, expired) gives the same message; a too-short password is refused BEFORE the link is claimed, so a typo does not burn it. On success the password changes and every refresh token of the user is revoked (signed out everywhere; an access token already issued runs out on its own within minutes). The account's approval status is untouched: a suspended or pending user still cannot sign in.
+- **Link format:** `<this site>/reset-password#<token>`. The token sits in the URL **fragment**, which browsers never send to a server or in a Referer header; the page reads it once and removes it from the address bar.
+- **Audit:** `user.password_reset_issued` (actor = the admin) and `user.password_reset_completed` (actor = the user). The issue response is `Cache-Control: no-store`.
+- **UI:** "Reset password" on the Team page (company admins for their buyers, platform for anyone) and on the Companies member list; a dialog shows the link with "Copy link" and "Copy as message" (a ready sentence for chat).
+
+**Not built (deliberately):** a self-service "forgot password" (no safe way to prove identity without an email/SMS channel) and a logged-in "change my password" screen (separate, small; say so if wanted).
+

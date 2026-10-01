@@ -1,11 +1,12 @@
 import { env } from '@knn/config';
 import { withSystem, type TxClient } from '@knn/db';
 import { ROLES, USER_STATUS, effectiveFunnelMode, type FunnelMode, type Role, type UserStatus } from '@knn/shared';
+import { writeAudit } from '../../lib/audit.js';
 import { AppError } from '../../lib/errors.js';
 import { signAccessToken } from '../../lib/jwt.js';
 import { hashPassword, verifyPassword } from '../../lib/password.js';
 import { generateRefreshToken, hashRefreshToken, parseDurationMs } from '../../lib/tokens.js';
-import type { LoginInput, SignupInput } from './auth.schemas.js';
+import type { LoginInput, ResetPasswordInput, SignupInput } from './auth.schemas.js';
 
 export interface AuthUser {
   id: string;
@@ -138,3 +139,35 @@ export async function getMe(userId: string): Promise<AuthUser | null> {
     return { ...toAuthUser(user), funnelMode };
   });
 }
+
+const RESET_LINK_INVALID = 'This reset link is invalid, already used or has expired. Ask your admin for a new one.';
+
+/**
+ * Set a new password with an admin-issued reset link (D37). Public, so it says the same thing for every failure (unknown, used,
+ * expired). The link is claimed atomically (`updateMany` on "unused and not expired"), so two requests with the same link cannot
+ * both win. Every session of the user is signed out; a short-lived access token already issued runs out on its own (minutes).
+ * The account's approval status is NOT touched: a suspended or pending user still cannot sign in.
+ */
+export async function resetPasswordWithToken(input: ResetPasswordInput): Promise<void> {
+  const passwordHash = await hashPassword(input.password);
+  const tokenHash = hashRefreshToken(input.token);
+  await withSystem(async (tx) => {
+    const claimed = await tx.passwordResetToken.updateMany({
+      where: { tokenHash, usedAt: null, expiresAt: { gt: new Date() } },
+      data: { usedAt: new Date() },
+    });
+    if (claimed.count !== 1) throw new AppError(400, RESET_LINK_INVALID);
+    const record = await tx.passwordResetToken.findUnique({ where: { tokenHash }, select: { userId: true, orgId: true } });
+    if (!record) throw new AppError(400, RESET_LINK_INVALID);
+    await tx.user.update({ where: { id: record.userId }, data: { passwordHash } });
+    await tx.refreshToken.updateMany({ where: { userId: record.userId, revokedAt: null }, data: { revokedAt: new Date() } });
+    await writeAudit(tx, {
+      orgId: record.orgId,
+      actorId: record.userId,
+      action: 'user.password_reset_completed',
+      entityType: 'user',
+      entityId: record.userId,
+    });
+  });
+}
+

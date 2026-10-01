@@ -118,6 +118,7 @@ model User {
 
   organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
   refreshTokens RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
   fbConnections FbConnection[]
   whopConnections WhopConnection[]
   campaigns     Campaign[]
@@ -304,6 +305,24 @@ model RefreshToken {
 
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+/// A single-use link an admin hands to a user so they can set a new password without email (D37). Only the hash of the
+/// token is stored; issuing a new link deletes the user's earlier unused ones.
+model PasswordResetToken {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  orgId       String    @map("org_id") @db.Uuid
+  tokenHash   String    @unique @map("token_hash")
+  expiresAt   DateTime  @map("expires_at")
+  usedAt      DateTime? @map("used_at")
+  createdById String    @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 /// Append-only audit trail of privileged actions.

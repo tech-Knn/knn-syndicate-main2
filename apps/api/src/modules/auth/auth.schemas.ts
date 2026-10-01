@@ -16,3 +16,10 @@ export type LoginInput = z.infer<typeof loginSchema>;
 
 export const refreshSchema = z.object({ refreshToken: z.string().min(1) });
 export type RefreshInput = z.infer<typeof refreshSchema>;
+
+export const resetPasswordSchema = z.object({
+  token: z.string().trim().min(20).max(200),
+  password: z.string().min(8).max(200),
+});
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+
