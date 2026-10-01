@@ -7,6 +7,7 @@ import { notify } from '../../lib/notify.js';
 import { runScoped } from '../../lib/scope.js';
 import type { AuthContext } from '../../middleware/authenticate.js';
 import { type CampaignWithChildren, campaignInclude, withAssetLabels } from './campaigns.service.js';
+import { domainOwnershipProblems } from './domain-ownership.js';
 
 /**
  * Load a campaign for admin review. RLS scopes a COMPANY_ADMIN to their own org
@@ -46,6 +47,8 @@ export async function approveCampaign(
     if (!canTransitionCampaign(campaign.status, CAMPAIGN_STATUS.APPROVED)) {
       throw new AppError(409, `Cannot approve a campaign in ${campaign.status} state`);
     }
+    const lostDomains = await domainOwnershipProblems(tx, campaign.orgId, id);
+    if (lostDomains.length > 0) throw new AppError(409, lostDomains[0]!);
     const org = await tx.organization.findUnique({
       where: { id: campaign.orgId },
       select: { autoLaunch: true },

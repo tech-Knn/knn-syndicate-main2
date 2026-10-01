@@ -1230,3 +1230,14 @@ ad click and tells the buyer to pick Leads or Engagement. Evidence the other obj
 reached Whop with the ad click used Engagement (12 live), and Leads is the default. A Sales campaign could optimize for add-to-cart or content view, but the
 wizard has no "Optimize for" picker yet (planned), so for now the answer is the objective.
 
+### 2026-10-01 — D40: a website given to another company stops that company's unlaunched campaigns, never its running ones
+
+**Problem.** Platform -> Domains -> Owner decides which company's buyers may use a website, but the check ran only when offers were SAVED. A draft built earlier
+on a domain that was later given to another company could still be submitted, approved and launched on it (ABC company had 12 such drafts on staging).
+**Decision.** `domainOwnershipProblems` (`apps/api/src/modules/campaigns/domain-ownership.ts`) is checked at **submit** (a 422 issue naming the website), **approve**
+(409) and the **first launch** of a campaign that is not live yet (409, before any article or ad is built). A domain with no owner (shared) is always fine.
+**Deliberately not checked:** anything about a campaign that is already launched. Pause / resume, budgets, the daily channel rollover and `launchCampaign` on a
+launched campaign (which just reports what is live) never call it, so a running campaign keeps running on a website its company no longer owns, as intended.
+**Caveat.** In an auto-launch company the launch runs from the worker: the refusal fails that `FB_LAUNCH` job (visible in Bull-Board) and the campaign stays
+`PROCESSING`; the buyer sees the message the next time they try to launch or open it. The fix is the same: swap the website in the campaign's offers.
+

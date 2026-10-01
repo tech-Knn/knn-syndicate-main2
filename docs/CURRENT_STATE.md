@@ -2,6 +2,8 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
+_Last updated: 2026-10-01 — **Giving a website to another company now also stops that company's unlaunched campaigns on it (D40).** The owner check only ran when offers were saved, so drafts built earlier (ABC company had 12) could still submit, be approved and launch on the domain. It is now re-checked at submit, approve and the first launch. Running campaigns are never re-checked: they keep running and can be paused and resumed. Deploy: api only.
+
 _Last updated: 2026-10-01 — **A third Whop refusal is now caught before launch: Sales + ad click (D39 amendment).** Whop will not optimize a Sales campaign for `submit_application`, our ad click. The shared `whopLaunchProblems` now refuses it (wizard hint under Objective, submit, launch) and says to pick Leads or Engagement. Deploy: web + api.
 
 _Last updated: 2026-10-01 — **Whop launch rules from real refusals (D39).** Whop refuses a daily budget under **$5.00** and a special-ad-category campaign whose age range is narrowed (it must be 18 to 65). The wizard let both through, which left seven campaigns stuck in PROCESSING on staging. Both rules are now in the shared `whopLaunchProblems`, so the wizard (budget hint and floor $5.00, ages reset when a category is ticked, flagged when narrowed), the submit gate and the launch all refuse them with Whop's own wording first. The stuck campaigns still need to be reopened, fixed and relaunched by their buyers. Live budget edits are unchanged. Deploy: web + api. DECISIONS D39.

@@ -161,6 +161,31 @@ describe('campaign approval system', () => {
     expect(c.reviewedAt).toBeTruthy();
   });
 
+  it('a domain given to another company after the campaign was built blocks submit and approve, and frees up again when shared', async () => {
+    const buyer = await bearer(buyerAEmail);
+    const admin = await bearer(adminAEmail);
+    const id = await buildSubmittable(buyer, 'Domain Moved');
+    // Submit first (the domain is still shared), then the platform hands the domain to company B.
+    expect(await submit(buyer, id)).toBe('PENDING_APPROVAL');
+    await withSystem((tx) => tx.domain.update({ where: { id: domainId }, data: { ownerOrgId: orgBId } }));
+    try {
+      const approve = await app.inject({ method: 'POST', url: `/api/campaigns/${id}/approve`, headers: h(admin) });
+      expect(approve.statusCode).toBe(409);
+      expect(approve.json<{ error: string }>().error).toMatch(/no longer available to your company/);
+
+      // A draft that was never submitted is refused at submit, with the website named.
+      await app.inject({ method: 'POST', url: `/api/campaigns/${id}/reopen`, headers: h(buyer) });
+      const resubmit = await app.inject({ method: 'POST', url: `/api/campaigns/${id}/submit`, headers: h(buyer) });
+      expect(resubmit.statusCode).toBe(422);
+      expect(resubmit.json<{ details: string[] }>().details.join(' ')).toMatch(/no longer available to your company/);
+    } finally {
+      await withSystem((tx) => tx.domain.update({ where: { id: domainId }, data: { ownerOrgId: null } }));
+    }
+    // Shared again: the same campaign submits and is approved.
+    expect(await submit(buyer, id)).toBe('PENDING_APPROVAL');
+    expect((await app.inject({ method: 'POST', url: `/api/campaigns/${id}/approve`, headers: h(admin) })).statusCode).toBe(200);
+  });
+
   it('rejects re-approving a non-pending campaign (illegal transition → 409)', async () => {
     const admin = await bearer(adminAEmail);
     const res = await app.inject({ method: 'POST', url: `/api/campaigns/${ids.c1}/approve`, headers: h(admin) });

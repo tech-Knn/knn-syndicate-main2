@@ -709,6 +709,38 @@ describe('launchCampaign (Phase 8)', () => {
   });
 });
 
+describe('a website given to another company: blocks a first launch, never touches a running campaign', () => {
+  it('refuses to launch a campaign that is not live yet, and leaves a running one (pause / resume / launch result) alone', async () => {
+    const other = await withSystem((tx) => tx.organization.create({ data: { name: 'Other Co', slug: `moved-${suffix}` } }));
+    try {
+      // Not live yet: PROCESSING, its only offer on domA.
+      const pending = await makeCampaign();
+      await withSystem((tx) => tx.offer.create({ data: { orgId, campaignId: pending, domainId: domA, weightPct: 100, kind: 'PAID', channelRef } }));
+      // Running: ACTIVE, launched on Facebook, same website.
+      const running = await withSystem((tx) =>
+        tx.campaign.create({ data: { orgId, buyerId, name: 'Running on moved site', status: 'ACTIVE', keywords: ['x'], adAccountId, fbCampaignId: 'fbcamp-moved' } }),
+      );
+      await withSystem((tx) => tx.offer.create({ data: { orgId, campaignId: running.id, domainId: domA, weightPct: 100, kind: 'PAID' } }));
+
+      await withSystem((tx) => tx.domain.update({ where: { id: domA }, data: { ownerOrgId: other.id } }));
+      const deps = { generateArticle: vi.fn(async () => ({ slug: 's' })), writeRedirectConfigs: vi.fn(async () => undefined) };
+      await expect(launchCampaign(auth(), pending, deps)).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/no longer available to your company/) });
+      expect(deps.generateArticle).not.toHaveBeenCalled(); // nothing was built before the refusal
+
+      // The running campaign is untouched: launch answers with what is live, pause and resume work.
+      expect(await launchCampaign(auth(), running.id, deps)).toMatchObject({ status: 'ACTIVE', fbCampaignId: 'fbcamp-moved' });
+      const requestChannels = vi.fn(async (_id: string): Promise<void> => undefined);
+      expect((await setCampaignActive(auth(), running.id, false, { writeRedirectConfigs: deps.writeRedirectConfigs, requestChannels })).status).toBe('PAUSED');
+      expect((await setCampaignActive(auth(), running.id, true, { writeRedirectConfigs: deps.writeRedirectConfigs, requestChannels })).status).toBe('ACTIVE');
+    } finally {
+      await withSystem(async (tx) => {
+        await tx.domain.update({ where: { id: domA }, data: { ownerOrgId: null } });
+        await tx.organization.deleteMany({ where: { id: other.id } });
+      });
+    }
+  });
+});
+
 describe('setCampaignActive — edge KV stays in sync with status (B1)', () => {
   it('pause → republishes the redirect config active:false; resume → active:true', async () => {
     const campaignId = await makeCampaign();
