@@ -8,7 +8,7 @@
  * `styleId`) + our `txid` for attribution; organic/bot/paused → the fallback.
  */
 
-import { hasWhopSignal } from './whop-click.js';
+import { hasWhopSignal, whopDynamicOutcome } from './whop-click.js';
 
 /**
  * A weighted destination for a paid click. Plain A/B splits carry just `url` +
@@ -60,6 +60,12 @@ export interface RedirectConfig {
    * visitor lands on with a signed scope so it carries that business's pixel. Absent for Facebook.
    */
   whop?: { bizId: string };
+  /**
+   * Whop's click-time check (see `whopDynamicOutcome`). 'observe' (default): route exactly as before, only RECORD whether the click
+   * carried an fbclid or a real Meta ad id. 'enforce': a Whop click that carries neither goes to the white page. Set globally by the
+   * Worker (`WHOP_GATE_MODE`), separately from `verifyMode`. Facebook configs ignore it.
+   */
+  whopGate?: 'observe' | 'enforce';
 }
 
 /** The cloak ad-id verification outcome for a click (observe-first telemetry). */
@@ -72,7 +78,10 @@ export type VerifyOutcome = 'match' | 'mismatch' | 'missing' | 'na';
  * paid / no expected id.
  */
 function verifyOutcome(config: RedirectConfig, query: QueryParams, basePaid: boolean): VerifyOutcome {
-  if (!basePaid || !config.expectedAdId) return 'na';
+  if (!basePaid) return 'na';
+  // A Whop ad has no expected id of ours (Whop creates the Meta ad), so its check is "did Meta fill in the click-time values".
+  if (config.whop && !config.expectedAdId) return whopDynamicOutcome(query);
+  if (!config.expectedAdId) return 'na';
   const kaid = query.kaid; // FB {{ad.id}} macro, stamped on real ad clicks via url_tags
   if (!kaid) return 'missing';
   return kaid === config.expectedAdId ? 'match' : 'mismatch';
@@ -135,7 +144,9 @@ export function resolveRedirect(
   // still routes by the base paid signal — a safe rollback and zero risk in the brief window before the
   // post-launch resync writes expectedAdId.
   const enforce = config.verifyMode === 'enforce' && Boolean(config.expectedAdId);
-  const paid = enforce ? query.kaid === config.expectedAdId : basePaid;
+  // Whop's own gate, switched separately: with 'enforce' a Whop click needs a click-time value (fbclid / numeric Meta ad id) to be paid.
+  const enforceWhop = Boolean(config.whop) && config.whopGate === 'enforce';
+  const paid = enforce ? query.kaid === config.expectedAdId : enforceWhop ? basePaid && outcome === 'match' : basePaid;
 
   if (!paid || !config.active) {
     return { location: config.fallbackUrl || config.articleUrl, paid, txid: opts.txid, verify: { route: 'white', outcome } };

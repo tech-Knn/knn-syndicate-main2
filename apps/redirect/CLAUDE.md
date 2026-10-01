@@ -46,7 +46,13 @@ before. For a Whop config the Worker: (1) counts Whop's own click signal (valid 
 `utm_whop=true`) as paid, (2) writes a `whop` block into the KV click record (`bizId`, Whop's ids, the landing
 URL with only Whop's parameters) so the conversion can be reported back to Whop server-side, (3) tags the
 *non-paid* landing with a signed `_ws` scope (`whop-scope.ts`) so that page can carry the business's Whop pixel.
-The money route never carries `_ws`. `whop-click.ts` is a deliberate copy of `extractWhopClick` in `@knn/shared`
+The money route never carries `_ws`.
+
+**Click-time check (D38).** Whop's ids and `utm_whop=true` are fixed text in the ad's link, so they only say "this link". What a
+real click adds is `fbclid` or a numeric `utm_meta_ad_id` (Meta fills Whop's `{{ad.id}}` placeholder in at click time).
+`whopDynamicOutcome` labels a Whop click `match` / `mismatch` (placeholder not filled) / `missing`, recorded in the cloaker counters.
+`WHOP_GATE_MODE` (`wrangler.toml`; separate from `CLOAK_VERIFY_MODE`) is `observe` by default: routing unchanged, counters only.
+`enforce` sends a Whop click without a `match` to the white page. Facebook configs are never affected. `whop-click.ts` is a deliberate copy of `extractWhopClick` in `@knn/shared`
 (this Worker stays dependency-free; `@knn/shared` is a test-only devDependency that proves the two agree).
 `whop-scope.ts` is a verbatim copy in `apps/white` and `apps/article` (test-guarded). Needs the
 `WHOP_SCOPE_SECRET` Worker secret; unset = nothing Whop-related happens.
