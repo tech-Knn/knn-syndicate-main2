@@ -158,3 +158,22 @@ describe('whopLaunchProblems: the two refusals Whop gave real campaigns (2026-10
   });
 });
 
+describe('whopLaunchProblems: a Sales campaign cannot optimize for the ad click (Whop refused it, 2026-10-01)', () => {
+  const msg = 'Whop does not accept optimizing for ad clicks on a Sales campaign: choose the Leads or Engagement objective.';
+  it('refuses Sales + the ad-click event (the default)', () => {
+    expect(whopLaunchProblems({ ...campaign, objective: 'OUTCOME_SALES' }, [adSet])).toEqual([msg]);
+    expect(whopLaunchProblems({ ...campaign, objective: 'OUTCOME_SALES' }, [{ ...adSet, pxeEvent: 'adclick' }])).toEqual([msg]);
+  });
+  it('accepts Leads and Engagement with the ad click, and Sales with an event Whop does accept', () => {
+    expect(whopLaunchProblems({ ...campaign, objective: 'OUTCOME_LEADS' }, [adSet])).toEqual([]);
+    expect(whopLaunchProblems({ ...campaign, objective: 'OUTCOME_ENGAGEMENT' }, [adSet])).toEqual([]);
+    expect(whopLaunchProblems({ ...campaign, objective: 'OUTCOME_SALES' }, [{ ...adSet, pxeEvent: 'search' }])).toEqual([]); // add_to_cart
+    expect(whopLaunchProblems({ ...campaign, objective: 'OUTCOME_SALES' }, [{ ...adSet, pxeEvent: 'lander' }])).toEqual([]); // view_content
+  });
+  it('names the ad set when there are several', () => {
+    expect(whopLaunchProblems({ ...campaign, objective: 'OUTCOME_SALES' }, [{ ...adSet, pxeEvent: 'search' }, { ...adSet, name: 'EU' }])).toEqual([
+      'Whop does not accept optimizing for ad clicks on a Sales campaign: choose the Leads or Engagement objective (ad set "EU").',
+    ]);
+  });
+});
+

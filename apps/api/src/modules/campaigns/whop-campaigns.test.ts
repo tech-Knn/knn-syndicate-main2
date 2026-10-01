@@ -215,7 +215,7 @@ describe('submitting a Whop campaign', () => {
     expect(res.json<{ campaign: { status: string } }>().campaign.status).toBe('PENDING_APPROVAL');
   });
 
-  it('refuses a Whop budget under $5.00 and a narrowed age on a special ad category, in Whop\'s words (they left campaigns stuck at launch)', async () => {
+  it('refuses a Whop budget under $5.00, a narrowed age on a special ad category and a Sales objective, in Whop\'s words (they left campaigns stuck at launch)', async () => {
     const low = await create(whopDraft({ budgetMode: 'AD_SET', adSets: [adSet({ dailyBudgetCents: 300 })] }));
     await withSystem((tx) => tx.offer.create({ data: { orgId, campaignId: low.id, domainId, weightPct: 100, kind: 'PAID' } }));
     const r1 = await call('POST', `/api/campaigns/${low.id}/submit`, tokens.buyer);
@@ -227,6 +227,12 @@ describe('submitting a Whop campaign', () => {
     const r2 = await call('POST', `/api/campaigns/${narrowed.id}/submit`, tokens.buyer);
     expect(r2.statusCode).toBe(422);
     expect(r2.json<{ details: string[] }>().details).toContain('Whop does not let a special ad category campaign narrow the age range: set 18 to 65.');
+
+    const sales = await create(whopDraft({ objective: 'OUTCOME_SALES' }));
+    await withSystem((tx) => tx.offer.create({ data: { orgId, campaignId: sales.id, domainId, weightPct: 100, kind: 'PAID' } }));
+    const r3 = await call('POST', `/api/campaigns/${sales.id}/submit`, tokens.buyer);
+    expect(r3.statusCode).toBe(422);
+    expect(r3.json<{ details: string[] }>().details).toContain('Whop does not accept optimizing for ad clicks on a Sales campaign: choose the Leads or Engagement objective.');
 
     const fine = await create(whopDraft({ specialAdCategories: ['EMPLOYMENT'], adSets: [adSet({ ageMin: 18, ageMax: 65 })] }));
     await withSystem((tx) => tx.offer.create({ data: { orgId, campaignId: fine.id, domainId, weightPct: 100, kind: 'PAID' } }));
