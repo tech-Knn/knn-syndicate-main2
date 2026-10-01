@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prisma, withSystem } from '@knn/db';
-import { encryptToken, type FbAdInsightRow } from '@knn/fb';
+import { encryptToken, type FbAdInsightRow, type FetchAdInsightsParams } from '@knn/fb';
 import type { ChannelDayRevenue } from '@knn/adsense';
 import { ROLES, USER_STATUS } from '@knn/shared';
 import {
@@ -10,6 +10,8 @@ import {
   lateWhopDay,
   recentDays,
   runAttribution,
+  runFastAttribution,
+  shouldRunFastJob,
 } from './attribution.service.js';
 import { getUsdRate } from './fx.service.js';
 
@@ -41,6 +43,8 @@ interface Seeded {
 async function seedCampaign(opts: {
   day?: string;
   currency?: string;
+  /** The ad account's reporting timezone (Facebook labels its days in it). Default IST. */
+  timezone?: string;
   adCount: number;
   buyerCut?: number | null;
 }): Promise<Seeded> {
@@ -51,7 +55,7 @@ async function seedCampaign(opts: {
       await tx.user.update({ where: { id: buyerId }, data: { revenueCutPct: opts.buyerCut } });
     }
     const account = await tx.fbAdAccount.create({
-      data: { orgId, connectionId: connId, fbAccountId: `act_${chCounter}`, name: 'Acct', currency, timezone: 'Asia/Kolkata', status: '1' },
+      data: { orgId, connectionId: connId, fbAccountId: `act_${chCounter}`, name: 'Acct', currency, timezone: opts.timezone ?? 'Asia/Kolkata', status: '1' },
     });
     const channelCh = `ch-${suffix}-${chCounter++}`;
     const channel = await tx.channel.create({ data: { channelId: channelCh, status: 'ASSIGNED' } });
@@ -437,5 +441,155 @@ describe('recentDays', () => {
   it('returns the trailing window inclusive of the end day, in order', () => {
     expect(recentDays('2026-05-20', 3)).toEqual(['2026-05-18', '2026-05-19', '2026-05-20']);
     expect(recentDays('2026-03-01', 2)).toEqual(['2026-02-28', '2026-03-01']);
+  });
+});
+
+describe('attribution — Facebook days are IST days whatever timezone the buyer\'s ad account is in', () => {
+  const hourLabel = (h: number): string => `${String(h).padStart(2, '0')}:00:00 - ${String(h).padStart(2, '0')}:59:59`;
+  const stats = (seed: Seeded) => withSystem((tx) => tx.adStatsDaily.findMany({ where: { campaignId: seed.campaignId }, orderBy: { day: 'asc' } }));
+
+  /** A fetcher that records every call and answers the hourly breakdown from `hourly` (nothing else has data). */
+  function recordingFetch(adId: string, hourly: { day: string; hour: number; spendMinor: number }[]): { calls: FetchAdInsightsParams[]; fetchInsights: AttributionDeps['fetchInsights'] } {
+    const calls: FetchAdInsightsParams[] = [];
+    return {
+      calls,
+      fetchInsights: async (params): Promise<FbAdInsightRow[]> => {
+        calls.push(params);
+        if (params.breakdown !== 'hour') return [];
+        return hourly.map((h) => ({ fbAdId: adId, day: h.day, impressions: 10, clicks: 2, conversions: 1, spendMinor: h.spendMinor, dimValue: hourLabel(h.hour) }));
+      },
+    };
+  }
+
+  it('a Los Angeles account: its hours are summed into the IST day they really fall in, on the day AdSense credits', async () => {
+    const seed = await seedCampaign({ adCount: 1, timezone: 'America/Los_Angeles' });
+    const adId = seed.ads[0]!.fbAdId;
+    // DAY = 2026-05-20 (IST) = 18:30 UTC May 19 .. 18:30 UTC May 20 = Los Angeles (PDT, UTC-7) May 19 11:30 .. May 20 11:30.
+    const rec = recordingFetch(adId, [
+      { day: '2026-05-19', hour: 10, spendMinor: 999 }, // 22:30 IST May 19: another IST day
+      { day: '2026-05-19', hour: 12, spendMinor: 300 }, // 00:30 IST May 20
+      { day: '2026-05-20', hour: 11, spendMinor: 200 }, // 23:30 IST May 20
+      { day: '2026-05-20', hour: 12, spendMinor: 888 }, // 00:30 IST May 21: another IST day
+    ]);
+    await runAttribution([DAY], {
+      fetchInsights: rec.fetchInsights,
+      fetchAdsense: async (): Promise<ChannelDayRevenue[]> => [{ channelId: seed.channelCh, day: DAY, revenueMinor: 1000, currency: 'USD', afsClicks: 20 }],
+      getRate: getUsdRate,
+    });
+
+    const rows = await stats(seed);
+    expect(rows.map((r) => [r.day, r.spendMinor])).toEqual([[DAY, 500]]); // 300 + 200: only this IST day, and the other days' hours dropped
+    const revRows = await withSystem((tx) => tx.adRevenueDaily.findMany({ where: { campaignId: seed.campaignId } }));
+    expect(revRows.map((r) => r.day)).toEqual([DAY]); // spend and revenue are on the SAME day
+
+    // One widened hourly read replaced the daily read (one account-day either side of the IST window); the hour table reuses it.
+    const hourCalls = rec.calls.filter((c) => c.breakdown === 'hour');
+    expect(hourCalls).toHaveLength(1);
+    expect(hourCalls[0]).toMatchObject({ since: '2026-05-19', until: '2026-05-21' });
+    expect(rec.calls.filter((c) => c.breakdown === undefined)).toHaveLength(0);
+    const dim = await withSystem((tx) => tx.adStatDimDaily.findMany({ where: { campaignId: seed.campaignId, dim: 'hour' } }));
+    expect(dim.length).toBeGreaterThan(0);
+  });
+
+  it('is idempotent: pulling the same window again does not double the spend', async () => {
+    const seed = await seedCampaign({ adCount: 1, timezone: 'America/New_York' });
+    const rec = recordingFetch(seed.ads[0]!.fbAdId, [
+      { day: '2026-05-20', hour: 3, spendMinor: 120 }, // 07:00 UTC = 12:30 IST May 20
+      { day: '2026-05-20', hour: 4, spendMinor: 80 },
+    ]);
+    const deps: AttributionDeps = { fetchInsights: rec.fetchInsights, getRate: getUsdRate };
+    await runAttribution([DAY], deps);
+    await runAttribution([DAY], deps);
+    expect((await stats(seed)).map((r) => [r.day, r.spendMinor])).toEqual([[DAY, 200]]);
+  });
+
+  it('an IST-clock account (Asia/Calcutta is IST) keeps the plain daily read', async () => {
+    const seed = await seedCampaign({ adCount: 1, timezone: 'Asia/Calcutta' });
+    const calls: FetchAdInsightsParams[] = [];
+    await runAttribution([DAY], {
+      fetchInsights: async (params): Promise<FbAdInsightRow[]> => {
+        calls.push(params);
+        return params.breakdown ? [] : [{ fbAdId: seed.ads[0]!.fbAdId, day: DAY, impressions: 10, clicks: 2, conversions: 1, spendMinor: 700 }];
+      },
+      getRate: getUsdRate,
+    });
+    expect(calls.filter((c) => c.breakdown === undefined)).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ since: DAY, until: DAY });
+    expect((await stats(seed)).map((r) => [r.day, r.spendMinor])).toEqual([[DAY, 700]]);
+  });
+});
+
+describe('runFastAttribution (quarter-hour Whop + AdSense refresh)', () => {
+  // 06:30 UTC = 12:00 IST on DAY: not in the early-morning window where yesterday's Whop spend is re-read.
+  const NOON = new Date(`${DAY}T06:30:00Z`);
+
+  it('never reads Facebook, reads AdSense once, and re-allocates today\'s revenue from the Facebook rows already stored', async () => {
+    const seed = await seedCampaign({ adCount: 2 });
+    // The hourly pass has already stored today's Facebook rows (3:1 conversions) and nothing from AdSense yet.
+    await runAttribution([DAY], depsFor(seed, [
+      { fbAdId: seed.ads[0]!.fbAdId, impressions: 100, clicks: 9, conversions: 3, spendMinor: 1500 },
+      { fbAdId: seed.ads[1]!.fbAdId, impressions: 100, clicks: 9, conversions: 1, spendMinor: 1500 },
+    ], null));
+    expect((await adRevByFbId(seed)).size).toBe(0);
+
+    const fetchInsights = vi.fn(async (): Promise<FbAdInsightRow[]> => { throw new Error('the quarter-hour pass must not read Facebook'); });
+    const fetchAdsense = vi.fn(async (_p: { since: string; until: string }): Promise<ChannelDayRevenue[]> => [{ channelId: seed.channelCh, day: DAY, revenueMinor: 4000, currency: 'USD', afsClicks: 40 }]);
+    const whopEnabled = vi.fn(() => false);
+    await runFastAttribution(NOON, { fetchInsights, fetchAdsense, getRate: getUsdRate, whopStats: { enabled: whopEnabled } });
+
+    expect(fetchInsights).not.toHaveBeenCalled();
+    expect(fetchAdsense).toHaveBeenCalledTimes(1);
+    expect(fetchAdsense.mock.calls[0]![0]).toMatchObject({ since: DAY, until: DAY });
+    expect(whopEnabled).toHaveBeenCalledTimes(1); // today's Whop pass was attempted (dormant here: no Whop business)
+    const rev = await adRevByFbId(seed);
+    expect(rev.get(seed.ads[0]!.fbAdId)!.allocated).toBe(3000); // the same 3:1 split of $40.00 the hourly pass would give
+    expect(rev.get(seed.ads[1]!.fbAdId)!.allocated).toBe(1000);
+  });
+
+  it('early in the IST day it also re-reads yesterday\'s Whop spend, like the hourly pass', async () => {
+    const whopEnabled = vi.fn(() => false);
+    await runFastAttribution(new Date(`${DAY}T19:30:00Z`), { fetchInsights: async () => [], fetchAdsense: async () => [], getRate: getUsdRate, whopStats: { enabled: whopEnabled } });
+    // 19:30 UTC on DAY = 01:00 IST on the next day: today = DAY+1, late day = DAY.
+    expect(whopEnabled).toHaveBeenCalledTimes(2);
+    await runFastAttribution(NOON, { fetchInsights: async () => [], fetchAdsense: async () => [], getRate: getUsdRate, whopStats: { enabled: whopEnabled } });
+    expect(whopEnabled).toHaveBeenCalledTimes(3); // midday: only today
+  });
+
+  it('is idempotent: running it again changes nothing', async () => {
+    const seed = await seedCampaign({ adCount: 1 });
+    await runAttribution([DAY], depsFor(seed, [{ fbAdId: seed.ads[0]!.fbAdId, impressions: 10, clicks: 2, conversions: 1, spendMinor: 500 }], null));
+    const deps: AttributionDeps = {
+      fetchInsights: async () => [],
+      fetchAdsense: async (): Promise<ChannelDayRevenue[]> => [{ channelId: seed.channelCh, day: DAY, revenueMinor: 2500, currency: 'USD', afsClicks: 30 }],
+      getRate: getUsdRate,
+      whopStats: { enabled: () => false },
+    };
+    await runFastAttribution(NOON, deps);
+    const first = await adRevByFbId(seed);
+    await runFastAttribution(NOON, deps);
+    await runFastAttribution(NOON, deps);
+    expect(await adRevByFbId(seed)).toEqual(first);
+    expect(await withSystem((tx) => tx.adRevenueDaily.count({ where: { campaignId: seed.campaignId, day: DAY } }))).toBe(1);
+  });
+});
+
+describe('shouldRunFastJob', () => {
+  const MIN = 60_000;
+  const now = 1_000_000_000_000;
+
+  it('runs a fresh job when nothing ran recently', () => {
+    expect(shouldRunFastJob({ enqueuedAt: now - MIN, now, lastFullRunAt: now - 14 * MIN, lastFastRunAt: now - 15 * MIN })).toEqual({ run: true });
+    expect(shouldRunFastJob({ enqueuedAt: now, now, lastFullRunAt: null, lastFastRunAt: null })).toEqual({ run: true });
+  });
+
+  it('drops a job that waited behind a long pass for more than 10 minutes', () => {
+    expect(shouldRunFastJob({ enqueuedAt: now - 11 * MIN, now, lastFullRunAt: null, lastFastRunAt: null })).toEqual({ run: false, reason: 'stale' });
+    expect(shouldRunFastJob({ enqueuedAt: now - 10 * MIN, now, lastFullRunAt: null, lastFastRunAt: null })).toEqual({ run: true });
+  });
+
+  it('skips one that starts within 5 minutes of a full pass or of the last quarter-hour pass', () => {
+    expect(shouldRunFastJob({ enqueuedAt: now - 2 * MIN, now, lastFullRunAt: now - 3 * MIN, lastFastRunAt: null })).toEqual({ run: false, reason: 'just-refreshed' });
+    expect(shouldRunFastJob({ enqueuedAt: now - 2 * MIN, now, lastFullRunAt: null, lastFastRunAt: now - 4 * MIN })).toEqual({ run: false, reason: 'just-refreshed' });
+    expect(shouldRunFastJob({ enqueuedAt: now - 2 * MIN, now, lastFullRunAt: now - 6 * MIN, lastFastRunAt: now - 20 * MIN })).toEqual({ run: true });
   });
 });

@@ -58,6 +58,33 @@ export function zonedStartOfDayUtc(day: string, tz: string = DEFAULT_BUSINESS_TZ
 }
 
 /**
+ * UTC instant of a wall-clock hour (`hour` 0-23 on `day`, "YYYY-MM-DD") in `tz`. Correct on the days a zone changes its
+ * clocks: the offset is read at the instant itself, not at the day's start.
+ */
+export function zonedInstantUtc(day: string, hour: number, tz: string): Date {
+  const wallMs = Date.parse(`${day}T${String(hour).padStart(2, '0')}:00:00Z`);
+  if (Number.isNaN(wallMs)) throw new Error(`Invalid wall-clock time: ${day} ${hour}h`);
+  const first = wallMs - timeZoneOffsetMs(new Date(wallMs), tz);
+  return new Date(wallMs - timeZoneOffsetMs(new Date(first), tz));
+}
+
+/**
+ * True when `tz` keeps the same wall clock as the business timezone all year (IST itself, `Asia/Calcutta`, its alias, ...),
+ * so a day in that zone IS a business day. Anything else, or a zone name this runtime does not know, is `false`.
+ */
+export function sharesBusinessClock(tz: string, businessTz: string = DEFAULT_BUSINESS_TZ): boolean {
+  if (tz === businessTz) return true;
+  try {
+    const year = new Date().getUTCFullYear();
+    return [Date.UTC(year, 0, 1), Date.UTC(year, 6, 1)].every(
+      (ms) => timeZoneOffsetMs(new Date(ms), tz) === timeZoneOffsetMs(new Date(ms), businessTz),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Add `delta` calendar days to a business-day string ("YYYY-MM-DD"), returning a
  * new "YYYY-MM-DD". Operates in the pure calendar-day domain (the day strings),
  * independent of any tz — correct for stepping the daily bucket keys (D4).

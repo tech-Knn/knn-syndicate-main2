@@ -21,3 +21,11 @@ export async function markSyncRun(key: string): Promise<void> {
     }),
   );
 }
+
+/** When a scheduled sync last finished (ms since epoch), or null if it never has / the stored value is unreadable. */
+export async function lastSyncRunAt(key: string): Promise<number | null> {
+  const row = await withSystem((tx) => tx.platformSetting.findUnique({ where: { key }, select: { value: true } }));
+  const ms = row ? Date.parse(row.value) : NaN;
+  return Number.isNaN(ms) ? null : ms;
+}
+

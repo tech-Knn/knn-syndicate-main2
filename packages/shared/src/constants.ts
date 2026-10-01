@@ -77,10 +77,14 @@ export const SYNC_STATE_KEYS = {
   FB_STATUS: 'sync.fb_status.at',
   /** platform_settings key: last spend/revenue attribution run (FB insights + AdSense). */
   METRICS: 'sync.metrics.at',
+  /** platform_settings key: last quarter-hour Whop spend + AdSense revenue refresh (Facebook is NOT part of it).
+   *  Not shown to buyers: the indicator above stays tied to the hourly pass so a Facebook campaign never looks fresher than it is. */
+  METRICS_FAST: 'sync.metrics_fast.at',
 } as const;
 
 /** Buyer-facing cadence (seconds) for each scheduled sync — drives the "next update in Y" hint.
- *  Keep in lockstep with the worker crons: status every 30 min; metrics hourly (at :15). */
+ *  Keep in lockstep with the worker crons: status every 30 min; metrics hourly (at :15). Whop spend and AdSense
+ *  revenue also refresh at the other quarter hours (`METRICS_FAST`), which the hourly hint deliberately ignores. */
 export const SYNC_INTERVALS_SEC = {
   FB_STATUS: 30 * 60,
   METRICS: 60 * 60,

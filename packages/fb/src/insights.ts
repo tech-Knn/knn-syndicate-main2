@@ -10,10 +10,10 @@ import { graphRequest } from './graph.js';
  * ACCOUNT's currency (major units); we store it as native minor units (×100, the
  * 2-decimal-currency assumption) plus a USD conversion done by the caller (D15).
  *
- * Day buckets use FB's `date_start` (the ad account's reporting timezone). For an
- * IST-timezone ad account this equals the IST business day the rest of the platform
- * keys on (D4); for other tz accounts it can differ by the offset — a known
- * approximation (hourly re-bucketing would remove it).
+ * Day buckets use FB's `date_start`, which is a day in the AD ACCOUNT's reporting timezone. For an
+ * IST-clock ad account that is the IST business day the rest of the platform keys on (D4). For any other
+ * account the worker asks for the `hour` breakdown instead and re-buckets each hour into the IST day it
+ * really falls in (`apps/worker/src/attribution/fb-day-buckets.ts`, D35), so nothing here needs to know.
  */
 
 /** A single FB "action" (conversion/engagement) row from insights. */

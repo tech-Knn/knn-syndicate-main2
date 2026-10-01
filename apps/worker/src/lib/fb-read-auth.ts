@@ -7,6 +7,8 @@ export interface ReadAuth {
   fbAccountId: string;
   /** The account's native currency (same for a given Meta account across connections) — for FX. */
   currency: string;
+  /** The ad account's reporting timezone (IANA): Facebook labels each insights day in it. */
+  timezone: string;
   token: string;
   /** The issuing app, so `appsecret_proof` is signed with that app's secret (DATA/VERIFY/LAUNCH). */
   appKind: FbAppKind;
@@ -46,12 +48,13 @@ export async function resolveCampaignReadAuth(
     const live = await db.fbAdAccount.findFirst({
       where: { fbAccountId: stableId, connection: { status: FbConnectionStatus.ACTIVE, tokenExpiresAt: { gt: new Date() } } },
       orderBy: { updatedAt: 'desc' },
-      select: { fbAccountId: true, currency: true, connection: { select: { id: true, accessTokenEnc: true, appKind: true } } },
+      select: { fbAccountId: true, currency: true, timezone: true, connection: { select: { id: true, accessTokenEnc: true, appKind: true } } },
     });
     if (!live) return null;
     return {
       fbAccountId: live.fbAccountId,
       currency: live.currency,
+      timezone: live.timezone,
       token: decryptToken(live.connection.accessTokenEnc),
       appKind: live.connection.appKind as FbAppKind,
       connectionId: live.connection.id
