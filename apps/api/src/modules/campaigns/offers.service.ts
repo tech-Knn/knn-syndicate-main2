@@ -53,6 +53,13 @@ export interface ArticleVariantOption {
   slug: string;
 }
 
+/**
+ * The AFS account's label is the platform's own name for its Google accounts (e.g. "AFS 1 — Oarex"): a buyer or a
+ * company admin picks a website, they do not need to know which Google account sits behind it. Only the platform
+ * (super-admin) sees it.
+ */
+const afsLabelFor = (auth: AuthContext, label: string | null): string | null => (auth.role === ROLES.SUPER_ADMIN ? label : null);
+
 /** READY articles in the buyer's org — the options for an offer's article-variant (A/B) picker. */
 export async function listArticleVariants(auth: AuthContext): Promise<ArticleVariantOption[]> {
   return runScoped(auth, (tx) =>
@@ -76,7 +83,7 @@ export async function listOfferDomains(auth: AuthContext): Promise<OfferDomainOp
       select: { id: true, host: true, afsAccount: { select: { label: true } } },
       orderBy: { host: 'asc' },
     });
-    return rows.map((d) => ({ id: d.id, host: d.host, afsLabel: d.afsAccount.label }));
+    return rows.map((d) => ({ id: d.id, host: d.host, afsLabel: afsLabelFor(auth, d.afsAccount.label) }));
   });
 }
 
@@ -124,7 +131,7 @@ export async function listOffers(auth: AuthContext, campaignId: string): Promise
       id: o.id,
       domainId: o.domainId,
       host: o.domain.host,
-      afsLabel: o.domain.afsAccount.label,
+      afsLabel: afsLabelFor(auth, o.domain.afsAccount.label),
       weightPct: o.weightPct,
       kind: o.kind,
       channelId: o.channelRef ? (chById.get(o.channelRef) ?? null) : null,

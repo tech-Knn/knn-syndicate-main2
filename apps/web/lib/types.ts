@@ -193,6 +193,9 @@ export interface Campaign {
   whopPage?: { whopId: string; name: string | null } | null;
   articleId: string | null;
   channelId: string | null;
+  /** The go-link host and (Cloaker only) the white domain recorded at launch. `whiteDomainHost` null = a Normal-mode campaign. */
+  redirectDomainHost: string | null;
+  whiteDomainHost: string | null;
   fbCampaignId: string | null;
   reviewedById: string | null;
   reviewedAt: string | null;

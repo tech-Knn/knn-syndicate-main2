@@ -1,323 +1,193 @@
 'use client';
 
-import { use, useCallback, useEffect, useState } from 'react';
-import { whopEffectiveStatus } from '@knn/shared';
+import Link from 'next/link';
+import { type ReactNode, use, useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { CampaignWizard } from '@/components/campaign-wizard';
-import { FbStatusBadge } from '@/components/fb-status-badge';
+import { IconAlert, IconAnalytics, IconCopy, IconExternal } from '@/components/icons';
+import { Banner, Button, Skeleton, useConfirm, useToast } from '@/components/ui';
 import { ApiError, campaigns } from '@/lib/api';
-import { Banner, Button, Card, Spinner, useConfirm, useToast } from '@/components/ui';
-import { type Campaign, type CampaignAdSet } from '@/lib/types';
+import type { Campaign } from '@/lib/types';
+import { AdsTab } from './ads';
+import styles from './campaign.module.css';
 import { GoogleSignalsEditor } from './google-signals-editor';
+import { CampaignHeader } from './header';
+import { KpiStrip } from './kpis';
 import { OffersEditor } from './offers-editor';
+import { OverviewTab } from './overview';
+import { type MenuEntry, SectionBoundary, StatusPill, type TabDef, Tabs } from './parts';
+import { RoutingTab } from './routing';
+import { HAS_DELIVERY, networkName, statusMeta } from './status';
+import { LAUNCHABLE, StatusCard } from './status-card';
+import { type RangeKey, useCampaignStats } from './use-stats';
 
-/** The ad network a campaign runs on, in words (D33). Every live control says it instead of assuming Facebook. */
-const networkName = (c: Pick<Campaign, 'adProvider'>): string => (c.adProvider === 'WHOP' ? 'Whop' : 'Facebook');
-/**
- * The smallest daily budget the UI lets a buyer type, in cents. Facebook's floor is $2.00; Whop states its own and
- * refuses anything below it in words, so for Whop only a non-budget (under one cent) is stopped here.
- */
-const minBudgetCents = (c: Pick<Campaign, 'adProvider'>): number => (c.adProvider === 'WHOP' ? 1 : 200);
-const minBudgetMessage = (c: Pick<Campaign, 'adProvider'>): string => (c.adProvider === 'WHOP' ? 'Enter a daily budget of at least $0.01.' : 'Minimum daily budget is $2.00 (Facebook minimum).');
+type TabId = 'overview' | 'ads' | 'monetization' | 'routing' | 'setup';
+const TAB_IDS: TabId[] = ['overview', 'ads', 'monetization', 'routing', 'setup'];
+const TAB_LABEL: Record<TabId, string> = { overview: 'Overview', ads: 'Ads', monetization: 'Monetization', routing: 'Routing', setup: 'Setup' };
+const POLL_MS = 8000;
 
-/** The campaign's effective daily budget (cents) + whether it's live-editable here. CBO → the
- *  campaign budget; single-ad-set ABO → that ad set's budget; multi-ad-set ABO → edit per ad set. */
-function liveBudget(c: Campaign): { cents: number | null; editable: boolean; perAdSet: boolean } {
-  if (c.budgetMode === 'CAMPAIGN') return { cents: c.dailyBudgetCents, editable: true, perAdSet: false };
-  const sets = c.adSets ?? [];
-  if (sets.length === 1) return { cents: sets[0]!.dailyBudgetCents, editable: true, perAdSet: false };
-  return { cents: null, editable: false, perAdSet: true };
-}
-
-/**
- * Live budget editor (the M1 daily-driver action) — change a launched campaign's daily budget and
- * push it to Facebook instantly, WITHOUT releasing the AdSense channel or re-queuing for approval.
- * Quick ±/scale buttons make trimming a loser / scaling a winner a one-click move.
- */
-function LiveBudget({
-  campaign,
-  onSaved,
-}: {
-  campaign: Campaign;
-  onSaved: (next: { adSetId?: string; cents: number }) => void;
-}) {
-  const toast = useToast();
-  const { cents, editable, perAdSet } = liveBudget(campaign);
-  const [draft, setDraft] = useState<string>(cents != null ? (cents / 100).toFixed(2) : '');
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    setDraft(cents != null ? (cents / 100).toFixed(2) : '');
-  }, [cents]);
-
-  const commit = async (nextCents: number): Promise<void> => {
-    const rounded = Math.round(nextCents);
-    if (!Number.isFinite(rounded) || rounded < minBudgetCents(campaign)) {
-      toast.error(minBudgetMessage(campaign));
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await campaigns.setBudget(campaign.id, rounded);
-      onSaved({ cents: res.dailyBudgetCents });
-      toast.success(`Daily budget set to $${(res.dailyBudgetCents / 100).toFixed(2)} — live on ${networkName(campaign)}.`);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not update the budget.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (perAdSet) {
-    const sets = campaign.adSets ?? [];
-    const total = sets.reduce((sum, s) => sum + (s.dailyBudgetCents ?? 0), 0);
-    const rowsEditable = campaign.status === 'ACTIVE' || campaign.status === 'PAUSED';
-    return (
-      <Card style={{ padding: '0.9rem 1.1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
-          <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)' }}>DAILY BUDGET · PER AD SET</span>
-          <span style={{ fontSize: '0.72rem', color: 'var(--muted-2)' }}>
-            Each ad set carries its own budget (ABO). Saving pushes to {networkName(campaign)} instantly — no channel release, no
-            re-review.
-          </span>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          {sets.map((set, i) => (
-            <AdSetBudgetRow
-              key={set.id}
-              campaignId={campaign.id}
-              campaign={campaign}
-              adSet={set}
-              index={i}
-              editable={rowsEditable}
-              onSaved={(c) => onSaved({ adSetId: set.id, cents: c })}
-            />
-          ))}
-        </div>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'baseline',
-            gap: '0.75rem',
-            borderTop: '1px solid var(--border)',
-            paddingTop: '0.6rem',
-          }}
-        >
-          <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Total daily budget</span>
-          <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--cream)', fontVariantNumeric: 'tabular-nums' }}>
-            ${(total / 100).toFixed(2)}{' '}
-            <span style={{ fontSize: '0.78rem', fontWeight: 400, color: 'var(--muted-2)' }}>
-              / day across {sets.length} ad sets
-            </span>
-          </span>
-        </div>
-      </Card>
-    );
-  }
-
-  const bump = (factor: number): void => void commit(Math.max(minBudgetCents(campaign), (cents ?? 0) * factor));
-
+function PageSkeleton() {
   return (
-    <Card style={{ padding: '0.9rem 1.1rem', display: 'flex', alignItems: 'center', gap: '0.9rem', flexWrap: 'wrap' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
-        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)' }}>DAILY BUDGET</span>
-        <span style={{ fontSize: '0.72rem', color: 'var(--muted-2)' }}>Pushes to {networkName(campaign)} instantly — no channel release, no re-review.</span>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-        <span style={{ color: 'var(--muted)' }}>$</span>
-        <input
-          type="number"
-          min={campaign.adProvider === 'WHOP' ? 0.01 : 2}
-          step="0.01"
-          value={draft}
-          disabled={!editable || busy}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && void commit(Math.round(Number(draft) * 100))}
-          aria-label="Daily budget in dollars"
-          style={{ width: '6.5rem', background: 'var(--bg)', border: '1px solid var(--border-interactive)', borderRadius: 'var(--radius-sm)', color: 'var(--cream)', padding: '0.5rem 0.6rem', fontSize: '0.95rem' }}
-        />
-        <Button onClick={() => void commit(Math.round(Number(draft) * 100))} loading={busy} disabled={!editable}>
-          Save
-        </Button>
-      </div>
-      <div style={{ display: 'flex', gap: '0.35rem' }} aria-label="Quick budget scaling">
-        <Button variant="ghost" onClick={() => bump(0.8)} disabled={!editable || busy} title="Cut 20%">−20%</Button>
-        <Button variant="ghost" onClick={() => bump(1.2)} disabled={!editable || busy} title="Scale 20%">+20%</Button>
-        <Button variant="ghost" onClick={() => bump(1.5)} disabled={!editable || busy} title="Scale 50%">+50%</Button>
-      </div>
-    </Card>
-  );
-}
-
-/** One ad set's live daily-budget editor (multi-ad-set ABO) — saves via the per-ad-set endpoint,
- *  which pushes to the ad network instantly without releasing the channel or re-queuing for approval. */
-function AdSetBudgetRow({
-  campaignId,
-  campaign,
-  adSet,
-  index,
-  editable,
-  onSaved,
-}: {
-  campaignId: string;
-  campaign: Campaign;
-  adSet: CampaignAdSet;
-  index: number;
-  editable: boolean;
-  onSaved: (cents: number) => void;
-}) {
-  const toast = useToast();
-  const cents = adSet.dailyBudgetCents;
-  const label = adSet.name || `Ad set ${index + 1}`;
-  const [draft, setDraft] = useState<string>(cents != null ? (cents / 100).toFixed(2) : '');
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    setDraft(cents != null ? (cents / 100).toFixed(2) : '');
-  }, [cents]);
-
-  const commit = async (nextCents: number): Promise<void> => {
-    const rounded = Math.round(nextCents);
-    if (!Number.isFinite(rounded) || rounded < minBudgetCents(campaign)) {
-      toast.error(minBudgetMessage(campaign));
-      return;
-    }
-    if (rounded === cents) return; // no-op — don't spend a write at the ad network
-    setBusy(true);
-    try {
-      const res = await campaigns.setAdSetBudget(campaignId, adSet.id, rounded);
-      onSaved(res.dailyBudgetCents);
-      toast.success(`${label}: daily budget set to $${(res.dailyBudgetCents / 100).toFixed(2)} — live on ${networkName(campaign)}.`);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not update the budget.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const bump = (factor: number): void => void commit(Math.max(minBudgetCents(campaign), (cents ?? 0) * factor));
-
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-      <span style={{ flex: '1 1 140px', minWidth: 0, color: 'var(--cream)', fontWeight: 500, fontSize: '0.9rem' }}>
-        {label}
-      </span>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-        <span style={{ color: 'var(--muted)' }}>$</span>
-        <input
-          type="number"
-          min={campaign.adProvider === 'WHOP' ? 0.01 : 2}
-          step="0.01"
-          value={draft}
-          disabled={!editable || busy}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && void commit(Math.round(Number(draft) * 100))}
-          aria-label={`Daily budget for ${label} in dollars`}
-          style={{ width: '6rem', background: 'var(--bg)', border: '1px solid var(--border-interactive)', borderRadius: 'var(--radius-sm)', color: 'var(--cream)', padding: '0.45rem 0.55rem', fontSize: '0.9rem' }}
-        />
-        <Button onClick={() => void commit(Math.round(Number(draft) * 100))} loading={busy} disabled={!editable}>
-          Save
-        </Button>
-      </div>
-      <div style={{ display: 'flex', gap: '0.35rem' }} aria-label={`Quick budget scaling for ${label}`}>
-        <Button variant="ghost" onClick={() => bump(0.8)} disabled={!editable || busy} title="Cut 20%">
-          −20%
-        </Button>
-        <Button variant="ghost" onClick={() => bump(1.2)} disabled={!editable || busy} title="Scale 20%">
-          +20%
-        </Button>
-        <Button variant="ghost" onClick={() => bump(1.5)} disabled={!editable || busy} title="Scale 50%">
-          +50%
-        </Button>
+    <div className={styles.page} aria-busy="true" aria-label="Loading campaign">
+      <Skeleton className={styles.skel} />
+      <div style={{ height: 56 }} />
+      <Skeleton className={styles.skel} />
+      <div className={styles.kpiGrid}>
+        {Array.from({ length: 6 }, (_, i) => (
+          <Skeleton key={i} className={styles.kpiSkel} />
+        ))}
       </div>
     </div>
   );
 }
 
-/**
- * What Whop reports about a Whop campaign (D33): its delivery state, and the issues on it, which is where Meta's ad
- * review rejections arrive, in words. Also the reason a launch was stopped (payment method, page, pixel, ...), so a
- * buyer whose auto-launch failed while they were away sees why without reading a log.
- */
-function WhopStatus({ campaign }: { campaign: Campaign }) {
-  if (campaign.adProvider !== 'WHOP') return null;
-  const issues = campaign.whopIssues ?? [];
-  const launchError = issues.find((i) => i.id === 'knn-launch');
-  const reported = issues.filter((i) => i.id !== 'knn-launch');
-  const launched = campaign.status === 'ACTIVE' || campaign.status === 'PAUSED' || campaign.status === 'META_REJECTED';
-  const blocked = launchError && (campaign.status === 'PROCESSING' || campaign.status === 'BATCHED');
-  if (!blocked && !(launched && (campaign.whopDeliveryStatus || reported.length > 0))) return null;
+/** "Not found" (gone, or not yours) and "could not load" (a network or server problem) are different: only the second is worth a retry. */
+function LoadProblem({ kind, onRetry }: { kind: 'missing' | 'failed'; onRetry: () => void }) {
   return (
-    <>
-      {blocked && (
-        <Banner tone="warning" title="Whop did not launch this campaign">
-          {launchError.message.replace(/[.!?:]*\s*$/, '.')}
-          {/\blaunch again\b/i.test(launchError.message) ? '' : ' Fix that, then launch again.'} What Whop already holds is reused.
-        </Banner>
-      )}
-      {launched && (campaign.whopDeliveryStatus || reported.length > 0) && (
-        <Card style={{ padding: '0.9rem 1.1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)' }}>WHOP DELIVERY</span>
-            <FbStatusBadge status={whopEffectiveStatus(campaign.whopDeliveryStatus)} />
-            {campaign.whopDeliveryStatus && (
-              <span style={{ fontSize: '0.72rem', color: 'var(--muted-2)' }}>Whop says “{campaign.whopDeliveryStatus.replace(/_/g, ' ')}”. Refreshed every 30 minutes.</span>
-            )}
-          </div>
-          {reported.length > 0 && (
-            <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.85rem', color: 'var(--cream)' }}>
-              {reported.map((i) => (
-                <li key={i.id}>{i.message}</li>
-              ))}
-            </ul>
-          )}
-        </Card>
-      )}
-    </>
+    <section className={styles.panel} role="alert">
+      <div className={styles.empty}>
+        <IconAlert size={26} />
+        <strong>{kind === 'missing' ? 'Campaign not found' : 'We couldn’t load this campaign'}</strong>
+        <span>
+          {kind === 'missing'
+            ? 'It may have been deleted, or you may not have access to it.'
+            : 'That looks like a network or server problem, not a problem with the campaign. Nothing has changed.'}
+        </span>
+        <div className={styles.inlineRow}>
+          {kind === 'failed' && <Button onClick={onRetry}>Try again</Button>}
+          <Link href="/dashboard/campaigns" className={styles.linkBtn}>
+            Back to campaigns
+          </Link>
+        </div>
+      </div>
+    </section>
   );
 }
 
-// Statuses where the campaign can be pushed live to its ad network (it has a channel). Manual
-// launch is available to the owning buyer + admins (the API owner-scopes it).
-const LAUNCHABLE = new Set(['PROCESSING', 'BATCHED']);
-// Pre-launch states that can be reopened to DRAFT to fix config (releases the channel).
-// Excludes LAUNCHING/ACTIVE/PAUSED (already at the ad network — pause first) and the review
-// states (DRAFT/PENDING/REJECTED already have their own withdraw/revise paths).
-const REOPENABLE = new Set(['PROCESSING', 'BATCHED', 'QUEUED_NO_CHANNEL']);
-// Live at the ad network → the owning buyer (or an admin) can pause/resume delivery. The API
-// owner-scopes it and flips the network's campaign status + ours (ACTIVE ↔ PAUSED).
-const LIVE_TOGGLEABLE = new Set(['ACTIVE', 'PAUSED']);
-
-export default function EditCampaignPage({ params }: { params: Promise<{ id: string }> }) {
+export default function CampaignPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  // Keyed by id: moving from one campaign to another starts clean instead of showing the last one until the new one loads.
+  return <CampaignView key={id} id={id} />;
+}
+
+function CampaignView({ id }: { id: string }) {
+  const router = useRouter();
   const toast = useToast();
   const confirm = useConfirm();
-  const [campaign, setCampaign] = useState<Campaign | null | 'error'>(null);
+  const [campaign, setCampaign] = useState<Campaign | null>(null);
+  const [problem, setProblem] = useState<'missing' | 'failed' | null>(null);
   const [launching, setLaunching] = useState(false);
   const [reopening, setReopening] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [cloning, setCloning] = useState(false);
   const [note, setNote] = useState<{ tone: 'success' | 'info'; text: string } | null>(null);
+  const [tab, setTab] = useState<TabId>('overview');
+  // Tabs already opened stay mounted (hidden), so what someone has typed in one is not lost by looking at another.
+  const [opened, setOpened] = useState<Set<TabId>>(() => new Set<TabId>(['overview']));
+  const [range, setRange] = useState<RangeKey>('7d');
+  const loaded = useRef(false);
 
   const load = useCallback(() => {
     void campaigns
       .get(id)
-      .then((c) => setCampaign(c))
-      .catch(() => setCampaign('error'));
+      .then((c) => {
+        loaded.current = true;
+        setCampaign(c);
+        setProblem(null);
+      })
+      .catch((err: unknown) => {
+        // A refresh that fails (a network blip while polling) must not replace a page that is already showing.
+        if (loaded.current) return;
+        setProblem(err instanceof ApiError && [400, 403, 404].includes(err.status) ? 'missing' : 'failed');
+      });
   }, [id]);
   useEffect(() => load(), [load]);
 
-  if (campaign === 'error') {
-    return <Banner tone="error" title="Campaign not found">We couldn’t load this campaign. It may have been deleted or you don’t have access.</Banner>;
-  }
-  if (campaign === null) {
+  // A launch takes a moment and finishes on the server: follow it until the status changes (not while the tab is hidden).
+  const status = campaign ? campaign.status : null;
+  useEffect(() => {
+    if (status !== 'LAUNCHING') return;
+    const t = setInterval(() => {
+      if (!document.hidden) load();
+    }, POLL_MS);
+    return () => clearInterval(t);
+  }, [status, load]);
+
+  // The campaign's name in the browser tab and the history, so ten open campaigns are not ten identical tabs.
+  const name = campaign?.name;
+  useEffect(() => {
+    if (!name) return;
+    const before = document.title;
+    document.title = `${name} · KNN Syndicate`;
+    return () => {
+      document.title = before;
+    };
+  }, [name]);
+
+  // The open tab lives in the address (#ads): a link, a reload, and the back button all land where they should.
+  useEffect(() => {
+    const fromHash = (): void => {
+      const h = window.location.hash.replace('#', '') as TabId;
+      if (TAB_IDS.includes(h)) {
+        setTab(h);
+        setOpened((o) => (o.has(h) ? o : new Set(o).add(h)));
+      }
+    };
+    fromHash();
+    window.addEventListener('hashchange', fromHash);
+    return () => window.removeEventListener('hashchange', fromHash);
+  }, []);
+  const pickTab = (t: TabId): void => {
+    setTab(t);
+    setOpened((o) => (o.has(t) ? o : new Set(o).add(t)));
+    window.history.replaceState(null, '', `#${t}`);
+  };
+
+  // Once the status card has scrolled away, its main action moves into the sticky tab bar.
+  const statusRef = useRef<HTMLDivElement | null>(null);
+  const [statusInView, setStatusInView] = useState(true);
+  useEffect(() => {
+    const el = statusRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(([entry]) => setStatusInView(entry?.isIntersecting ?? true), { rootMargin: '-64px 0px 0px 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [status]);
+
+  const c = campaign;
+  const stats = useCampaignStats(id, c != null && HAS_DELIVERY.has(c.status), range);
+
+  if (problem && !c) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}>
-        <Spinner />
+      <LoadProblem
+        kind={problem}
+        onRetry={() => {
+          setProblem(null);
+          load();
+        }}
+      />
+    );
+  }
+  if (!c) return <PageSkeleton />;
+
+  const noteBanner = note && (
+    <Banner tone={note.tone} onDismiss={() => setNote(null)}>
+      {note.text}
+    </Banner>
+  );
+
+  // A draft is still being built: the wizard is the page (with the note, so "reopened" is still acknowledged).
+  if (c.status === 'DRAFT') {
+    return (
+      <div className={styles.page}>
+        {noteBanner}
+        <CampaignWizard campaign={c} />
       </div>
     );
   }
 
-  const c = campaign;
+  const net = networkName(c);
+
   const launch = async (): Promise<void> => {
     setLaunching(true);
     setNote(null);
@@ -356,7 +226,7 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
     try {
       const updated = await campaigns.reopen(c.id);
       setCampaign(updated);
-      setNote({ tone: 'success', text: 'Campaign reopened — it\'s now an editable draft. Make your changes and submit again.' });
+      setNote({ tone: 'success', text: 'Campaign reopened — it’s now an editable draft. Make your changes and submit again.' });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Reopen failed.');
     } finally {
@@ -365,12 +235,11 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
   };
 
   const toggleActive = async (active: boolean): Promise<void> => {
-    // Pausing is destructive (stops live delivery + spend) — confirm first.
-    // Resuming is non-destructive, so it stays single-click.
+    // Pausing is destructive (stops live delivery + spend): confirm first. Resuming is non-destructive.
     if (!active) {
       const ok = await confirm({
         title: 'Pause this campaign?',
-        body: `Pausing stops live delivery on ${networkName(c)} and halts ad spend. You can resume anytime.`,
+        body: `Pausing stops live delivery on ${net} and halts ad spend. You can resume anytime.`,
         confirmLabel: 'Pause campaign',
         tone: 'danger',
       });
@@ -380,8 +249,9 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
     setNote(null);
     try {
       const res = active ? await campaigns.resume(c.id) : await campaigns.pause(c.id);
-      setCampaign({ ...c, status: res.status as Campaign['status'] });
-      setNote({ tone: 'success', text: active ? `Campaign resumed — ads are live on ${networkName(c)} again.` : 'Campaign paused — ad delivery (and spend) is stopped. Resume anytime.' });
+      setCampaign((prev) => (prev ? { ...prev, status: res.status as Campaign['status'] } : prev));
+      setNote({ tone: 'success', text: active ? `Campaign resumed — ads are live on ${net} again.` : 'Campaign paused — ad delivery (and spend) is stopped. Resume anytime.' });
+      stats.reload();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not change campaign status.');
     } finally {
@@ -389,103 +259,135 @@ export default function EditCampaignPage({ params }: { params: Promise<{ id: str
     }
   };
 
+  const clone = async (): Promise<void> => {
+    setCloning(true);
+    try {
+      const copy = await campaigns.clone(c.id);
+      toast.success('Copy created — it opens as a draft you can edit.');
+      router.push(`/dashboard/campaigns/${copy.id}`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not clone the campaign.');
+    } finally {
+      setCloning(false);
+    }
+  };
+
+  const onBudgetSaved = (next: { adSetId?: string; cents: number }): void =>
+    setCampaign((prev) => {
+      if (!prev) return prev;
+      if (next.adSetId) return { ...prev, adSets: prev.adSets.map((s) => (s.id === next.adSetId ? { ...s, dailyBudgetCents: next.cents } : s)) };
+      return prev.budgetMode === 'CAMPAIGN'
+        ? { ...prev, dailyBudgetCents: next.cents }
+        : { ...prev, adSets: prev.adSets.map((s, i) => (i === 0 ? { ...s, dailyBudgetCents: next.cents } : s)) };
+    });
+
+  // A campaign Meta turned down has nothing to measure: don't show a row of zeros.
+  const t = stats.data?.totals;
+  const noActivity = Boolean(t) && t!.spendUsd === 0 && t!.impressions === 0 && t!.clicks === 0 && t!.conversions === 0;
+  const showKpis = HAS_DELIVERY.has(c.status) && !(c.status === 'META_REJECTED' && noActivity);
+
+  const compact = (
+    <>
+      <StatusPill meta={statusMeta(c)} />
+      {c.status === 'ACTIVE' && (
+        <Button variant="danger" onClick={() => void toggleActive(false)} loading={toggling}>
+          Pause
+        </Button>
+      )}
+      {c.status === 'PAUSED' && (
+        <Button onClick={() => void toggleActive(true)} loading={toggling}>
+          Resume
+        </Button>
+      )}
+      {LAUNCHABLE.has(c.status) && (
+        <Button onClick={() => void launch()} loading={launching} disabled={reopening}>
+          {`Launch to ${net}`}
+        </Button>
+      )}
+    </>
+  );
+
+  const adTotal = c.adSets.reduce((n, s) => n + (s.ads ?? []).length, 0);
+  const tabs: TabDef<TabId>[] = TAB_IDS.map((tid) => ({ id: tid, label: TAB_LABEL[tid], ...(tid === 'ads' ? { count: adTotal } : {}) }));
+
+  const menu: MenuEntry[] = [
+    { key: 'analytics', label: 'Open in Analytics', href: `/dashboard/analytics?campaign=${c.id}`, icon: <IconAnalytics size={16} /> },
+    { key: 'clone', label: cloning ? 'Cloning…' : 'Clone campaign', icon: <IconCopy size={16} />, onSelect: () => void clone(), disabled: cloning },
+    {
+      key: 'copy-id',
+      label: 'Copy campaign ID',
+      icon: <IconCopy size={16} />,
+      onSelect: () => void navigator.clipboard?.writeText(c.id).then(() => toast.success('Campaign ID copied.')).catch(() => toast.error('Could not copy. The ID is in the address bar.')),
+      separatorBefore: true,
+    },
+    ...(c.adProvider === 'WHOP' && c.whopBizId
+      ? [{ key: 'whop', label: 'Open Whop Ads', href: `https://whop.com/dashboard/${c.whopBizId}/ads/`, external: true, icon: <IconExternal size={16} /> }]
+      : []),
+  ];
+
+  const panel = (tid: TabId): ReactNode => {
+    switch (tid) {
+      case 'overview':
+        return <OverviewTab campaign={c} stats={stats} onBudgetSaved={onBudgetSaved} />;
+      case 'ads':
+        return <AdsTab campaign={c} stats={stats} />;
+      case 'monetization':
+        return (
+          <>
+            {/* D27: what paid clicks send Google (per-ad rc + keywords), editable live without approval. */}
+            <GoogleSignalsEditor campaignId={c.id} onCampaignRacChange={(racValue) => setCampaign((prev) => (prev ? { ...prev, racValue } : prev))} />
+            <OffersEditor campaignId={c.id} status={c.status} />
+          </>
+        );
+      case 'routing':
+        return <RoutingTab campaign={c} />;
+      case 'setup':
+        return <CampaignWizard campaign={c} embedded />;
+    }
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      {LIVE_TOGGLEABLE.has(c.status) &&
-        (c.status === 'ACTIVE' ? (
-          <Banner
-            tone="info"
-            title={`Live on ${networkName(c)}`}
-            action={
-              <Button variant="danger" onClick={() => void toggleActive(false)} loading={toggling}>
-                {toggling ? 'Pausing…' : 'Pause campaign'}
-              </Button>
-            }
-          >
-            Ads are delivering. Pause to stop delivery + spend without losing the campaign; resume anytime.
-          </Banner>
-        ) : (
-          <Banner
-            tone="warning"
-            title="Paused"
-            action={
-              <Button onClick={() => void toggleActive(true)} loading={toggling}>
-                {toggling ? 'Resuming…' : 'Resume campaign'}
-              </Button>
-            }
-          >
-            Ads are not delivering on {networkName(c)}. Resume to put them back live.
-          </Banner>
-        ))}
-      {REOPENABLE.has(c.status) && (
-        <Banner
-          tone={c.status === 'QUEUED_NO_CHANNEL' ? 'warning' : 'info'}
-          title={
-            c.status === 'QUEUED_NO_CHANNEL'
-              ? 'Waiting for a channel'
-              : c.status === 'BATCHED'
-                ? 'Rate-limited'
-                : 'Ready to publish'
-          }
-          action={
-            <div style={{ display: 'flex', gap: 'var(--space-2)', flexShrink: 0 }}>
-              <Button variant="ghost" onClick={() => void reopen()} loading={reopening} disabled={launching}>
-                {reopening ? 'Reopening…' : 'Reopen & edit'}
-              </Button>
-              {/* Manual launch is available to the campaign owner (buyer) and admins alike —
-                  the API owner-scopes it. Approval stays admin-only; launch ≠ approval. */}
-              {LAUNCHABLE.has(c.status) && (
-                <Button onClick={() => void launch()} loading={launching} disabled={reopening}>
-                  {launching ? 'Launching…' : `Launch to ${networkName(c)}`}
-                </Button>
-              )}
-            </div>
-          }
-        >
-          {c.status === 'QUEUED_NO_CHANNEL'
-            ? 'No AdSense channel is free for this campaign yet. Reopen to edit it, or leave it queued.'
-            : c.status === 'BATCHED'
-              ? `${networkName(c)} rate-limited the launch part-way. Whatever was already created there is kept, and Launch continues from where it stopped — nothing is created twice. Need to fix something first? Reopen to edit.`
-              : `A channel is assigned. Launching generates the article, wires the redirect, and creates the ads on ${networkName(c)}. Need to fix something first? Reopen to edit.`}
-        </Banner>
-      )}
-      {note && (
-        <Banner tone={note.tone} onDismiss={() => setNote(null)}>
-          {note.text}
-        </Banner>
-      )}
-      <WhopStatus campaign={c} />
-      {LIVE_TOGGLEABLE.has(c.status) && (
-        <LiveBudget
+    <div className={styles.page}>
+      <CampaignHeader
+        campaign={c}
+        menu={menu}
+        actions={
+          HAS_DELIVERY.has(c.status) ? (
+            <Button variant="secondary" onClick={() => router.push(`/dashboard/analytics?campaign=${c.id}`)}>
+              <IconAnalytics size={16} /> Analytics
+            </Button>
+          ) : undefined
+        }
+      />
+
+      {noteBanner}
+
+      <div ref={statusRef}>
+        <StatusCard
           campaign={c}
-          onSaved={(next) =>
-            setCampaign((prev) => {
-              if (!prev || prev === 'error') return prev;
-              if (next.adSetId) {
-                return {
-                  ...prev,
-                  adSets: prev.adSets.map((s) => (s.id === next.adSetId ? { ...s, dailyBudgetCents: next.cents } : s)),
-                };
-              }
-              return prev.budgetMode === 'CAMPAIGN'
-                ? { ...prev, dailyBudgetCents: next.cents }
-                : { ...prev, adSets: prev.adSets.map((s, i) => (i === 0 ? { ...s, dailyBudgetCents: next.cents } : s)) };
-            })
-          }
+          actions={{
+            launching,
+            reopening,
+            toggling,
+            cloning,
+            onLaunch: () => void launch(),
+            onReopen: () => void reopen(),
+            onToggle: (active) => void toggleActive(active),
+            onClone: () => void clone(),
+          }}
         />
-      )}
-      {/* D27 — what paid clicks send Google (per-ad rc + keywords), editable live without approval.
-          Drafts set the campaign rc in the wizard below; per-ad text needs submitted (stable) ads. */}
-      {c.status !== 'DRAFT' && (
-        <GoogleSignalsEditor
-          campaignId={c.id}
-          onCampaignRacChange={(racValue) =>
-            setCampaign((prev) => (prev && prev !== 'error' ? { ...prev, racValue } : prev))
-          }
-        />
-      )}
-      <CampaignWizard campaign={c} />
-      <OffersEditor campaignId={c.id} status={c.status} />
+      </div>
+
+      {showKpis && <KpiStrip stats={stats} range={range} onRange={setRange} />}
+
+      {/* No wrapper: a sticky bar can only travel inside its parent, and the page is the parent it needs. */}
+      <Tabs tabs={tabs} value={tab} onChange={pickTab} idPrefix="campaign" trailing={statusInView ? undefined : compact} />
+
+      {TAB_IDS.filter((tid) => opened.has(tid)).map((tid) => (
+        <div key={tid} id={`campaign-panel-${tid}`} role="tabpanel" aria-labelledby={`campaign-tab-${tid}`} className={styles.tabPanel} hidden={tid !== tab}>
+          <SectionBoundary label={TAB_LABEL[tid]}>{panel(tid)}</SectionBoundary>
+        </div>
+      ))}
     </div>
   );
 }

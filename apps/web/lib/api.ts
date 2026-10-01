@@ -722,11 +722,32 @@ export const domains = {
   },
 };
 
+/** What the public site config says about a money website: its AFS publisher id and style (null = the article server's default). */
+export interface PublicSiteConfig {
+  host: string;
+  pubId: string | null;
+  styleId: string | null;
+  adsafe: string | null;
+}
+
+export const publicSite = {
+  config: async (host: string): Promise<PublicSiteConfig | null> => {
+    const res = await rawFetch(`/api/public/site-config?host=${encodeURIComponent(host)}`);
+    return res.ok ? ((await res.json()) as PublicSiteConfig) : null;
+  },
+};
+
 export const uploads = {
   create: async (file: File): Promise<UploadResult> => {
     const form = new FormData();
     form.append('file', file);
     // No content-type header — the browser sets the multipart boundary.
     return (await parse<{ upload: UploadResult }>(await authedFetch('/api/uploads', { method: 'POST', body: form }))).upload;
+  },
+  /** A stored creative image (private to the company), for thumbnails. Rejects when there is nothing to show. */
+  image: async (id: string): Promise<Blob> => {
+    const res = await authedFetch(`/api/uploads/${id}/content`);
+    if (!res.ok) throw new ApiError(res.status, 'No preview available');
+    return res.blob();
   },
 };

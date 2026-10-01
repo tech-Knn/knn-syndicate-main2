@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { env } from '@knn/config';
 import { type CreativeType } from '@knn/shared';
 import { AppError } from '../../lib/errors.js';
@@ -65,4 +65,21 @@ export async function storeUpload(
       select: { id: true, filename: true, kind: true, mimeType: true, sizeBytes: true },
     }),
   );
+}
+
+/**
+ * Read a stored IMAGE back, for the campaign page's creative thumbnails. Tenant-scoped like every other read, so
+ * another company's upload is a 404, and only images are served (a video is 200 MB of bytes the page never needs).
+ */
+export async function readUploadImage(auth: AuthContext, id: string): Promise<{ data: Buffer; mimeType: string }> {
+  const row = await runScoped(auth, (tx) =>
+    tx.upload.findUnique({ where: { id }, select: { kind: true, mimeType: true, storageKey: true } }),
+  );
+  if (!row || row.kind !== 'IMAGE' || !IMAGE_MIME.has(row.mimeType)) throw new AppError(404, 'Not found');
+  try {
+    // `basename`: the key is server-generated, but a path read should never trust that.
+    return { data: await readFile(join(env.UPLOAD_DIR, basename(row.storageKey))), mimeType: row.mimeType };
+  } catch {
+    throw new AppError(404, 'Not found');
+  }
 }

@@ -312,6 +312,21 @@ export default function AnalyticsPage() {
     }
   };
 
+  // "Open in Analytics" on a campaign's own page lands here as /dashboard/analytics?campaign=<id>: filter to that campaign,
+  // open its detail row and bring it into view, once. An id that is not in the list (another range, not visible) does nothing.
+  const deepLinked = useRef(false);
+  useEffect(() => {
+    if (deepLinked.current || !rows) return;
+    deepLinked.current = true;
+    const want = new URLSearchParams(window.location.search).get('campaign');
+    const row = want ? rows.find((r) => r.id === want) : undefined;
+    if (!row) return;
+    setSearch(row.name);
+    setDebouncedSearch(row.name);
+    void toggleExpand(row.id);
+    setTimeout(() => document.getElementById(`analytics-detail-${row.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 400);
+  }, [rows]);
+
   const toggleActive = async (r: CampaignPerf, active: boolean): Promise<void> => {
     setBusy(r.id);
     try {
