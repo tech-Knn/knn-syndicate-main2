@@ -1191,8 +1191,8 @@ carry Meta's real numeric ad id in `utm_meta_ad_id` (plus ad-set id, campaign id
 into the link and Meta fills it in when someone clicks.
 
 **Decision.** A new check for a Whop config (`whopDynamicOutcome`, `apps/redirect/src/whop-click.ts`): `match` = an `fbclid` or a numeric
-`utm_meta_ad_id`; `mismatch` = `utm_meta_ad_id` present but not a number (the placeholder was never filled in: template, preview,
-copied URL); `missing` = neither. It is recorded in the existing cloaker counters (`verified_match` / `verified_mismatch` /
+`utm_meta_ad_id` of 10-19 digits (real ones are 18); `mismatch` = `utm_meta_ad_id` present but not a real Meta id (the placeholder was
+never filled in, or Whop's own preview link, which carries `123456789`: template, preview, copied URL); `missing` = neither. It is recorded in the existing cloaker counters (`verified_match` / `verified_mismatch` /
 `macro_missing`; no schema change). A separate switch, `WHOP_GATE_MODE` (`observe` default | `enforce`, in `wrangler.toml`), decides
 whether it routes:
 - **observe (live default):** routing is exactly as before; the counters show what enforce WOULD turn away.
@@ -1204,6 +1204,12 @@ template, previews and copied URLs. A stricter later step (pin an ad's Meta id f
 
 **Rollout.** Deploy the Worker (`cd apps/redirect && pnpm dlx wrangler deploy`; read the variables list: `WHOP_GATE_MODE` appears as
 `observe`). Watch Platform → Cloaker for the Whop campaigns for a day or two. Enforce only after `mismatch` + `missing` are a rounding error.
+
+**Amendment (same day): Whop's preview link.** Whop's ad preview links carry `utm_meta_ad_id=123456789` (9 digits), `wacid=adcamp_preview` and
+so on. The first version accepted any 6-30 digit id, so a preview link counted as a real click: 4 such views had already reached money
+pages and fired events to Whop. Real Meta ids in our data are all 18 digits (614 clicks, 104 Facebook ad ids), but Meta documents ids only as
+numeric strings with no stated length, so the rule is deliberately loose: 10-19 digits (19 = a 64-bit id). Observe mode will show if a real click
+ever scores `mismatch`; look at that before any enforce.
 
 ### 2026-10-01 — D39: the Whop launch rules we learned from real refusals ($5.00 budget floor, no narrowing the age of a special category)
 

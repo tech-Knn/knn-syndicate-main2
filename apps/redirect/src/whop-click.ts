@@ -116,10 +116,10 @@ const ID_SHAPE: Record<string, RegExp | undefined> = {
  * ad's link, so anyone holding the link has them; they prove nothing about a real click.) Two things only a real Meta click has:
  *  - `fbclid`, which Meta appends itself;
  *  - `utm_meta_ad_id`, which Whop writes into the link as Meta's `{{ad.id}}` placeholder and Meta replaces with the ad's real
- *    number when someone clicks (real Whop clicks all carry a 15-18 digit number).
+ *    number when someone clicks (real Whop clicks all carry an 18-digit number; Whop's preview link carries 123456789).
  *
  * `match`    a real click: an fbclid, or a numeric utm_meta_ad_id.
- * `mismatch` utm_meta_ad_id is present but is not a number: the placeholder was never filled in (the link template, a preview,
+ * `mismatch` utm_meta_ad_id is present but is not a real Meta ad id: the placeholder was never filled in (or Whop's preview value) (the link template, a preview,
  *            a scraper that copied the ad's URL).
  * `missing`  neither is there.
  *
@@ -127,9 +127,17 @@ const ID_SHAPE: Record<string, RegExp | undefined> = {
  */
 export type WhopDynamicOutcome = 'match' | 'mismatch' | 'missing';
 
+/**
+ * A REAL Meta ad id. Meta documents its ids only as numeric strings (no stated length), so this deliberately does not bet on today's
+ * 18 digits (every real click so far, and every Facebook ad id in our own data): it accepts 10-19 digits (19 is the ceiling of a 64-bit
+ * id) and rejects the one value we know is fake, Whop's preview link `utm_meta_ad_id=123456789` (9 digits), and any shorter junk.
+ * Being too strict would send real paid clicks to the white page once enforced; being a little loose costs nothing new.
+ */
+const REAL_META_AD_ID_RE = /^[0-9]{10,19}$/;
+
 export function whopDynamicOutcome(query: Record<string, string | undefined>): WhopDynamicOutcome {
   if (query.fbclid) return 'match';
   const id = query.utm_meta_ad_id;
-  if (id && META_ID_RE.test(id)) return 'match';
+  if (id && REAL_META_AD_ID_RE.test(id)) return 'match';
   return id ? 'mismatch' : 'missing';
 }
