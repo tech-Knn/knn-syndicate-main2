@@ -110,3 +110,26 @@ const ID_SHAPE: Record<string, RegExp | undefined> = {
   utm_meta_adset_id: META_ID_RE,
   utm_meta_campaign_id: META_ID_RE,
 };
+
+/**
+ * Does a Whop-link click carry something Meta fills in AT CLICK TIME? (Whop's own ids and `utm_whop=true` are fixed text in the
+ * ad's link, so anyone holding the link has them; they prove nothing about a real click.) Two things only a real Meta click has:
+ *  - `fbclid`, which Meta appends itself;
+ *  - `utm_meta_ad_id`, which Whop writes into the link as Meta's `{{ad.id}}` placeholder and Meta replaces with the ad's real
+ *    number when someone clicks (real Whop clicks all carry a 15-18 digit number).
+ *
+ * `match`    a real click: an fbclid, or a numeric utm_meta_ad_id.
+ * `mismatch` utm_meta_ad_id is present but is not a number: the placeholder was never filled in (the link template, a preview,
+ *            a scraper that copied the ad's URL).
+ * `missing`  neither is there.
+ *
+ * The labels reuse the cloaker's telemetry vocabulary (`match` / `mismatch` / `missing`), so the counters need no new columns.
+ */
+export type WhopDynamicOutcome = 'match' | 'mismatch' | 'missing';
+
+export function whopDynamicOutcome(query: Record<string, string | undefined>): WhopDynamicOutcome {
+  if (query.fbclid) return 'match';
+  const id = query.utm_meta_ad_id;
+  if (id && META_ID_RE.test(id)) return 'match';
+  return id ? 'mismatch' : 'missing';
+}

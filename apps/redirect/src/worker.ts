@@ -28,6 +28,8 @@ interface Env {
   ARTICLE_FALLBACK?: string;
   /** Cloak ad-id verification mode: 'observe' (default — route unchanged, only measure) | 'enforce'. */
   CLOAK_VERIFY_MODE?: string;
+  /** Whop's click-time check: 'observe' (default — route unchanged, only record match / mismatch / missing) | 'enforce'. */
+  WHOP_GATE_MODE?: string;
   /** Where to beacon each cloak decision (money/white + verify outcome). Empty → telemetry off. */
   CLOAK_TELEMETRY_URL?: string;
   /** Shared HMAC secret for the cloak token. Set → money 302s carry an opaque `?t=` instead of
@@ -69,6 +71,8 @@ worker.get('/go/:id', async (c) => {
   // Cloak ad-id verification mode is global (one switch to flip): default OBSERVE = route exactly as
   // today, only measure. Set CLOAK_VERIFY_MODE=enforce (and redeploy) once the stats prove it's safe.
   config.verifyMode = c.env.CLOAK_VERIFY_MODE === 'enforce' ? 'enforce' : 'observe';
+  // Whop's own click-time check has its own switch (the Facebook ad-id gate cannot apply to a Whop ad): observe until the counters say it is safe.
+  config.whopGate = c.env.WHOP_GATE_MODE === 'enforce' ? 'enforce' : 'observe';
 
   const reqUrl = new URL(c.req.url);
   const query = Object.fromEntries(reqUrl.searchParams);

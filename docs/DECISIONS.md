@@ -861,8 +861,9 @@ _Numbering: this was written as D32 and renumbered to D33 when it was merged wit
     shape changed on 2026-09-24-1, so never send an older date.
   - **Limits:** 600 requests a minute per operation and credential. POSTs take an `Idempotency-Key` (kept 24 h).
   - **Objects:** ad campaign (`adcamp_`) → ad group (`adgrp_`) → ad (`ad_`). Stats ride on those objects.
-  - **No Meta ids.** Whop doesn't expose the Meta ad account, pixel or ad ids, so no Facebook path that assumes
-    them can be reused.
+  - **No Meta ids *in its API*.** Whop's API doesn't expose the Meta ad account, pixel or ad ids, so no Facebook path that
+    assumes them can be reused. (Corrected 2026-10-01, D38: Meta's real ad, ad-set and campaign ids DO arrive on every real click,
+    as `utm_meta_ad_id` / `utm_meta_adset_id` / `utm_meta_campaign_id`; we just cannot know an ad's id in advance.)
   - **Launch gates:** a signed ads agreement, a payment method, a Facebook page, and the Whop pixel on any
     external destination (`validate_pixel`). Drafts need none of them.
   - **Reserved click parameters** (`utm_meta_*`, `utm_source`, `wacid`, `wasid`, `waid`, …) belong to Whop.
@@ -1178,4 +1179,29 @@ channel (the release only happens at midnight).
 - **UI:** "Reset password" on the Team page (company admins for their buyers, platform for anyone) and on the Companies member list; a dialog shows the link with "Copy link" and "Copy as message" (a ready sentence for chat).
 
 **Not built (deliberately):** a self-service "forgot password" (no safe way to prove identity without an email/SMS channel) and a logged-in "change my password" screen (separate, small; say so if wanted).
+
+### 2026-10-01 — D38: a Whop click must carry something Meta fills in at click time (observe first)
+
+**Problem.** For a Whop campaign the money page was gated on Whop's own signals: a well-formed `wacid` / `wasid` / `waid`, or
+`utm_whop=true`. All of them are fixed text in the ad's link, so anyone holding the link (a reviewer, a scraper, a spy tool) matches.
+A Facebook campaign is gated on `fbclid` (Meta adds it per click) and, when enforced, the `kaid={{ad.id}}` macro; neither applied to Whop.
+
+**What the data showed (staging, 529 real Whop money-page views).** `fbclid` is on 526 of them. 416 carry Whop's ids, and all 416 also
+carry Meta's real numeric ad id in `utm_meta_ad_id` (plus ad-set id, campaign id, placement): Whop writes Meta's `{{ad.id}}` placeholder
+into the link and Meta fills it in when someone clicks.
+
+**Decision.** A new check for a Whop config (`whopDynamicOutcome`, `apps/redirect/src/whop-click.ts`): `match` = an `fbclid` or a numeric
+`utm_meta_ad_id`; `mismatch` = `utm_meta_ad_id` present but not a number (the placeholder was never filled in: template, preview,
+copied URL); `missing` = neither. It is recorded in the existing cloaker counters (`verified_match` / `verified_mismatch` /
+`macro_missing`; no schema change). A separate switch, `WHOP_GATE_MODE` (`observe` default | `enforce`, in `wrangler.toml`), decides
+whether it routes:
+- **observe (live default):** routing is exactly as before; the counters show what enforce WOULD turn away.
+- **enforce:** a Whop click without a `match` goes to the white page. Flip it only when the counters show real clicks are all `match`.
+
+It is independent of `CLOAK_VERIFY_MODE` (the Facebook ad-id gate) and does nothing to a Facebook campaign. It is a shape check, not an
+exact match: Whop creates the Meta ad, so we cannot know its id beforehand, and a deliberate faker can type a number. It stops the link
+template, previews and copied URLs. A stricter later step (pin an ad's Meta id from its first real clicks and require it) is not built.
+
+**Rollout.** Deploy the Worker (`cd apps/redirect && pnpm dlx wrangler deploy`; read the variables list: `WHOP_GATE_MODE` appears as
+`observe`). Watch Platform → Cloaker for the Whop campaigns for a day or two. Enforce only after `mismatch` + `missing` are a rounding error.
 

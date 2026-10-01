@@ -32,6 +32,10 @@ ARTICLE_FALLBACK = "https://articles.10linesabout.com/"
 # whose macro was stripped) goes to the white page. Revert routing to the legacy fbclid signal = set
 # "observe" + `pnpm dlx wrangler deploy`.
 CLOAK_VERIFY_MODE = "observe"
+# Whop's click-time check (D38): a Whop click counts as real only with an fbclid or Meta's real numeric ad id (utm_meta_ad_id), which
+# Meta fills in when someone clicks. OBSERVE = route exactly as before and only record match / mismatch / missing in the cloaker counters.
+# Flip to "enforce" (and redeploy) only after the counters show real clicks are all `match`.
+WHOP_GATE_MODE = "observe"
 # Beacon each decision to the API so the split is visible. Empty disables telemetry.
 CLOAK_TELEMETRY_URL = "https://app.staging.rsoc.app/api/telemetry/cloak"
 # CLOAK_TOKEN_SECRET is NOT set here (a secret must never be committed). Set it out-of-band, the

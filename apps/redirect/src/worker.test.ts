@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RedirectConfig } from './resolve.js';
 import { worker } from './worker.js';
 import { verifyWhopScope } from './whop-scope.js';
@@ -169,3 +169,63 @@ describe('redirect Worker: Whop campaigns', () => {
     expect(location).toBe('https://white.test/a/slug');
   });
 });
+
+describe('redirect Worker: Whop click-time check (WHOP_GATE_MODE)', () => {
+  const TELEMETRY = 'https://api.test/api/telemetry/cloak';
+  const STATIC_ONLY = 'wacid=adcamp_ARRzXWlc8gt&wasid=adgrp_adGTsobtDlzz&waid=ad_I2YRNtEkImoX5qB&utm_whop=true&utm_source=fb';
+  const beacons: string[] = [];
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    beacons.length = 0;
+  });
+  const withBeacons = (): void => {
+    vi.stubGlobal('fetch', async (url: string) => {
+      beacons.push(url);
+      return new Response(null, { status: 204 });
+    });
+  };
+  const verdict = (): string | null => new URL(beacons.at(-1) ?? 'https://x.test/').searchParams.get('v');
+
+  it('OBSERVE (the default): a click with only Whop\'s fixed text still reaches the money page, and the beacon says "missing"', async () => {
+    withBeacons();
+    const { location, record } = await click(STATIC_ONLY, whop, { CLOAK_TELEMETRY_URL: TELEMETRY });
+    expect(location.startsWith('https://articles.test/a/slug?')).toBe(true);
+    expect(record).toBeDefined();
+    expect(new URL(beacons.at(-1)!).searchParams.get('route')).toBe('money');
+    expect(verdict()).toBe('missing');
+  });
+
+  it('OBSERVE: a real click is recorded as "match"', async () => {
+    withBeacons();
+    const { location } = await click(WHOP_CLICK, whop, { CLOAK_TELEMETRY_URL: TELEMETRY });
+    expect(location.startsWith('https://articles.test/a/slug?')).toBe(true);
+    expect(verdict()).toBe('match');
+  });
+
+  it('OBSERVE: an unfilled placeholder is recorded as "mismatch"', async () => {
+    withBeacons();
+    await click(`${STATIC_ONLY}&utm_meta_ad_id=%7B%7Bad.id%7D%7D`, whop, { CLOAK_TELEMETRY_URL: TELEMETRY });
+    expect(verdict()).toBe('mismatch');
+  });
+
+  it('ENFORCE: Whop\'s fixed text alone goes to the white page (and is not logged as a paid click)', async () => {
+    withBeacons();
+    const { location, record } = await click(STATIC_ONLY, whop, { CLOAK_TELEMETRY_URL: TELEMETRY, WHOP_GATE_MODE: 'enforce' });
+    expect(new URL(location).origin).toBe('https://white.test');
+    expect(record).toBeUndefined();
+    expect(new URL(beacons.at(-1)!).searchParams.get('route')).toBe('white');
+  });
+
+  it('ENFORCE: a real click still reaches the money page', async () => {
+    const { location } = await click(WHOP_CLICK, whop, { WHOP_GATE_MODE: 'enforce' });
+    expect(location.startsWith('https://articles.test/a/slug?')).toBe(true);
+  });
+
+  it('any other WHOP_GATE_MODE value is observe, and a Facebook campaign ignores the setting', async () => {
+    const odd = await click(STATIC_ONLY, whop, { WHOP_GATE_MODE: 'ENFORCE ' });
+    expect(odd.location.startsWith('https://articles.test/a/slug?')).toBe(true);
+    const fbRes = await click('fbclid=IwAR0x', fb, { WHOP_GATE_MODE: 'enforce' });
+    expect(fbRes.location.startsWith('https://articles.test/a/slug?')).toBe(true);
+  });
+});
+

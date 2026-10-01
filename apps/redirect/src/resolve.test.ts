@@ -216,3 +216,80 @@ describe('resolveRedirect — cloak ad-id verification', () => {
     });
   });
 });
+
+describe('resolveRedirect — Whop click-time check (D38)', () => {
+  const whopCfg: RedirectConfig = { ...base, whop: { bizId: 'biz_X' } };
+  const isMoney = (loc: string) => new URL(loc).pathname === '/a/medicare-2026';
+  // What Whop writes into every ad's link: fixed text, the same for anyone who holds the link.
+  const STATIC = { wacid: 'adcamp_ARRzXWlc8gt', wasid: 'adgrp_adGTsobtDlzz', waid: 'ad_I2YRNtEkImoX5qB', utm_whop: 'true', utm_source: 'fb' };
+  const REAL_AD_ID = '120215678901234567';
+
+  describe('OBSERVE (default): routing never changes, the check is only recorded', () => {
+    it('a real click (Meta ad id filled in, fbclid there) → money, "match"', () => {
+      const d = resolveRedirect(whopCfg, { ...STATIC, utm_meta_ad_id: REAL_AD_ID, fbclid: 'IwAR0' }, { txid: 't' });
+      expect(isMoney(d.location)).toBe(true);
+      expect(d.verify).toEqual({ route: 'money', outcome: 'match' });
+    });
+    it('a numeric Meta ad id alone is enough for "match"', () => {
+      const d = resolveRedirect(whopCfg, { ...STATIC, utm_meta_ad_id: REAL_AD_ID }, { txid: 't' });
+      expect(d.verify).toEqual({ route: 'money', outcome: 'match' });
+    });
+    it('an fbclid alone is enough for "match" (some placements carry no Whop ids at all)', () => {
+      const d = resolveRedirect(whopCfg, { fbclid: 'IwAR0' }, { txid: 't' });
+      expect(d.verify).toEqual({ route: 'money', outcome: 'match' });
+    });
+    it('Whop\'s fixed text only → STILL money, but "missing": this is what the gate would turn away', () => {
+      const d = resolveRedirect(whopCfg, STATIC, { txid: 't' });
+      expect(d.paid).toBe(true);
+      expect(isMoney(d.location)).toBe(true); // unchanged routing
+      expect(d.verify).toEqual({ route: 'money', outcome: 'missing' });
+    });
+    it('an unfilled placeholder is "mismatch" (a link template, a preview or a copied URL), still money', () => {
+      for (const placeholder of ['{{ad.id}}', '{ad.id}', '__AD_ID__', 'abc', '12345']) {
+        const d = resolveRedirect(whopCfg, { ...STATIC, utm_meta_ad_id: placeholder }, { txid: 't' });
+        expect(isMoney(d.location)).toBe(true);
+        expect(d.verify).toEqual({ route: 'money', outcome: 'mismatch' });
+      }
+    });
+    it('not paid at all → white, "na"', () => {
+      const d = resolveRedirect(whopCfg, { utm_source: 'google' }, { txid: 't' });
+      expect(d.verify).toEqual({ route: 'white', outcome: 'na' });
+    });
+    it('an explicit whopGate "observe" is the same as unset', () => {
+      const d = resolveRedirect({ ...whopCfg, whopGate: 'observe' }, STATIC, { txid: 't' });
+      expect(isMoney(d.location)).toBe(true);
+    });
+  });
+
+  describe('ENFORCE: a Whop click needs a click-time value', () => {
+    const enforce: RedirectConfig = { ...whopCfg, whopGate: 'enforce' };
+    it('real click → money', () => {
+      expect(isMoney(resolveRedirect(enforce, { ...STATIC, utm_meta_ad_id: REAL_AD_ID, fbclid: 'x' }, { txid: 't' }).location)).toBe(true);
+      expect(isMoney(resolveRedirect(enforce, { fbclid: 'x' }, { txid: 't' }).location)).toBe(true);
+    });
+    it('Whop\'s fixed text only → white', () => {
+      const d = resolveRedirect(enforce, STATIC, { txid: 't' });
+      expect(d.paid).toBe(false);
+      expect(d.location).toBe('https://articles.example.com/');
+      expect(d.verify).toEqual({ route: 'white', outcome: 'missing' });
+    });
+    it('an unfilled placeholder → white', () => {
+      const d = resolveRedirect(enforce, { ...STATIC, utm_meta_ad_id: '{{ad.id}}' }, { txid: 't' });
+      expect(d.paid).toBe(false);
+      expect(d.verify).toEqual({ route: 'white', outcome: 'mismatch' });
+    });
+    it('a paused Whop campaign still goes white', () => {
+      expect(resolveRedirect({ ...enforce, active: false }, { fbclid: 'x' }, { txid: 't' }).paid).toBe(true);
+      expect(isMoney(resolveRedirect({ ...enforce, active: false }, { fbclid: 'x' }, { txid: 't' }).location)).toBe(false);
+    });
+  });
+
+  it('never touches a Facebook campaign: no whop block means no Whop check, in either mode', () => {
+    const fbCfg: RedirectConfig = { ...base, whopGate: 'enforce' };
+    const d = resolveRedirect(fbCfg, { fbclid: 'x' }, { txid: 't' });
+    expect(isMoney(d.location)).toBe(true);
+    expect(d.verify).toEqual({ route: 'money', outcome: 'na' });
+    expect(resolveRedirect(base, { utm_whop: 'true' }, { txid: 't' }).paid).toBe(false); // Whop's flag is still not a paid signal for Facebook
+  });
+});
+
