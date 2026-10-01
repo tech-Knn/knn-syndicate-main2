@@ -2,6 +2,8 @@
 
 > Update at the end of every session. A new session should read this first (after `CLAUDE.md`).
 
+_Last updated: 2026-10-02 — **Reference AFS layout, for an RPC test (D41).** An audit of 83 live landing pages on three sites that share our AdSense account found one template; the article app now matches it: two related-search units of 6 chips (`#relatedsearches1` / `#relatedsearches2`), the results page asks for ONE top ad (`maxTop: 1`) above ONE organic result, the pages use the `#01074b` / `#fefefe` navy theme, and the default style is `8472563621`. **Style on live pages needs one extra step**: the staging box pins `NEXT_PUBLIC_AFS_STYLE_ID=7465600436`, so set each domain's own style (`UPDATE domains SET style_id = '8472563621'`, picked up in ~5 min). Not changed: `terms` (still sent; Google ignored them in 4 test variants), the RAC text, the channel model. New `@knn/article` vitest setup (16 tests). Compare RPC before/after on the same domains.
+
 _Last updated: 2026-10-01 — **Giving a website to another company now also stops that company's unlaunched campaigns on it (D40).** The owner check only ran when offers were saved, so drafts built earlier (ABC company had 12) could still submit, be approved and launch on the domain. It is now re-checked at submit, approve and the first launch. Running campaigns are never re-checked: they keep running and can be paused and resumed. Deploy: api only.
 
 _Last updated: 2026-10-01 — **A third Whop refusal is now caught before launch: Sales + ad click (D39 amendment).** Whop will not optimize a Sales campaign for `submit_application`, our ad click. The shared `whopLaunchProblems` now refuses it (wizard hint under Objective, submit, launch) and says to pick Leads or Engagement. Deploy: web + api.

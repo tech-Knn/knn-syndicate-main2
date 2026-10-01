@@ -1,13 +1,14 @@
-/* Public publisher pages — a light, editorial theme (legitimate-publisher look for AdSense).
-   Tokens mirror the real page palette (light surfaces, dark ink, a blue link like a news site). */
+/* Public publisher pages — the dark-navy reference theme (D41): page #01074b, text #fefefe, the exact colors the
+   reference funnels use, so the navy block of AdSense style 8472563621 sits flush with the page around it.
+   (D41 replaced the earlier light editorial theme; revert by restoring the previous token values.) */
 :root {
-  --ink: #1a1a1a;
-  --ink-soft: #4a4a4a;
-  --paper: #ffffff;
-  --paper-2: #f6f6f4;
-  --rule: #e4e4e0;
-  --link: #1a0dab; /* classic SERP blue, ~8.6:1 on white */
-  --link-visited: #6b1fa3;
+  --ink: #fefefe;
+  --ink-soft: #d6d9ef;
+  --paper: #01074b;
+  --paper-2: #01074b;
+  --rule: rgba(254, 254, 254, 0.18);
+  --link: #cfd6ff; /* light periwinkle — AA on the navy page */
+  --link-visited: #e0cbff;
 }
 
 * {

@@ -1,4 +1,4 @@
-import { afsConfigured, DEFAULT_ADSAFE, type SiteConfig } from '../_afs/csa';
+import { afsConfigured, DEFAULT_ADSAFE, RESULTS_MAX_ADS, type SiteConfig } from '../_afs/csa';
 import styles from './search.module.css';
 
 /**
@@ -64,8 +64,9 @@ export function SearchAds({
   // render nothing (never ads without results, never an empty unit).
   if (!afsConfigured(site) || !query || maxAds < 1) return null;
 
-  // Ads are capped at the organic-result count (≤5 by design), so ads ≤ results always.
-  const number = Math.min(maxAds, 5);
+  // ONE top ad (D41: the reference results page sends `maxTop: 1` and nothing else), capped at the organic-result
+  // count so ads ≤ results always.
+  const maxTop = Math.min(maxAds, RESULTS_MAX_ADS);
 
   // Page-level options Google needs to serve ads for this query. Mirrors basePageOptions
   // but built server-side; resultsPageBaseUrl is origin-dependent so it's set in the inline
@@ -119,9 +120,9 @@ export function SearchAds({
     `var TT=${safeJson(TERM_TELEMETRY_URL)},TQ=${safeJson(query)};` +
     `function ttSend(ev,f){if(!TT||!TQ)return;try{var u=TT+(TT.indexOf('?')<0?'?':'&')+'term='+encodeURIComponent(TQ)+'&event='+ev+(f!=null?'&filled='+f:'');navigator.sendBeacon?navigator.sendBeacon(u):fetch(u,{method:'POST',keepalive:!0,mode:'no-cors'})}catch(e){}}` +
     // Ads only (no relatedSearchBlock — the organic <WebResults> below ARE the results the ads
-    // supplement). `number` is capped to the ACTUAL organic Web-result count (≤5), so ads ≤
-    // results (Google policy: number of ads ≤ number of search results). Google may serve fewer.
-    `_googCsa('ads',po,{container:'afscontainer1',number:${number},adLoadedCallback:function(c,loaded){ttSend('render',loaded?1:0)}});` +
+    // supplement). `maxTop` is capped to the ACTUAL organic Web-result count, so ads ≤ results
+    // (Google policy: number of ads ≤ number of search results). Google may serve fewer.
+    `_googCsa('ads',po,{container:'afscontainer1',maxTop:${maxTop},adLoadedCallback:function(c,loaded){ttSend('render',loaded?1:0)}});` +
     `var s=document.createElement('script');s.async=!0;s.src='https://www.google.com/adsense/search/ads.js';document.head.appendChild(s);`;
 
   return (

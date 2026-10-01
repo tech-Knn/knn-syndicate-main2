@@ -1,3 +1,4 @@
+import { RESULTS_ORGANIC_COUNT } from '../_afs/csa';
 import styles from './search.module.css';
 
 /**
@@ -31,7 +32,7 @@ export interface ArticleSummary {
 export async function fetchWebResults(host: string): Promise<ArticleSummary[]> {
   if (!host) return [];
   try {
-    const res = await fetch(`${API_BASE}/api/public/articles?host=${encodeURIComponent(host)}&limit=5`, {
+    const res = await fetch(`${API_BASE}/api/public/articles?host=${encodeURIComponent(host)}&limit=${RESULTS_ORGANIC_COUNT}`, {
       next: { revalidate: 300 },
     });
     if (!res.ok) return [];

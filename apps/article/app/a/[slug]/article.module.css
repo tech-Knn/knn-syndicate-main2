@@ -1,11 +1,10 @@
-/* Public editorial article page — light, readable, AdSense-friendly (NOT the
-   dark dashboard theme). */
+/* Public article page — the dark-navy reference theme (D41): #01074b page, #fefefe text. */
 .page {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #ffffff;
-  color: #1a1a1a;
+  background: #01074b;
+  color: #fefefe;
 }
 
 /* The money-page intentionally has NO top masthead/byline (focus on the RSOC unit; the
@@ -24,12 +23,12 @@
   font-size: 2.1rem;
   line-height: 1.2;
   margin: 0 0 1rem;
-  color: #111;
+  color: #fefefe;
 }
 .lead {
   font-size: 1.15rem;
   line-height: 1.6;
-  color: #333;
+  color: #fefefe;
   margin: 0 0 1.5rem;
 }
 
@@ -48,7 +47,7 @@
 .body {
   font-size: 1.02rem;
   line-height: 1.75;
-  color: #2a2a2a;
+  color: #fefefe;
 }
 .body p {
   margin: 0 0 1.1rem;
@@ -57,13 +56,13 @@
   font-family: Georgia, 'Times New Roman', serif;
   font-size: 1.5rem;
   line-height: 1.3;
-  color: #111;
+  color: #fefefe;
   margin: 2rem 0 0.85rem;
 }
 .body h3 {
   font-size: 1.18rem;
   line-height: 1.35;
-  color: #1a1a1a;
+  color: #fefefe;
   margin: 1.5rem 0 0.6rem;
 }
 .body ul,

@@ -447,6 +447,8 @@ term quality is now a multiplier on the entire funnel's RPC, not a per-term yiel
 
 ### 2026-09-29 — D26: RSOC pages default to `adsafe: 'low'` and serve ONE related-search unit
 
+> **Amended by D41 (2026-10-02):** the article page runs two related-search units again, as a test. The `adsafe: 'low'` default below still stands.
+
 - **Benchmark:** the team's RSOC pages tracked in ClickFlare (`search.entertainmentheute.de`, the SAME
   AdSense account `partner-pub-6567805284657549`) made 149–154% ROAS on India traffic Sep 17–29 2026 vs
   42% for this app's pages. Page speed/first screen were comparable (ours faster). Config differences
@@ -1241,3 +1243,45 @@ launched campaign (which just reports what is live) never call it, so a running 
 **Caveat.** In an auto-launch company the launch runs from the worker: the refusal fails that `FB_LAUNCH` job (visible in Bull-Board) and the campaign stays
 `PROCESSING`; the buyer sees the message the next time they try to launch or open it. The fix is the same: swap the website in the campaign's offers.
 
+### 2026-10-02 — D41: match the reference AFS layout (style `8472563621`, two units of six chips, one top ad above one organic result, navy theme) to test the RPC gap
+
+**Why.** Our RPC trails the team's ClickFlare pages on the same domain and vertical. A public audit (Facebook Ad Library -> 83 live landing pages on three sites
+that share our AdSense account `partner-pub-6567805284657549`, fetched with plain HTTP and a few opened in a browser; no ad was clicked) found ONE template on
+every page. What it does, and what we did before:
+
+| | Reference (83 of 83 pages) | Ours before D41 |
+|---|---|---|
+| Style | `8472563621` | `7465600436` (pinned by `NEXT_PUBLIC_AFS_STYLE_ID` on the staging box) |
+| Article units | 2 related-search blocks, 6 chips each | 1 block of 5 (D26 cut two to one) |
+| Results page | `ads` with `maxTop: 1`, 1 organic result | `number` up to 5, 5 organic results |
+| RAC | the ad's headline + primary text (median ~210 chars) | a buyer-typed phrase |
+| `terms` | never sent by the tracker (the template does accept `?terms=`) | up to 6, sent |
+| Channels | three joined with `+` | one per campaign |
+| Page colors | `#01074b` page, `#fefefe` text | white page, dark text |
+
+**Decision (what changed, all in `apps/article`).**
+- **Style:** `DEFAULT_AFS_STYLE_ID = '8472563621'` is the fallback when neither the domain nor `NEXT_PUBLIC_AFS_STYLE_ID` sets one. **Caveat:** the staging box
+  pins `NEXT_PUBLIC_AFS_STYLE_ID=7465600436` and it beats the default, so to change live pages set each domain's own style (Domains admin, or
+  `UPDATE domains SET style_id = '8472563621'`); a domain's style wins and is picked up within ~5 minutes, no rebuild.
+- **Two related-search units** (`#relatedsearches1` under the lead, `#relatedsearches2` after the body), 6 chips each, ONE `_googCsa('relatedsearch', po, b1, b2)`
+  call that runs after both containers exist. Only `relatedSearches` is sent (no legacy `number`). The fill beacon rides block 1 only so a view counts once.
+  The account has RAF, so several units are allowed; D26's cut to one was a CRO choice, which this reverses as a test.
+- **Results page:** `maxTop: 1` and one organic result (`RESULTS_MAX_ADS` <= `RESULTS_ORGANIC_COUNT`, so "ads <= results" still holds). The page still sends the RAC,
+  channel and style to Google there (the reference page sends no RAC on its results page; we keep it: Google asks for the referrer ad creative on traffic we control).
+- **Navy theme** on the article, results, footer and legal pages (tokens in `globals.css`); the organic result is the reference's recessive `#515151`.
+
+**Deliberately not changed.** `terms` (see below), the RAC text (still the buyer's, editable live in "Sent to Google"; the reference uses the ad copy and that is a
+separate test), multi-channel requests, and the 1 channel = 1 campaign pool.
+
+**`terms` finding (2026-10-02).** The reference template renders `?terms=` into `pageOptions.terms` when both `adtitle` and `terms` are present, so the capability exists,
+but none of the 83 tracker links sends it. Separately we asked Google for chips on our own page in four variants (our six terms with `content` targeting, no terms,
+our terms with no `relatedSearchTargeting`, and five unrelated custom terms with `content`): the chips were Google's own every time and none of the terms appeared.
+One page, one vertical, so "Google ignores `terms` here" is evidence, not proof; we still send them.
+
+**The `p.` host.** The reference sites also serve `p.<site>` pages that every request we could make (any token or none, a Facebook in-app user agent, `fbclid`, a
+Facebook referrer) answered with the same ad-free copy of the article: no AFS, no scripts. Some of its articles exist only there. We could not see what a
+verified Facebook click gets, so we do not know what `p.` is for.
+
+**How to judge it.** Compare RPC (AdSense revenue / AdSense clicks per day) on the same domains before and after, over a few hundred clicks. To revert: restore the
+token values in `globals.css`, `RSOC_UNITS`/slot 2/the bootstrap in `related-search-unit.tsx`, `maxTop`/`limit` in the results page, and unset the domain styles.
+Amends D26 (one unit).

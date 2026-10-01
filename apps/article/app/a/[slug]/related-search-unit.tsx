@@ -1,4 +1,4 @@
-import { afsConfigured, AFS_TRACKING_PARAMS, DEFAULT_ADSAFE, type SiteConfig } from '../../_afs/csa';
+import { afsConfigured, AFS_TRACKING_PARAMS, DEFAULT_ADSAFE, RSOC_CHIPS_PER_UNIT, type SiteConfig } from '../../_afs/csa';
 import styles from './article.module.css';
 
 /**
@@ -22,10 +22,12 @@ import styles from './article.module.css';
  * no visual space until Google's ads.js injects real chip iframes into the container — an
  * uncrawled / empty unit stays zero-footprint.
  *
- * ONE related-search unit per page (D26): `#relatedsearches1`, placed here above the article
- * body — matching the team's profitable RSOC pages on the same AdSense account, which serve a
- * single unit. (Our account has RAF, so a second unit is ALLOWED; this is a CRO choice, not a
- * policy one. A second mid-article unit `#relatedsearches2` ran Aug 5 – Sep 2026.)
+ * TWO related-search units per page (D41): `#relatedsearches1` right under the lead and `#relatedsearches2` after
+ * the article body, 6 chips each, fired by ONE `_googCsa('relatedsearch', po, b1, b2)` call. D26 (2026-09-29) had
+ * cut the page to one unit; D41 restores two to match the reference layout every audited competitor page runs on
+ * our AdSense account (the account has RAF, so several units per page are allowed — a CRO choice, not a policy one).
+ * The two containers are separate server components (`RelatedSearchSlot`) because they sit at different places in
+ * the article; the bootstrap (`RelatedSearchBootstrap`) renders AFTER both so both containers exist when it runs.
  */
 
 // Per-host RSOC unit-fill telemetry endpoint. Same telemetry sink /search uses.
@@ -48,7 +50,11 @@ function safeJson(value: unknown): string {
   );
 }
 
-export function RelatedSearchUnit({
+/**
+ * The inline bootstrap for both units. Render it AFTER `<RelatedSearchSlot id="relatedsearches2" />` so the second
+ * container is already in the DOM when the script runs during HTML parse.
+ */
+export function RelatedSearchBootstrap({
   referrerAdCreative,
   terms,
   txid,
@@ -133,25 +139,31 @@ export function RelatedSearchUnit({
     // 5. Per-host unit-fill telemetry — same beacon as the old client component.
     `var TT=${safeJson(TERM_TELEMETRY_URL)};` +
     `function ttUnit(f){if(!TT)return;try{var u=TT+(TT.indexOf('?')<0?'?':'&')+'term='+encodeURIComponent('unit:'+location.host)+'&event=render&filled='+(f?1:0);navigator.sendBeacon?navigator.sendBeacon(u):fetch(u,{method:'POST',keepalive:!0,mode:'no-cors'})}catch(e){}}` +
-    // 6. One rsblock (D26). Sends legacy `relatedSearches` and newer `number` so whichever
-    //    ads.js reads is populated.
-    `var b1={container:'relatedsearches1',relatedSearches:5,number:5,adLoadedCallback:function(c,l){ttUnit(l)}};` +
-    `_googCsa('relatedsearch',po,b1);` +
+    // 6. Two rsblocks (D41), 6 chips each. Only `relatedSearches` is sent: the reference pages send nothing else.
+    //    The fill telemetry rides block 1 only, so a page view still counts once.
+    `var b1={container:'relatedsearches1',relatedSearches:${RSOC_CHIPS_PER_UNIT},adLoadedCallback:function(c,l){ttUnit(l)}};` +
+    `var b2={container:'relatedsearches2',relatedSearches:${RSOC_CHIPS_PER_UNIT}};` +
+    `_googCsa('relatedsearch',po,b1,b2);` +
     // 7. Load ads.js. Preloaded in resource-hints.tsx so the browser already has it in cache
     //    on modern browsers — this append is essentially free.
     `var s=document.createElement('script');s.async=!0;s.src='https://www.google.com/adsense/search/ads.js';document.head.appendChild(s);` +
     // 8. bfcache re-fire — user navigates chip → /search → hits Back → article restored from
-    //    bfcache. Without this the old CSA iframe is stale and chips are gone. We clear the
-    //    container and re-fire the command so chips render again for a second click.
-    `window.addEventListener('pageshow',function(e){if(!e.persisted)return;var c1=document.getElementById('relatedsearches1');if(c1)c1.innerHTML='';_googCsa('relatedsearch',po,b1);});`;
+    //    bfcache. Without this the old CSA iframes are stale and chips are gone. We clear both
+    //    containers and re-fire the command so chips render again for a second click.
+    `window.addEventListener('pageshow',function(e){if(!e.persisted)return;['relatedsearches1','relatedsearches2'].forEach(function(id){var c=document.getElementById(id);if(c)c.innerHTML='';});_googCsa('relatedsearch',po,b1,b2);});`;
 
+  return <script dangerouslySetInnerHTML={{ __html: bootstrap }} />;
+}
+
+/**
+ * One related-search container. Externally-managed to React (dangerouslySetInnerHTML +
+ * suppressHydrationWarning) so hydration never wipes the iframes ads.js injects during parse.
+ */
+export function RelatedSearchSlot({ id, site }: { id: 'relatedsearches1' | 'relatedsearches2'; site: SiteConfig }) {
+  if (!afsConfigured(site)) return null;
   return (
     <aside className={styles.afs} aria-label="Related searches">
-      {/* Container first so it exists in the DOM before the bootstrap runs. ads.js injects
-          <iframe>s during parse (pre-hydration); externally-managed to React
-          (dangerouslySetInnerHTML + suppressHydrationWarning) so hydration never wipes it. */}
-      <div id="relatedsearches1" suppressHydrationWarning dangerouslySetInnerHTML={{ __html: '' }} />
-      <script dangerouslySetInnerHTML={{ __html: bootstrap }} />
+      <div id={id} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: '' }} />
     </aside>
   );
 }
