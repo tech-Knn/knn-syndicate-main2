@@ -18,7 +18,12 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
   then split each campaign's gross USD across its ads via `allocateCampaignRevenue` (`@knn/shared`)
   — conversions → clicks → impressions → `unallocated` (OPEN_QUESTIONS #1) — apply the revenue cut
   (buyer override ?? org default) → `ad_revenue_daily`. The `ATTRIBUTION` queue runs `hourly`
-  (today) + `finalize` (trailing FB/AdSense windows, §5.8).
+  (today; plus yesterday's Whop spend during the first 6 hours after midnight IST, because Whop's figures for a day arrive hours late) + `finalize` (trailing FB/AdSense windows, §5.8).
+- **A day's AdSense revenue belongs to the campaign that HELD the channel that day** (`channel_assignments.for_day`), in both
+  `campaign_revenue_daily` and `offer_revenue_daily`. Channels are reused by many campaigns and every pull re-reads the
+  trailing days, so never credit a report day to whoever holds the channel now (an earlier version did: a new campaign
+  showed the channel's previous week as its own earnings, and those days were counted twice). A day nobody held writes no
+  row; the pull also deletes per-offer rows for that channel and day that belong to a different campaign.
 - **Storage is DAILY, not the plan's `ad_stats_hourly`** — attribution + AFS reporting are daily and
   FB's hourly breakdown is timezone-fragile; the cron PULLS hourly to keep "today" fresh. Day key =
   IST business day (FB uses the ad-account tz; OPEN_QUESTIONS #14).
@@ -58,8 +63,15 @@ token refresh, article generation, meta-rejection checks, conversion dispatch (C
   the Whop twins of the Facebook reconcile and insights pull, run inside the same crons (`META_REJECTION_CHECK` and
   `ATTRIBUTION`: no new queue; each provider runs independently, so one's failure never stops the other).
   - **Sync:** one bulk `listCampaigns` per business, `listAds` only for the campaigns it listed (a batch Whop refuses is
-    re-read campaign by campaign; a campaign whose ads cannot be read is skipped, never decided on). Then: rejection →
-    `META_REJECTED` (pause at Whop best-effort, `stopRouting`, notify), pause / resume mirrored (if the edge resync fails the
+    re-read campaign by campaign; a campaign whose ads cannot be read is skipped, never decided on). Then: EVERY ad rejected (or Whop's
+    `all_ads_rejected`) → `META_REJECTED` (pause at Whop best-effort, `stopRouting`, notify); SOME ads rejected → the campaign keeps
+    running and the buyer is told once per ad (`campaign.ads_rejected`; unlike Facebook's D14). **A campaign already stopped as
+    `META_REJECTED` stays in the scan and is REVIVED** (`recoverRejected`) as soon as `whopSyncTarget` says ACTIVE / PAUSED, i.e. Whop
+    has ads that can deliver (it was wholly rejected and an appeal won, or it was stopped under the old "any ad" rule): it gets a
+    channel again only if one is free right now (`claimChannels` = `assignForCampaign(id, { queue: false })`, which never queues it),
+    moves META_REJECTED -> PAUSED -> ACTIVE (both legal moves; PAUSED if Whop has it paused), and the edge config is re-published
+    with the channel; if the edge will not follow, everything is given back. Same links, article, offers, Whop campaign and
+    history: nothing is rebuilt. While it is still wholly rejected nothing is done again. Pause / resume mirrored (if the edge resync fails the
     status is given back and nothing is announced), deleted-in-Whop →
     `ARCHIVED` only on the **second consecutive** tick whose direct read says 404 (the first leaves `not_found` in
     `whop_delivery_status`; any real answer clears it), billing failure notified once per episode (`payment_failed` is stored

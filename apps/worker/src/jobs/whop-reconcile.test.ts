@@ -57,7 +57,7 @@ interface Tree {
 }
 
 /** A campaign that exists both in (the mock) Whop and in our DB, as if launched. */
-async function launchedCampaign(o: { status?: 'ACTIVE' | 'PAUSED' | 'LAUNCHING'; ads?: number; connection?: string | null; biz?: string | null; whopStatus?: string } = {}): Promise<Tree> {
+async function launchedCampaign(o: { status?: 'ACTIVE' | 'PAUSED' | 'LAUNCHING' | 'META_REJECTED'; ads?: number; connection?: string | null; biz?: string | null; whopStatus?: string } = {}): Promise<Tree> {
   const a = api();
   const camp = await a.createCampaign({ account_id: BIZ, title: `Rec ${Math.random()}`, platform: 'meta', objective: 'leads', idempotencyKey: randomUUID() });
   const group = await a.createAdGroup({ ad_campaign_id: camp.id, title: 'g', budget_amount: 25, conversion_location: 'website', conversion_event: 'submit_application', optimization_goal: 'conversions', idempotencyKey: randomUUID() });
@@ -222,11 +222,127 @@ describe('reconcileWhopCampaigns', () => {
     expect(notes).toHaveBeenCalledWith(expect.objectContaining({ type: 'campaign.meta_rejected', body: expect.stringContaining('it is paused in Whop') }));
   });
 
-  it('treats one rejected ad among healthy ones as a rejection, like a Facebook DISAPPROVED ad', async () => {
-    const t = await launchedCampaign({ ads: 2 });
+  it('keeps a campaign running when only SOME of its ads are rejected: not paused at Whop, channel kept, buyer told once', async () => {
+    const t = await launchedCampaign({ ads: 3 });
     whopAdRows().get(t.whopAdIds[1]!)!.delivery_status = 'rejected';
     await reconcileWhopCampaigns(deps());
+    const r = await row(t.campaignId);
+    expect(r.status).toBe('ACTIVE');
+    // The rejected ad is shown as such; the others are not.
+    expect(r.adSets[0]!.ads.map((a) => a.effectiveStatus).sort()).toEqual(['ACTIVE', 'ACTIVE', 'DISAPPROVED'].sort());
+    expect(released).not.toContain(t.campaignId);
+    expect(resynced).not.toContain(t.campaignId);
+    expect(whopCampaignRow(t.whopCampaignId).status).toBe('active');
+    const told = notes.mock.calls.map(([n]) => n).filter((n) => n.type === 'campaign.ads_rejected');
+    expect(told).toHaveLength(1);
+    expect(told[0]).toMatchObject({ userId: buyerId, body: expect.stringMatching(/1 of 3 ads.*keeps running/) });
+    expect(notes).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'campaign.meta_rejected' }));
+
+    // The next tick says nothing more about the same ad.
+    notes.mockClear();
+    await reconcileWhopCampaigns(deps());
+    expect(notes).not.toHaveBeenCalled();
+
+    // A second ad rejected later is announced on its own.
+    whopAdRows().get(t.whopAdIds[2]!)!.delivery_status = 'rejected';
+    await reconcileWhopCampaigns(deps());
+    expect((await row(t.campaignId)).status).toBe('ACTIVE');
+    expect(notes).toHaveBeenCalledWith(expect.objectContaining({ type: 'campaign.ads_rejected', body: expect.stringMatching(/2 of 3 ads/) }));
+  });
+
+  it('rejects the campaign once EVERY ad is rejected', async () => {
+    const t = await launchedCampaign({ ads: 2 });
+    for (const id of t.whopAdIds) whopAdRows().get(id)!.delivery_status = 'rejected';
+    await reconcileWhopCampaigns(deps());
     expect((await row(t.campaignId)).status).toBe('META_REJECTED');
+    expect(released).toContain(t.campaignId);
+    expect(notes).toHaveBeenCalledWith(expect.objectContaining({ type: 'campaign.meta_rejected' }));
+    expect(notes).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'campaign.ads_rejected' }));
+  });
+
+  describe('reviving a campaign that was stopped as rejected', () => {
+    const rejectFirstOf = (t: Tree): void => {
+      whopAdRows().get(t.whopAdIds[0]!)!.delivery_status = 'rejected';
+    };
+
+    it('brings it back ACTIVE with the same campaign, links and ads once Whop has ads that can deliver', async () => {
+      const t = await launchedCampaign({ status: 'META_REJECTED', ads: 2 });
+      rejectFirstOf(t);
+      const claim = vi.fn(async () => ({ assigned: true }));
+      await reconcileWhopCampaigns(deps({ claimChannels: claim }));
+      const r = await row(t.campaignId);
+      expect(r.status).toBe('ACTIVE');
+      expect(claim).toHaveBeenCalledWith(t.campaignId);
+      expect(resynced).toContain(t.campaignId);
+      // Nothing was rebuilt: the same ads (and so the same redirect links) are still on the campaign, and Whop was not touched.
+      expect(r.adSets[0]!.ads.map((a) => a.id).sort()).toEqual([...t.adIds].sort());
+      expect(whopCampaignRow(t.whopCampaignId).status).toBe('active');
+      expect(notes).toHaveBeenCalledWith(expect.objectContaining({ type: 'campaign.status_synced', title: 'Campaign is back on', userId: buyerId, body: expect.stringContaining('running again') }));
+
+      // The next tick leaves it alone.
+      notes.mockClear();
+      claim.mockClear();
+      await reconcileWhopCampaigns(deps({ claimChannels: claim }));
+      expect(claim).not.toHaveBeenCalled();
+      expect(notes).not.toHaveBeenCalled();
+    });
+
+    it('comes back PAUSED when Whop has it paused (the old rule paused it there), and says so', async () => {
+      const t = await launchedCampaign({ status: 'META_REJECTED', ads: 2, whopStatus: 'paused' });
+      rejectFirstOf(t);
+      await reconcileWhopCampaigns(deps({ claimChannels: async () => ({ assigned: true }) }));
+      expect((await row(t.campaignId)).status).toBe('PAUSED');
+      expect(resynced).toContain(t.campaignId);
+      expect(notes).toHaveBeenCalledWith(expect.objectContaining({ title: 'Campaign is back on', body: expect.stringContaining('resume it') }));
+    });
+
+    it('does nothing while every ad is still rejected: no channel taken, no second notice', async () => {
+      const t = await launchedCampaign({ status: 'META_REJECTED', ads: 2 });
+      for (const id of t.whopAdIds) whopAdRows().get(id)!.delivery_status = 'rejected';
+      const claim = vi.fn(async () => ({ assigned: true }));
+      await reconcileWhopCampaigns(deps({ claimChannels: claim }));
+      await reconcileWhopCampaigns(deps({ claimChannels: claim }));
+      expect((await row(t.campaignId)).status).toBe('META_REJECTED');
+      expect(claim).not.toHaveBeenCalled();
+      expect(resynced).not.toContain(t.campaignId);
+      expect(released).not.toContain(t.campaignId);
+      expect(notes).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'campaign.meta_rejected' }));
+      expect(notes).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Campaign is back on' }));
+    });
+
+    it('waits when no channel is free (changing nothing, saying nothing) and comes back on the tick that finds one', async () => {
+      const t = await launchedCampaign({ status: 'META_REJECTED', ads: 2 });
+      rejectFirstOf(t);
+      await reconcileWhopCampaigns(deps({ claimChannels: async () => ({ assigned: false }) }));
+      expect((await row(t.campaignId)).status).toBe('META_REJECTED');
+      expect(resynced).not.toContain(t.campaignId);
+      expect(notes).not.toHaveBeenCalled();
+      await reconcileWhopCampaigns(deps({ claimChannels: async () => ({ assigned: true }) }));
+      expect((await row(t.campaignId)).status).toBe('ACTIVE');
+    });
+
+    it('survives a failing channel lookup', async () => {
+      const t = await launchedCampaign({ status: 'META_REJECTED', ads: 2 });
+      rejectFirstOf(t);
+      await reconcileWhopCampaigns(deps({ claimChannels: async () => { throw new Error('db blip'); } }));
+      expect((await row(t.campaignId)).status).toBe('META_REJECTED');
+    });
+
+    it('gives everything back when the edge will not follow: rejected again, channel released, nothing announced', async () => {
+      const t = await launchedCampaign({ status: 'META_REJECTED', ads: 2 });
+      rejectFirstOf(t);
+      await reconcileWhopCampaigns(
+        deps({
+          claimChannels: async () => ({ assigned: true }),
+          resync: async () => {
+            throw new Error('edge down');
+          },
+        }),
+      );
+      expect((await row(t.campaignId)).status).toBe('META_REJECTED');
+      expect(released).toContain(t.campaignId);
+      expect(notes).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Campaign is back on' }));
+    });
   });
 
   it('mirrors a pause and a resume done in Whop, keeping the channel', async () => {

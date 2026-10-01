@@ -285,7 +285,10 @@ export async function getArticleUsage(auth: AuthContext, articleId: string): Pro
             .filter((a) => a.campaignId === c.id && a.channelRef === channelRef)
             .map((a) => ({ forDay: a.forDay, releasedAt: a.releasedAt }));
           const sp = collapseDays(aRows);
-          const rRows = revRows.filter((r) => r.campaignId === c.id && r.channelRef === channelRef);
+          // Only the days this campaign actually held the channel count (a channel is reused by many campaigns; the Channels view
+          // windows the same way), so revenue stored for other days can never inflate this campaign's earnings.
+          const heldDay = (day: string): boolean => sp.some((s) => day >= s.firstDay && day <= s.lastDay);
+          const rRows = revRows.filter((r) => r.campaignId === c.id && r.channelRef === channelRef && heldDay(r.day));
           const revenueUsd = usd(rRows.reduce((s, r) => s + r.revenueUsdMinor, 0));
           totalRevenueUsd += revenueUsd;
           const afsRequests = rRows.reduce((s, r) => s + r.afsRequests, 0);

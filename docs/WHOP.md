@@ -82,6 +82,8 @@ address must be on `WEB_DOMAIN`, never an arbitrary URL.
 
 ## Build and launch a campaign (phase 2)
 
+**Two things every Whop launch sends that the wizard does not expose.** `multi_advertiser_ads: false` on every ad: Whop defaults it to ON, which lets Meta show the ad beside other advertisers' and crop the creative, and Facebook ads from this tool never do that. And a campaign's special ad categories are sent as `special_ad_categories` (Housing, Employment, Credit / Financial products and Issues, elections or politics map to Whop's `housing`, `employment`, `financial_products`, `politics`; online gambling has no Whop name, so such a campaign cannot be submitted).
+
 In the campaign wizard, **Ad network** appears under the campaign name when Whop Ads is on for the buyer's company;
 Facebook stays the default. Choosing **Whop** swaps the Facebook ad account, page and pixel for a **Whop business** and
 the **Facebook page** its ads run under. Destination websites, keywords, the referrer ad creative, ads and creatives
@@ -181,9 +183,14 @@ campaign deleted in Whop) the next one uses new keys: `campaigns.whop_key_epoch`
 
 - **Status sync, every 30 minutes** (`reconcileWhopCampaigns`, next to the Facebook one): one bulk read of each
   business's campaigns and ads, then:
-  - a rejected ad (or Whop's `all_ads_rejected` / `in_appeal`) → `META_REJECTED`, **paused at Whop too** (best effort: our
+  - **every** ad rejected (Whop's `all_ads_rejected`, or all of the campaign's ads rejected / in appeal) → `META_REJECTED`, **paused at Whop too** (best effort: our
     redirect no longer sends it traffic, so a still-delivering ad would only burn money; the buyer is told whether that
-    worked), routing stopped (below), buyer told why, in Meta's words;
+    worked), routing stopped (below), buyer told why, in Meta's words. **Some** ads rejected does NOT stop the campaign
+    (unlike Facebook's D14): Whop never serves a rejected ad and the rest can still earn, so the buyer is told once per
+    rejected ad ("2 of 12 ads … the campaign keeps running") and the ads show as disapproved. **A campaign already stopped as
+    rejected is revived by the same sync** once Whop has ads that can deliver again (an appeal won, or it was stopped under the old
+    "any ad" rule): it gets a channel again (only if one is free; otherwise the next tick tries), goes back to ACTIVE, or PAUSED
+    if Whop has it paused (then use Resume), and its edge config is re-published: same links, article and data, nothing cloned;
   - paused or resumed in Whop → mirrored (the channel is kept). The edge config must follow: if it cannot be updated the
     status is given back and nothing is announced, so the database and the edge agree and the next tick does it all again
     (a resumed campaign whose edge still says "inactive" would send paid clicks to the white page while it runs);

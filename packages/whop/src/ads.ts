@@ -220,6 +220,8 @@ export interface CreateAdInput {
   /** One entry with no `format` (the base asset) is required to launch. */
   creatives?: { id: string; format?: 'square' | 'vertical' | 'horizontal' }[];
   social_accounts?: { id: string }[];
+  /** Whether Meta may show the ad next to other advertisers' ads in one unit (and resize or crop the creative). Whop defaults it to true. */
+  multi_advertiser_ads?: boolean;
   idempotencyKey?: string;
 }
 

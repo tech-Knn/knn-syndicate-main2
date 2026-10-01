@@ -61,6 +61,8 @@ library — no DB, no HTTP server. The API app owns persistence, notifications a
 - **A standalone campaign is a DRAFT and nothing spends until `PATCH status: active`.** `POST /ads` runs the pixel check on
   `url` even under a draft. Launch gates, in observed order: a creative on every ad, a Facebook page, then (docs only) the
   payment method and the agreement; each is a 400 whose message says what to fix, and the launch passes it through.
+- **`multi_advertiser_ads: false` on every ad** (`whopAdBody`): Whop defaults it to ON, which lets Meta crop the creative and show the ad next to
+  other advertisers'. A campaign's special ad categories go out as `special_ad_categories` (`WHOP_SPECIAL_CATEGORY` in `@knn/shared`).
 - **Files:** `createFile` → PUT the bytes to the presigned URL (`client.upload`: **no `Authorization` header**, a 403 means the
   link expired) → poll `getFile` until `ready` (`uploadCreative` does all three, up to three tries, each on a NEW record: a
   replayed key would return the old, possibly expired, link. A transient failure retries under `<key>:retry`, then fresh keys;

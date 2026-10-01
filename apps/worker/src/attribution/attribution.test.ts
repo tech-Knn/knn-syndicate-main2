@@ -7,6 +7,7 @@ import { ROLES, USER_STATUS } from '@knn/shared';
 import {
   type AttributionDeps,
   allocateRevenueForCampaignDay,
+  lateWhopDay,
   recentDays,
   runAttribution,
 } from './attribution.service.js';
@@ -368,6 +369,67 @@ describe('attribution — per-offer revenue across multiple AFS accounts (Phase 
     const camp = await withSystem((tx) => tx.campaignRevenueDaily.findUnique({ where: { campaignId_day: { campaignId: seed.campaignId, day: DAY } } }));
     expect(camp!.revenueUsdMinor).toBe(5000);
     expect(camp!.afsClicks).toBe(50);
+  });
+});
+
+describe('attribution — a reused channel credits each day to that day\'s holder', () => {
+  it('writes per-offer rows only for days the offer\'s campaign held the channel, and heals rows written against the wrong one', async () => {
+    const D0 = '2026-05-17'; // nobody held the channel
+    const D1 = '2026-05-18'; // the earlier campaign
+    const D2 = '2026-05-19'; // the earlier campaign
+    const D3 = '2026-05-20'; // the current campaign
+    const ids = await withSystem(async (tx) => {
+      const chId = `ch-${suffix}-${chCounter++}`;
+      const channel = await tx.channel.create({ data: { channelId: chId, domainId: domAId, status: 'ASSIGNED' } });
+      const mk = async (name: string): Promise<{ campaignId: string; offerId: string }> => {
+        const c = await tx.campaign.create({ data: { orgId, buyerId, name: `${name} ${Math.random()}`, status: 'ACTIVE', keywords: [] } });
+        const o = await tx.offer.create({ data: { orgId, campaignId: c.id, domainId: domAId, weightPct: 100, kind: 'PAID', channelRef: channel.id } });
+        return { campaignId: c.id, offerId: o.id };
+      };
+      const a = await mk('earlier');
+      const b = await mk('current');
+      for (const d of [D1, D2]) await tx.channelAssignment.create({ data: { orgId, channelRef: channel.id, campaignId: a.campaignId, forDay: d } });
+      await tx.channelAssignment.create({ data: { orgId, channelRef: channel.id, campaignId: b.campaignId, forDay: D3 } });
+      // What an earlier version wrote: the CURRENT offer credited with a day it did not hold.
+      for (const d of [D1]) {
+        await tx.offerRevenueDaily.create({ data: { orgId, offerId: b.offerId, campaignId: b.campaignId, channelRef: channel.id, day: d, afsClicks: 5, revenueMinor: 900, revenueUsdMinor: 900, currency: 'USD', suppressed: false } });
+      }
+      return { chId, channelRef: channel.id, a, b };
+    });
+    const deps: AttributionDeps = {
+      fetchInsights: async (): Promise<FbAdInsightRow[]> => [],
+      fetchAdsense: async (): Promise<ChannelDayRevenue[]> =>
+        [D0, D1, D2, D3].map((day, i) => ({ channelId: ids.chId, day, revenueMinor: 100 * (i + 1), currency: 'USD', afsClicks: 10 })),
+      getRate: getUsdRate,
+    };
+    await runAttribution([D0, D1, D2, D3], deps);
+
+    const who = (campaignId: string): string => (campaignId === ids.a.campaignId ? 'earlier' : 'current');
+    const offerRows = await withSystem((tx) => tx.offerRevenueDaily.findMany({ where: { channelRef: ids.channelRef }, orderBy: { day: 'asc' } }));
+    // D0 (no holder) gets no row; D1/D2 are the earlier campaign's; D3 the current one's. The $9 row on D1 is gone.
+    expect(offerRows.map((r) => [who(r.campaignId), r.day, r.revenueUsdMinor])).toEqual([
+      ['earlier', D1, 200],
+      ['earlier', D2, 300],
+      ['current', D3, 400],
+    ]);
+    const campRows = await withSystem((tx) => tx.campaignRevenueDaily.findMany({ where: { channelRef: ids.channelRef }, orderBy: { day: 'asc' } }));
+    expect(campRows.map((r) => [who(r.campaignId), r.day, r.revenueUsdMinor])).toEqual([
+      ['earlier', D1, 200],
+      ['earlier', D2, 300],
+      ['current', D3, 400],
+    ]);
+  });
+});
+
+describe('lateWhopDay: yesterday Whop spend is re-read hourly early in the day', () => {
+  it('names yesterday through the first 6 hours after midnight IST, and nothing after', () => {
+    // IST = UTC+5:30, so 00:15 IST on Oct 1 is 18:45 UTC on Sep 30.
+    expect(lateWhopDay(new Date('2026-09-30T18:45:00Z'))).toBe('2026-09-30');
+    expect(lateWhopDay(new Date('2026-09-30T18:30:00Z'))).toBe('2026-09-30'); // the first minute of Oct 1 IST
+    expect(lateWhopDay(new Date('2026-10-01T00:29:00Z'))).toBe('2026-09-30'); // 05:59 IST
+    expect(lateWhopDay(new Date('2026-10-01T00:30:00Z'))).toBeNull(); // 06:00 IST: the finalization pass covers it
+    expect(lateWhopDay(new Date('2026-10-01T09:00:00Z'))).toBeNull();
+    expect(lateWhopDay(new Date('2026-09-30T18:29:59Z'))).toBeNull(); // still Sep 30 IST, 23:59
   });
 });
 

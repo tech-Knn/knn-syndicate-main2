@@ -38,6 +38,11 @@ export interface AssignResult {
   channelRefs?: string[];
 }
 
+/** `queue: false` = answer "is a channel free right now?" without enqueueing the campaign or changing its status when the pool is empty. */
+export interface AssignOptions {
+  queue?: boolean;
+}
+
 /** Internal sentinel: a PAID offer found no channel in either pool → roll back + queue. */
 class OfferPoolExhausted extends Error {}
 
@@ -57,7 +62,7 @@ export type OnAssigned = (campaignId: string) => unknown;
  * (QUEUED_NO_CHANNEL) when the pool is exhausted. Idempotent: a campaign that
  * already holds a channel is returned as-is.
  */
-export async function assignChannel(campaignId: string): Promise<AssignResult> {
+export async function assignChannel(campaignId: string, opts: AssignOptions = {}): Promise<AssignResult> {
   return withSystem(async (tx) => {
     const campaign = await tx.campaign.findUnique({
       where: { id: campaignId },
@@ -79,6 +84,9 @@ export async function assignChannel(campaignId: string): Promise<AssignResult> {
     const claimed = rows[0];
 
     if (!claimed) {
+      // A caller that only wants to know whether a channel is free right now (a stopped campaign being revived) must not
+      // leave a queue entry behind: the queue drain would hand it a channel later, behind that caller's back.
+      if (opts.queue === false) return { assigned: false };
       await tx.campaignQueue.upsert({
         where: { campaignId },
         create: { orgId: campaign.orgId, campaignId, status: 'WAITING' },
@@ -123,7 +131,7 @@ export async function assignChannel(campaignId: string): Promise<AssignResult> {
  * back and the campaign is queued (QUEUED_NO_CHANNEL) — never partially assigned.
  * Idempotent: offers that already hold a channel are left untouched.
  */
-export async function assignOfferChannels(campaignId: string): Promise<AssignResult> {
+export async function assignOfferChannels(campaignId: string, opts: AssignOptions = {}): Promise<AssignResult> {
   try {
     return await withSystem(async (tx) => {
       const campaign = await tx.campaign.findUnique({ where: { id: campaignId }, select: { orgId: true, status: true } });
@@ -172,6 +180,7 @@ export async function assignOfferChannels(campaignId: string): Promise<AssignRes
     });
   } catch (err) {
     if (!(err instanceof OfferPoolExhausted)) throw err;
+    if (opts.queue === false) return { assigned: false }; // the txn rolled back; the caller retries on its own schedule
     // A domain pool was exhausted → the assign txn rolled back; enqueue for a retry.
     await withSystem(async (tx) => {
       const c = await tx.campaign.findUnique({ where: { id: campaignId }, select: { orgId: true, status: true } });
@@ -190,9 +199,9 @@ export async function assignOfferChannels(campaignId: string): Promise<AssignRes
  * channel per offer from each offer's domain pool; a legacy campaign gets one channel
  * from the global pool. Both paths are concurrency-safe and idempotent.
  */
-export async function assignForCampaign(campaignId: string): Promise<AssignResult> {
+export async function assignForCampaign(campaignId: string, opts: AssignOptions = {}): Promise<AssignResult> {
   const paidCount = await withSystem((tx) => tx.offer.count({ where: { campaignId, kind: 'PAID' } }));
-  return paidCount > 0 ? assignOfferChannels(campaignId) : assignChannel(campaignId);
+  return paidCount > 0 ? assignOfferChannels(campaignId, opts) : assignChannel(campaignId, opts);
 }
 
 /**
