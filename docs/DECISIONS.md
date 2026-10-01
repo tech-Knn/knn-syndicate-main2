@@ -1191,8 +1191,8 @@ carry Meta's real numeric ad id in `utm_meta_ad_id` (plus ad-set id, campaign id
 into the link and Meta fills it in when someone clicks.
 
 **Decision.** A new check for a Whop config (`whopDynamicOutcome`, `apps/redirect/src/whop-click.ts`): `match` = an `fbclid` or a numeric
-`utm_meta_ad_id`; `mismatch` = `utm_meta_ad_id` present but not a number (the placeholder was never filled in: template, preview,
-copied URL); `missing` = neither. It is recorded in the existing cloaker counters (`verified_match` / `verified_mismatch` /
+`utm_meta_ad_id` of 10-19 digits (real ones are 18); `mismatch` = `utm_meta_ad_id` present but not a real Meta id (the placeholder was
+never filled in, or Whop's own preview link, which carries `123456789`: template, preview, copied URL); `missing` = neither. It is recorded in the existing cloaker counters (`verified_match` / `verified_mismatch` /
 `macro_missing`; no schema change). A separate switch, `WHOP_GATE_MODE` (`observe` default | `enforce`, in `wrangler.toml`), decides
 whether it routes:
 - **observe (live default):** routing is exactly as before; the counters show what enforce WOULD turn away.
@@ -1205,6 +1205,12 @@ template, previews and copied URLs. A stricter later step (pin an ad's Meta id f
 **Rollout.** Deploy the Worker (`cd apps/redirect && pnpm dlx wrangler deploy`; read the variables list: `WHOP_GATE_MODE` appears as
 `observe`). Watch Platform → Cloaker for the Whop campaigns for a day or two. Enforce only after `mismatch` + `missing` are a rounding error.
 
+**Amendment (same day): Whop's preview link.** Whop's ad preview links carry `utm_meta_ad_id=123456789` (9 digits), `wacid=adcamp_preview` and
+so on. The first version accepted any 6-30 digit id, so a preview link counted as a real click: 4 such views had already reached money
+pages and fired events to Whop. Real Meta ids in our data are all 18 digits (614 clicks, 104 Facebook ad ids), but Meta documents ids only as
+numeric strings with no stated length, so the rule is deliberately loose: 10-19 digits (19 = a 64-bit id). Observe mode will show if a real click
+ever scores `mismatch`; look at that before any enforce.
+
 ### 2026-10-01 — D39: the Whop launch rules we learned from real refusals ($5.00 budget floor, no narrowing the age of a special category)
 
 Seven Whop campaigns sat in `PROCESSING` with a `knn-launch` issue: five were refused for "Budget must be greater than or equal to 5.0" / "Daily
@@ -1216,6 +1222,13 @@ with min age 20). Our wizard let a buyer enter $1.00 and any age, so the refusal
   already-narrowed ad set is flagged. Gender is not checked: Whop has not complained about it.
 Not changed: the **live** budget edit of a running Whop campaign (`updateWhopCampaignBudget`) still only refuses what cannot be a budget; Whop applies
 its own floor and the error says so. Campaigns already stuck need their budget or age fixed (Reopen -> edit -> submit), they do not repair themselves.
+
+**Amendment to D39 (same day): Sales cannot optimize for the ad click.** A third refusal: "Conversion event 'SUBMIT_APPLICATION' is not valid for objective
+'sales'" (valid there: purchase, add to cart, initiated checkout, add payment info, complete registration, content view, search, donate, start trial,
+subscribe). Our money event, the ad click, is a `submit_application`, so `whopLaunchProblems` now refuses an `OUTCOME_SALES` ad set whose optimized event is the
+ad click and tells the buyer to pick Leads or Engagement. Evidence the other objectives are fine: all 40 non-draft Whop campaigns on staging that
+reached Whop with the ad click used Engagement (12 live), and Leads is the default. A Sales campaign could optimize for add-to-cart or content view, but the
+wizard has no "Optimize for" picker yet (planned), so for now the answer is the objective.
 
 ### 2026-10-01 — D40: a website given to another company stops that company's unlaunched campaigns, never its running ones
 

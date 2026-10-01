@@ -1252,6 +1252,11 @@ function OfferStep({
               </option>
             ))}
           </select>
+          {whop && form.objective === 'OUTCOME_SALES' && (
+            <span className={styles.hint} role="alert" style={{ color: 'var(--red-text)' }}>
+              Whop does not accept optimizing for ad clicks on a Sales campaign. Choose Leads or Engagement.
+            </span>
+          )}
         </div>
         <div className={styles.field}>
           <span className={styles.label}>Budget optimization</span>
