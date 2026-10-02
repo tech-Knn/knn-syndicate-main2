@@ -14,8 +14,8 @@ HTTP server — callers (the API article service) own persistence + the reuse lo
   the length. The vector is for pgvector cosine reuse — the DB column is `vector(1536)`.
 - **Articles use OpenAI now (the default).** `generateArticleOpenAI` returns
   `{title, teaser, content, relatedSearchTerms}` — JSON-mode (`response_format: json_object`) so the
-  reply is structured: a markdown body (## sections + lists, the reverse-engineered competitor
-  skeleton) **plus** `related_search_terms` (the high-CPC AFS `terms` — where the RPM lives).
+  reply is structured: a markdown body (## sections, 2 inline FAQs last; the v4 reference-style prompt lives in
+  `src/article-prompt.ts`, D42; v3 is kept as `ARTICLE_SYSTEM_V3` for rollback) **plus** `related_search_terms` (the high-CPC AFS `terms` — where the RPM lives).
   `complianceRewriteOpenAI` returns the rewritten markdown body. The API service stores raw + compliant
   (audit) and the terms, serves the compliant one, and **skips the rewrite when no `compliance_prompt`
   is set** (saves a call). The Claude variants (`generateArticle`/`complianceRewrite`) remain available

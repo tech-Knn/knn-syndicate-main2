@@ -134,6 +134,38 @@ describe('generateArticleOpenAI', () => {
     expect(body.response_format?.type).toBe('json_object');
   });
 
+  it('sends the v4 reference-style prompt (D42): explainer voice, specific sections, 2 inline FAQs last, no disclaimer, JSON contract', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      chatResponse(JSON.stringify({ title: 'T', teaser: 't', body_markdown: 'Body.', related_search_terms: ['x near me'] })),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await generateArticleOpenAI({ keywords: ['used trucks'], query: 'used trucks', market: 'USA' });
+
+    const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
+      messages: { role: string; content: string }[];
+    };
+    const system = body.messages.find((m) => m.role === 'system')?.content ?? '';
+    const user = body.messages.find((m) => m.role === 'user')?.content ?? '';
+
+    // Voice and structure the reference pages share.
+    expect(system).toContain('NOT a "premium consultation guide"');
+    expect(system).toContain('Second person');
+    expect(system).toContain('exactly 3 sentences');
+    expect(system).toContain('5 or 6 sections');
+    expect(system).toContain('EXACTLY 2 questions');
+    expect(system).toContain('NO disclaimer');
+    expect(system).toContain('750 to 900 words');
+    // The old v3 template sections are only ever named as things NOT to write.
+    expect(system).toContain('NEVER use generic headings');
+    expect(system).not.toContain('(1) a calm premium opening paragraph');
+    expect(system).not.toContain('at most 8 words / 60 characters');
+    // The JSON contract and the related-search rules the pipeline depends on are intact.
+    for (const key of ['"title"', '"teaser"', '"body_markdown"', '"related_search_terms"']) expect(system).toContain(key);
+    expect(system).toContain('AT LEAST ONE commercial modifier');
+    // The market guidance still reaches the model.
+    expect(user).toContain('TARGET MARKET: United States');
+  });
+
   it('drops sensitive/implausible/gibberish/duplicate terms and ranks high-intent ones first (RSOC quality gate)', async () => {
     vi.stubGlobal(
       'fetch',

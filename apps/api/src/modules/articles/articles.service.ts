@@ -516,9 +516,10 @@ export async function generateArticleForCampaign(
   }
 }
 
-/** Rewrite the campaign's ALREADY-attached article body + related-search terms IN PLACE,
- *  keeping the same article `id`, `slug`, and `title` (URL stability — the running FB ad
- *  keeps pointing at the same `/a/<slug>`, no republish, no attribution reset).
+/** Rewrite the campaign's ALREADY-attached article body, title + related-search terms IN PLACE,
+ *  keeping the same article `id` and `slug` (URL stability — the running FB ad keeps pointing
+ *  at the same `/a/<slug>`, no republish, no attribution reset). The title IS refreshed (D42):
+ *  the headline is part of the article's hook, and it is not part of the URL.
  *
  *  Use when the article was generated for the wrong market (e.g. campaign was launched for
  *  Saudi Arabia but got India-flavored content because the market resolver couldn't figure
@@ -572,10 +573,13 @@ export async function regenerateArticleContent(
     }
 
     return await withTenant(orgId, async (tx) => {
-      // Deliberately DON'T update slug or title: URL stability for the running ad.
+      // Deliberately DON'T update the slug: URL stability for the running ad. The title is refreshed
+      // (a blank model title keeps the current one).
+      const newTitle = generated.title?.trim();
       const updated = await tx.article.update({
         where: { id: campaign.articleId! },
         data: {
+          ...(newTitle ? { title: newTitle } : {}),
           rawContent: generated.content,
           compliantContent: compliant,
           relatedSearchTerms: generated.relatedSearchTerms ?? [],

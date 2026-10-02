@@ -1285,3 +1285,55 @@ verified Facebook click gets, so we do not know what `p.` is for.
 **How to judge it.** Compare RPC (AdSense revenue / AdSense clicks per day) on the same domains before and after, over a few hundred clicks. To revert: restore the
 token values in `globals.css`, `RSOC_UNITS`/slot 2/the bootstrap in `related-search-unit.tsx`, `maxTop`/`limit` in the results page, and unset the domain styles.
 Amends D26 (one unit).
+
+### 2026-10-02 — D42: article prompt v4 — a plain editorial explainer written to the reference sites' measured structure and voice
+
+**Why.** An audit of 177 live articles from the three reference sites (every one reached through a real Facebook ad's link; D41) against 30 of ours found a different kind of page. Ours: 615 words,
+Flesch 31, 68% of headings are the same template headings ("Comparing your options", "Consultation & eligibility", "What to expect", FAQ), 6 of 30 titles with an angle, a "Disclaimer"
+paragraph on 25 of 30, "Q1:/Q2:" FAQs on 19 of 30. Theirs: ~740 words, Flesch 46, 13-15% template headings (only the FAQ), 16 of 30 titles with an angle, no disclaimer, inline two-question FAQ last.
+The cause was our own prompt (v3, 2026-09-23): a fixed 7-section "premium consultation guide", titles capped at 8 words with no colon, "never clickbait", 1,000-1,500 words asked but ~600 delivered.
+
+**Decision.** `ARTICLE_SYSTEM` (now `packages/ai/src/article-prompt.ts`; v3 kept as `ARTICLE_SYSTEM_V3` in `openai.ts` for rollback) is rewritten:
+- Voice: second person, explain the cause or mechanism of each point, state facts directly, a few figures not a price list, banned filler words, no sales language.
+- Title: 8-13 words with an angle (why / N reasons / the truth about / A vs B / what to know before you buy); colon subtitles allowed.
+- Structure: a 3-sentence opener (45-55 words), 5-6 sections with specific noun-phrase headings (generic "Understanding / Comparing / Consultation / What to expect" are banned),
+  usually two developed paragraphs each (60-80 words), at most one short list, then `## Frequently Asked Questions` with EXACTLY 2 inline Q&As as the last thing: no closing paragraph, no CTA, no disclaimer. 750-900 words.
+- One worked example section (an invented laptop topic) for depth and tone. The JSON contract and the related-search term rules are unchanged, so the pipeline and the RSOC term filters are untouched.
+- The text does not copy any reference article; it reproduces their structure, voice and measurable statistics.
+
+**How it was tuned (real model `gpt-4.1-mini`, run through the staging api container, production call shape: JSON mode, temperature 0.7, 3,000 max tokens, then the compliance rewrite).**
+20-30 inputs taken from our real campaigns (queries, keywords, markets: India, USA, UAE) plus 10 informational US topics. A scorer built from the 177 reference articles checks 15 numeric metrics against
+their 5th-95th percentile bands and six hard rules (no disclaimer, no Q1-style FAQ, FAQ present and last, no template headings, no repeated headings), and a logistic classifier (ours vs theirs, 18 style features) gives P(reference).
+"Match" = no hard-rule failure and at most 2 soft misses (the reference articles themselves fail the all-bands test 62% of the time, so a strict all-bands rule would be meaningless).
+
+| | v3 (production) | v4.1 | v4.5 |
+|---|---|---|---|
+| Match | 0 / 20 | 15 / 20 | **23-25 / 30** (two independent runs) |
+| P(reference), classifier | 0.10 | 0.84 | **0.86** (both runs) |
+| Words | 693 | 639 | 719 |
+| Flesch reading ease (ref 46) | 24 | 44 | 47 |
+| Filler/hedging per 1,000 words (ref 9) | 26 | 15 | 13 |
+| Titles with an angle | 3 / 20 | 20 / 20 | 28 / 30 |
+| Template headings (count) | 70 | 3 | 3 |
+| Disclaimers | 10 / 20 | 0 | 0 |
+
+`gpt-4.1` with the same prompt: 25 / 30 match, P 0.89, ~5x the cost, a little richer detail; `gpt-4.1-mini` stays the default (`OPENAI_ARTICLE_MODEL` switches it, no code change).
+
+**What is still not at parity (honest list).** Commercial-word density on finance topics (car-loan and EMI inputs are about prices by nature); hedging words (13 per 1,000 vs 9); a few short paragraphs. We do not claim a 100% replica.
+
+**Two things this does NOT change, and why the new articles may not appear yet.**
+1. **The compliance rewrite adds a disclaimer to every article.** 0 of 131 stored raw articles have one; 103 of 131 compliant ones do, because the platform setting `compliance_prompt` says "Add disclaimers where needed" and the rewrite model obeys on every article.
+   With the live setting, v4 articles all still end in a disclaimer (tested: 20 of 20, and the match count falls to 0). It is a global, AdSense-safety setting owned by the super-admin, so it was NOT changed. Proposed value (tested at 25 / 30 above):
+   `Remove health claims. Don't promise specific outcomes. Keep a natural, informative tone. Do not add a disclaimer or any extra closing paragraph; only add a one-sentence note inside the text where a claim truly needs it.`
+2. **Old articles are reused.** The article engine reuses an existing article when the new campaign's embedding is at least 0.70 cosine-similar (D16), so campaigns on topics we already have keep serving the old-template article.
+   Only newly generated articles use v4. Regenerating the articles of live campaigns is a separate, deliberate step.
+
+**To roll back.** In `generateArticleOpenAI` pass `ARTICLE_SYSTEM_V3` instead of `ARTICLE_SYSTEM`; restore the old `compliance_prompt` value if it was changed.
+
+**Amendment to D42 (same day, Aman approved both follow-ups).**
+1. **`compliance_prompt` was changed on staging** (platform setting, one row; the old value is below for rollback). It no longer tells the rewrite model to add a disclaimer, so v4 articles end at the FAQ like the reference pages.
+   - Old: `Remove health claims. Don't promise specific outcomes. Add disclaimers where needed. Keep a natural, informative tone.`
+   - New: `Remove health claims. Don't promise specific outcomes. Keep a natural, informative tone. Do not add a disclaimer or any extra closing paragraph; only add a one-sentence note inside the text where a claim truly needs it.`
+   - The "remove health claims / no promised outcomes" rules are kept. Health topics (hair restoration, fatty liver, vitamin D) are the ones to watch if AdSense ever flags a page.
+2. **Live campaigns' articles are regenerated in place** with `apps/api/scripts/regenerate-articles.ts` (run inside the api container; `--dry-run` lists what it would do). It reuses `regenerateArticleContent`, which keeps each article's id and slug (running ads and attribution are untouched) and, new in this change, also refreshes the **title** (the headline is part of the hook and is not in the URL). It writes a JSON backup of every article it is about to overwrite, and `--restore <file>` puts the old title / body / terms back (the embedding is not restored). Scope: campaigns in status ACTIVE (15 on 2026-10-02, one article each); PAUSED / PROCESSING / META_REJECTED campaigns keep their old articles until they are run through it with `--status`.
+

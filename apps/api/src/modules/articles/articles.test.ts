@@ -7,6 +7,7 @@ import {
   assertComplianceConfigured,
   generateArticleForCampaign,
   getPublicArticleBySlug,
+  regenerateArticleContent,
 } from './articles.service.js';
 
 const suffix = Date.now().toString(36);
@@ -176,6 +177,52 @@ describe('article engine', () => {
 
   it('returns null for an unknown slug', async () => {
     expect(await getPublicArticleBySlug('does-not-exist-xyz')).toBeNull();
+  });
+});
+
+describe('regenerateArticleContent (D42: refresh a live campaign\'s article in place)', () => {
+  it('rewrites body, title and terms and keeps the article id and slug', async () => {
+    const campaignId = await makeCampaign(['regen topic one']);
+    const first = await generateArticleForCampaign(authFor(buyerId), campaignId, deps(unit(10)));
+
+    const d = deps(unit(11));
+    d.generateArticle.mockResolvedValue({
+      title: 'Why Fresh Titles Win: What To Know',
+      content: 'New raw body.',
+      relatedSearchTerms: ['fresh term near me'],
+    });
+    d.complianceRewrite.mockResolvedValue('New compliant body.');
+    const out = await regenerateArticleContent(authFor(buyerId), campaignId, d);
+
+    expect(out.id).toBe(first.id);
+    expect(out.slug).toBe(first.slug); // URL stability: the running ad keeps pointing at the same /a/<slug>
+    expect(out.title).toBe('Why Fresh Titles Win: What To Know');
+    const row = await withSystem((tx) => tx.article.findUnique({ where: { id: first.id } }));
+    expect(row?.rawContent).toBe('New raw body.');
+    expect(row?.compliantContent).toBe('New compliant body.');
+    expect(row?.relatedSearchTerms).toEqual(['fresh term near me']);
+    const audit = await withSystem((tx) => tx.auditLog.count({ where: { orgId, action: 'article.regenerated', entityId: first.id } }));
+    expect(audit).toBe(1);
+  });
+
+  it('keeps the current title when the model returns a blank one', async () => {
+    const campaignId = await makeCampaign(['regen topic two']);
+    const first = await generateArticleForCampaign(authFor(buyerId), campaignId, deps(unit(12)));
+    const d = deps(unit(13));
+    d.generateArticle.mockResolvedValue({ title: '   ', content: 'Body.', relatedSearchTerms: [] });
+    const out = await regenerateArticleContent(authFor(buyerId), campaignId, d);
+    expect(out.title).toBe(first.title);
+  });
+
+  it('rejects a campaign with no article yet (422)', async () => {
+    const campaignId = await makeCampaign(['regen topic three']);
+    await expect(regenerateArticleContent(authFor(buyerId), campaignId, deps(unit(14)))).rejects.toMatchObject({ statusCode: 422 });
+  });
+
+  it("won't regenerate another buyer's campaign (404)", async () => {
+    const campaignId = await makeCampaign(['regen topic four']);
+    await generateArticleForCampaign(authFor(buyerId), campaignId, deps(unit(15)));
+    await expect(regenerateArticleContent(authFor(otherBuyerId), campaignId, deps(unit(16)))).rejects.toMatchObject({ statusCode: 404 });
   });
 });
 
