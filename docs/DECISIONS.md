@@ -1330,3 +1330,10 @@ their 5th-95th percentile bands and six hard rules (no disclaimer, no Q1-style F
 
 **To roll back.** In `generateArticleOpenAI` pass `ARTICLE_SYSTEM_V3` instead of `ARTICLE_SYSTEM`; restore the old `compliance_prompt` value if it was changed.
 
+**Amendment to D42 (same day, Aman approved both follow-ups).**
+1. **`compliance_prompt` was changed on staging** (platform setting, one row; the old value is below for rollback). It no longer tells the rewrite model to add a disclaimer, so v4 articles end at the FAQ like the reference pages.
+   - Old: `Remove health claims. Don't promise specific outcomes. Add disclaimers where needed. Keep a natural, informative tone.`
+   - New: `Remove health claims. Don't promise specific outcomes. Keep a natural, informative tone. Do not add a disclaimer or any extra closing paragraph; only add a one-sentence note inside the text where a claim truly needs it.`
+   - The "remove health claims / no promised outcomes" rules are kept. Health topics (hair restoration, fatty liver, vitamin D) are the ones to watch if AdSense ever flags a page.
+2. **Live campaigns' articles are regenerated in place** with `apps/api/scripts/regenerate-articles.ts` (run inside the api container; `--dry-run` lists what it would do). It reuses `regenerateArticleContent`, which keeps each article's id and slug (running ads and attribution are untouched) and, new in this change, also refreshes the **title** (the headline is part of the hook and is not in the URL). It writes a JSON backup of every article it is about to overwrite, and `--restore <file>` puts the old title / body / terms back (the embedding is not restored). Scope: campaigns in status ACTIVE (15 on 2026-10-02, one article each); PAUSED / PROCESSING / META_REJECTED campaigns keep their old articles until they are run through it with `--status`.
+
