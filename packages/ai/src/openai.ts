@@ -1,5 +1,6 @@
 import { env } from '@knn/config';
 import { classifyTerm, cleanTerms, filterTerms } from '@knn/shared';
+import { ARTICLE_SYSTEM } from './article-prompt.js';
 import { AiNotConfiguredError, AiRequestError } from './errors.js';
 
 /**
@@ -63,7 +64,12 @@ export interface GeneratedArticleAI {
 // -----------------------------------------------------------------------------
 // PROMPT HISTORY — DO NOT DELETE (preserved for reference / rollback).
 //
-// v3 (2026-09-23, current): pivoted from "SEO writer, factual guide" tone to a
+// v4 (2026-10-02, current — see ./article-prompt.ts and docs/DECISIONS.md D42): a plain editorial explainer written to the
+// structure/voice measured on 177 live reference articles: 3-sentence opener, 5-7 specific noun-phrase sections of two
+// developed paragraphs, exactly 2 inline FAQ Q&As as the last thing, 750-900 words, hooked 8-13 word title, no closing
+// paragraph or disclaimer. The JSON contract and the related-search term rules are unchanged from v3.
+//
+// v3 (2026-09-23, superseded by v4): pivoted from "SEO writer, factual guide" tone to a
 // "premium consultation guide" tone per operator direction. Structural changes:
 // - 7-section body (calm opener → problem/solution → comparison → consultation
 //   & eligibility → what to expect → FAQ → soft-CTA closer), replacing the older
@@ -96,7 +102,11 @@ export interface GeneratedArticleAI {
 // `git log -p packages/ai/src/openai.ts`.
 // -----------------------------------------------------------------------------
 
-const ARTICLE_SYSTEM =
+/**
+ * The v3 prompt, kept verbatim for rollback. NOT used any more: `generateArticleOpenAI` runs `ARTICLE_SYSTEM` from
+ * `./article-prompt.ts` (v4, D42). To roll back, point that call at this constant.
+ */
+export const ARTICLE_SYSTEM_V3 =
   'You are a content strategist creating a premium informational landing page for the TOPIC ' +
   'provided. The page should feel like a trustworthy consultation and recommendation guide — ' +
   'NEVER an aggressive sales page. ' +
