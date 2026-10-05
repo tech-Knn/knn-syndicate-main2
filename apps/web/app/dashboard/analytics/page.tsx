@@ -263,7 +263,10 @@ export default function AnalyticsPage() {
     [filtered],
   );
 
-  const visibleCols = useMemo(() => COLUMNS.filter((c) => columns.includes(c.key)), [columns]);
+  const visibleCols = useMemo(
+    () => columns.flatMap((k) => COLUMNS.find((c) => c.key === k) ?? []),
+    [columns],
+  );
   const groupSpans = useMemo(() => {
     const spans: { group: GroupKey; count: number }[] = [];
     for (const c of visibleCols) {

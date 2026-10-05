@@ -37,13 +37,9 @@ export function ColumnPicker({ value, onChange, tag = 'FB' }: { value: ColKey[];
   }, [open]);
 
   const selected = new Set(value);
-  // Keep the registry order whatever order boxes were ticked in.
-  const setCols = (next: Set<ColKey>): void => onChange(COLUMNS.map((c) => c.key).filter((k) => next.has(k)));
+  // Preserve the order boxes were ticked in: append on check, drop in place on uncheck.
   const toggle = (k: ColKey): void => {
-    const next = new Set(selected);
-    if (next.has(k)) next.delete(k);
-    else next.add(k);
-    setCols(next);
+    onChange(selected.has(k) ? value.filter((c) => c !== k) : [...value, k]);
   };
   const activePreset = COLUMN_PRESETS.find((p) => p.columns.length === value.length && p.columns.every((c) => selected.has(c)));
   const groups = (Object.keys(GROUPS) as GroupKey[]).map((g) => ({ g, cols: COLUMNS.filter((c) => c.group === g) })).filter((x) => x.cols.length);
