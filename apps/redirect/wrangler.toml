@@ -31,7 +31,7 @@ ARTICLE_FALLBACK = "https://articles.10linesabout.com/"
 # cloaker, 2026-06-03). Any click without the matching ad id (organic, bot, spoof, or a paid click
 # whose macro was stripped) goes to the white page. Revert routing to the legacy fbclid signal = set
 # "observe" + `pnpm dlx wrangler deploy`.
-CLOAK_VERIFY_MODE = "observe"
+CLOAK_VERIFY_MODE = "enforce"
 # Whop's click-time check (D38): a Whop click counts as real only with an fbclid or Meta's real numeric ad id (utm_meta_ad_id), which
 # Meta fills in when someone clicks. OBSERVE = route exactly as before and only record match / mismatch / missing in the cloaker counters.
 # Flip to "enforce" (and redeploy) only after the counters show real clicks are all `match`.
