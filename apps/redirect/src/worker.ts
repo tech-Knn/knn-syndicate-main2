@@ -81,7 +81,7 @@ worker.get('/go/:id', async (c) => {
   // Beacon the decision (money/white + the would-be-enforce ad-id outcome) so the money-vs-white
   // split + macro-hit rate are visible BEFORE enforcing. Fire-and-forget; never blocks the 302.
   if (c.env.CLOAK_TELEMETRY_URL && config.campaignId) {
-    const t = `${c.env.CLOAK_TELEMETRY_URL}?cid=${encodeURIComponent(config.campaignId)}&route=${decision.verify.route}&v=${decision.verify.outcome}`;
+    const t = `${c.env.CLOAK_TELEMETRY_URL}?cid=${encodeURIComponent(config.campaignId)}&route=${decision.verify.route}&v=${decision.verify.outcome}&r=${decision.verify.reason ?? 'na'}`;
     c.executionCtx.waitUntil(fetch(t, { method: 'POST' }).then(() => undefined).catch(() => undefined));
   }
 

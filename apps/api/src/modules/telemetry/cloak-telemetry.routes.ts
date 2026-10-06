@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { type CloakRoute, type CloakVerify, recordCloakSignal } from './cloak-telemetry.service.js';
+import { type CloakRoute, type CloakVerify, type CloakReason, recordCloakSignal } from './cloak-telemetry.service.js';
 
 const ROUTES = new Set<string>(['money', 'white']);
 const VERIFY = new Set<string>(['match', 'mismatch', 'missing', 'na']);
+const REASONS = new Set<string>(['inactive', 'not-paid', 'kaid-absent', 'kaid-wrong']);
 
 /**
  * Public cloaker-decision beacon. The edge redirect fires (fire-and-forget, never blocking the 302):
@@ -17,8 +18,14 @@ export async function cloakTelemetryRoutes(app: FastifyInstance): Promise<void> 
       const q = (req.query ?? {}) as Record<string, string | undefined>;
       const route = (q.route ?? '').toLowerCase();
       const verify = (q.v ?? 'na').toLowerCase();
+      const reason = (q.r ?? '').toLowerCase();
       if (q.cid && ROUTES.has(route) && VERIFY.has(verify)) {
-        await recordCloakSignal({ campaignId: q.cid, route: route as CloakRoute, verify: verify as CloakVerify });
+        await recordCloakSignal({
+          campaignId: q.cid,
+          route: route as CloakRoute,
+          verify: verify as CloakVerify,
+          reason: REASONS.has(reason) ? (reason as CloakReason) : undefined,
+        });
       }
     } catch (err) {
       req.log.error({ err }, 'cloak telemetry beacon failed');

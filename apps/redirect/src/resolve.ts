@@ -111,6 +111,9 @@ export function pickSplit(splits: RedirectSplit[] | undefined, rand: number): Re
   return splits[splits.length - 1];
 }
 
+/** Why a click was sent to the white page. Telemetry only — never affects routing. */
+export type WhiteReason = 'inactive' | 'not-paid' | 'kaid-absent' | 'kaid-wrong' | 'whop-no-match';
+
 export interface RedirectDecision {
   location: string;
   paid: boolean;
@@ -118,7 +121,7 @@ export interface RedirectDecision {
   /** The offer the click was routed to (Phase E), when splits carry offer ids. */
   offerId?: string;
   /** Cloaker telemetry: the actual route taken + the would-be-enforce ad-id verification outcome. */
-  verify: { route: 'money' | 'white'; outcome: VerifyOutcome };
+  verify: { route: 'money' | 'white'; outcome: VerifyOutcome; reason?: WhiteReason };
 }
 
 /**
@@ -149,8 +152,18 @@ export function resolveRedirect(
   const paid = enforce ? query.kaid === config.expectedAdId : enforceWhop ? basePaid && outcome === 'match' : basePaid;
 
   if (!paid || !config.active) {
-    return { location: config.fallbackUrl || config.articleUrl, paid, txid: opts.txid, verify: { route: 'white', outcome } };
-  }
+  const reason: WhiteReason = !config.active
+    ? 'inactive'
+    : enforce
+      ? (!query.kaid ? 'kaid-absent' : 'kaid-wrong')
+      : enforceWhop && outcome !== 'match'
+        ? 'whop-no-match'
+        : 'not-paid';
+  return {
+    location: config.fallbackUrl || config.articleUrl, paid, txid: opts.txid,
+    verify: { route: 'white', outcome, reason }
+  };
+}
 
   const picked = pickSplit(config.splits, opts.rand ?? Math.random());
   const url = new URL(picked?.url ?? config.articleUrl);

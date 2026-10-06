@@ -14,9 +14,12 @@ import { type CloakStatRow, type CloakStats, addBusinessDays, currentBusinessDay
 export type CloakRoute = 'money' | 'white';
 export type CloakVerify = 'match' | 'mismatch' | 'missing' | 'na';
 
+/** Why a white-routed click went white. Only ever set when route === 'white'. */
+export type CloakReason = 'inactive' | 'not-paid' | 'kaid-absent' | 'kaid-wrong';
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function recordCloakSignal(input: { campaignId: string; route: CloakRoute; verify: CloakVerify }): Promise<void> {
+export async function recordCloakSignal(input: { campaignId: string; route: CloakRoute; verify: CloakVerify; reason?: CloakReason }): Promise<void> {
   const campaignId = (input.campaignId ?? '').trim();
   if (!UUID_RE.test(campaignId)) return; // unknown/garbage redirect → nothing to attribute
 
@@ -26,7 +29,12 @@ export async function recordCloakSignal(input: { campaignId: string; route: Cloa
     verifiedMatch: input.verify === 'match' ? 1 : 0,
     verifiedMismatch: input.verify === 'mismatch' ? 1 : 0,
     macroMissing: input.verify === 'missing' ? 1 : 0,
+    whiteInactive: input.reason === 'inactive' ? 1 : 0,
+    whiteNotPaid: input.reason === 'not-paid' ? 1 : 0,
+    whiteKaidAbsent: input.reason === 'kaid-absent' ? 1 : 0,
+    whiteKaidWrong: input.reason === 'kaid-wrong' ? 1 : 0,
   };
+
   const day = currentBusinessDay();
   const incrementData = {
     money: { increment: inc.money },
@@ -34,6 +42,10 @@ export async function recordCloakSignal(input: { campaignId: string; route: Cloa
     verifiedMatch: { increment: inc.verifiedMatch },
     verifiedMismatch: { increment: inc.verifiedMismatch },
     macroMissing: { increment: inc.macroMissing },
+    whiteInactive: { increment: inc.whiteInactive },
+    whiteNotPaid: { increment: inc.whiteNotPaid },
+    whiteKaidAbsent: { increment: inc.whiteKaidAbsent },
+    whiteKaidWrong: { increment: inc.whiteKaidWrong },
   };
   try {
     await withSystem((tx) =>
@@ -75,17 +87,17 @@ export async function getCloakStats(opts: { from?: string; to?: string } = {}): 
   // break the split down per buyer (and label each campaign with who owns it).
   const meta = ids.length
     ? await withSystem((tx) =>
-        tx.campaign.findMany({
-          where: { id: { in: ids } },
-          select: {
-            id: true,
-            name: true,
-            buyerId: true,
-            buyer: { select: { name: true } },
-            organization: { select: { name: true } },
-          },
-        }),
-      )
+      tx.campaign.findMany({
+        where: { id: { in: ids } },
+        select: {
+          id: true,
+          name: true,
+          buyerId: true,
+          buyer: { select: { name: true } },
+          organization: { select: { name: true } },
+        },
+      }),
+    )
     : [];
   const metaById = new Map(meta.map((c) => [c.id, c]));
 

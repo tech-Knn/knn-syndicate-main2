@@ -164,7 +164,7 @@ describe('resolveRedirect — cloak ad-id verification', () => {
     });
     it('non-paid → white, outcome "na"', () => {
       const d = resolveRedirect(verifyCfg, { utm_source: 'google' }, { txid: 't' });
-      expect(d.verify).toEqual({ route: 'white', outcome: 'na' });
+      expect(d.verify).toEqual({ route: 'white', outcome: 'na', reason: 'not-paid' });
     });
   });
 
@@ -180,12 +180,12 @@ describe('resolveRedirect — cloak ad-id verification', () => {
       const d = resolveRedirect(enforce, { fbclid: 'x', kaid: 'WRONG' }, { txid: 't' });
       expect(d.paid).toBe(false);
       expect(d.location).toBe('https://articles.example.com/');
-      expect(d.verify).toEqual({ route: 'white', outcome: 'mismatch' });
+      expect(d.verify).toEqual({ route: 'white', outcome: 'mismatch', reason: 'kaid-wrong' });
     });
     it('missing macro → white (blocked)', () => {
       const d = resolveRedirect(enforce, { fbclid: 'x' }, { txid: 't' });
       expect(d.paid).toBe(false);
-      expect(d.verify).toEqual({ route: 'white', outcome: 'missing' });
+      expect(d.verify).toEqual({ route: 'white', outcome: 'missing', reason: 'kaid-absent' });
     });
     it('LEGACY-TOLERANT: no expectedAdId → routes by base signal (existing campaigns never break)', () => {
       const legacy: RedirectConfig = { ...base, verifyMode: 'enforce' }; // no expectedAdId
@@ -269,7 +269,7 @@ describe('resolveRedirect — Whop click-time check (D38)', () => {
     });
     it('not paid at all → white, "na"', () => {
       const d = resolveRedirect(whopCfg, { utm_source: 'google' }, { txid: 't' });
-      expect(d.verify).toEqual({ route: 'white', outcome: 'na' });
+      expect(d.verify).toEqual({ route: 'white', outcome: 'na', reason: 'not-paid' });
     });
     it('an explicit whopGate "observe" is the same as unset', () => {
       const d = resolveRedirect({ ...whopCfg, whopGate: 'observe' }, STATIC, { txid: 't' });
@@ -287,12 +287,12 @@ describe('resolveRedirect — Whop click-time check (D38)', () => {
       const d = resolveRedirect(enforce, STATIC, { txid: 't' });
       expect(d.paid).toBe(false);
       expect(d.location).toBe('https://articles.example.com/');
-      expect(d.verify).toEqual({ route: 'white', outcome: 'missing' });
+      expect(d.verify).toEqual({ route: 'white', outcome: 'missing', reason: 'whop-no-match' });
     });
     it('an unfilled placeholder → white', () => {
       const d = resolveRedirect(enforce, { ...STATIC, utm_meta_ad_id: '{{ad.id}}' }, { txid: 't' });
       expect(d.paid).toBe(false);
-      expect(d.verify).toEqual({ route: 'white', outcome: 'mismatch' });
+      expect(d.verify).toEqual({ route: 'white', outcome: 'mismatch', reason: 'whop-no-match' });
     });
     it('a paused Whop campaign still goes white', () => {
       expect(resolveRedirect({ ...enforce, active: false }, { fbclid: 'x' }, { txid: 't' }).paid).toBe(true);
