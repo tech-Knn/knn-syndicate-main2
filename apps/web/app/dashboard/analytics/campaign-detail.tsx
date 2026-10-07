@@ -4,6 +4,7 @@ import { type ReactNode, useEffect, useId, useState } from 'react';
 import {
   type AdPerf,
   type CampaignBreakdown,
+  type CampaignDayPerf,
   type DimStat,
   type FunnelCounts,
   type OfferStat,
@@ -29,13 +30,14 @@ import styles from '../analytics.module.css';
 import { BudgetCell } from './budget-cell';
 import { fmtCount, infoFor, networkTag, relabel } from './columns';
 
-type Tab = 'ads' | 'websites' | 'countries' | 'hours';
+type Tab = 'ads' | 'websites' | 'countries' | 'hours' | 'byday';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'ads', label: 'Ads' },
   { id: 'websites', label: 'Websites' },
   { id: 'countries', label: 'Countries' },
   { id: 'hours', label: 'Hours' },
+  { id: 'byday', label: 'By day' },
 ];
 
 /** A breakdown row's Facebook + revenue numbers — every other column is derived from these. */
@@ -119,6 +121,27 @@ const AD_COLS: DetailCol<FunnelRow>[] = [
   ...FB_CONV_COLS,
 ];
 
+/** The per-day rows are the campaign's own totals, so the "Estimated" wording the per-ad split needs doesn't apply. */
+const DAY_INFO: Record<string, string> = {
+  revenue: 'AdSense earnings on this day.',
+  profit: 'Revenue − spend.',
+  roi: 'Profit ÷ spend.',
+  epv: 'Revenue ÷ visits (ClickFlare EPV). Green when it beats CPV.',
+  rpc: 'Revenue ÷ ad clicks (ClickFlare Dynamic payout).',
+};
+
+/**
+ * By day — the SAME metrics as the Ads tab, but these are the campaign's own per-day totals, so
+ * revenue isn't split across anything: no estimate chips, and no "estimated" in the tooltips.
+ */
+const DAY_COLS: DetailCol<FunnelRow>[] = AD_COLS.map((c) => ({ ...c, est: false, info: DAY_INFO[c.key] ?? c.info }));
+
+function dayLabel(day: string): string {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString('en-GB', {
+    timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short',
+  });
+}
+
 /**
  * Countries / Hours tabs — Facebook's breakdowns, so Facebook's clicks: our funnel events don't carry a
  * country, and Facebook's hours are in the ad account's time zone.
@@ -142,6 +165,13 @@ function sumRows(rows: readonly Row[]): Row {
       conversions: t.conversions + r.conversions,
     }),
     { spendUsd: 0, revenueUsd: 0, impressions: 0, clicks: 0, conversions: 0 },
+  );
+}
+
+function sumFunnelRows(rows: readonly FunnelCounts[]): FunnelCounts {
+  return rows.reduce<FunnelCounts>(
+    (t, r) => ({ visits: t.visits + r.visits, keywordClicks: t.keywordClicks + r.keywordClicks, adClicks: t.adClicks + r.adClicks }),
+    { visits: 0, keywordClicks: 0, adClicks: 0 },
   );
 }
 
@@ -213,6 +243,7 @@ export function CampaignDetail({
   const [tab, setTab] = useState<Tab>('ads');
   const [offers, setOffers] = useState<OfferStat[] | null>(null);
   const [dim, setDim] = useState<{ countries: DimStat[] | null; hours: DimStat[] | null }>({ countries: null, hours: null });
+  const [daily, setDaily] = useState<CampaignDayPerf[] | null>(null);
   const baseId = useId();
 
   useEffect(() => {
@@ -225,7 +256,10 @@ export function CampaignDetail({
         .then((rows) => setDim((d) => ({ ...d, [tab]: rows })))
         .catch(() => setDim((d) => ({ ...d, [tab]: [] })));
     }
-  }, [tab, offers, dim, campaignId, range]);
+    if (tab === 'byday' && daily === null) {
+      void stats.campaignDaily(campaignId, range).then(setDaily).catch(() => setDaily([]));
+    }
+  }, [tab, offers, dim, daily, campaignId, range]);
 
   const onTabKey = (e: React.KeyboardEvent): void => {
     const i = TABS.findIndex((t) => t.id === tab);
@@ -366,6 +400,45 @@ export function CampaignDetail({
                         Total
                       </th>
                       <WebsiteCells r={sumOffers(offers)} />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </>
+          )
+        ) : tab === 'byday' ? (
+          daily === null ? (
+            <Skeleton className={admin.rowSkel} />
+          ) : daily.length === 0 ? (
+            <p className={admin.subtle}>No activity in this range.</p>
+          ) : (
+            <>
+              <p className={styles.detailNote}>
+                Each IST business day in the selected range — the campaign&apos;s own totals, so every
+                number here is exact.
+              </p>
+              <div className={styles.detailScroll}>
+                <table className={`${admin.table} ${styles.detailTable}`}>
+                  <thead>
+                    <tr>
+                      <th scope="col" className={admin.thLeft}>Date</th>
+                      {DAY_COLS.map((c) => (
+                        <HeadCell key={c.key} label={relabel(c.label, tag)} info={infoFor(c.key, c.info, tag)} />
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {daily.map((d) => (
+                      <tr key={d.day}>
+                        <td className={admin.name}>{dayLabel(d.day)}</td>
+                        <MetricCells r={d} cols={DAY_COLS} />
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className={styles.detailTotal}>
+                      <th scope="row" className={admin.thLeft}>Total</th>
+                      <MetricCells r={{ ...sumRows(daily), ...sumFunnelRows(daily) }} cols={DAY_COLS} />
                     </tr>
                   </tfoot>
                 </table>
