@@ -374,9 +374,6 @@ function CampaignView({ id }: { id: string }) {
           <section className={styles.panel}>
             <div className={styles.panelHead}>
               <h2 className={styles.panelTitle}>By day</h2>
-              <p className={styles.panelSub}>
-                Each IST business day in the selected range. Same columns and definitions as Analytics.
-              </p>
             </div>
             {stats.daily ? <DailyTable rows={stats.daily} columns={columns} /> : <p className={styles.panelSub}>Loading…</p>}
           </section>
