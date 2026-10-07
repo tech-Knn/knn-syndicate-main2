@@ -24,9 +24,9 @@ import { ColumnPicker } from '../../analytics/column-picker';
 import { ALL_COLUMNS, ESSENTIAL_COLUMNS, type ColKey } from '../../analytics/columns';
 import { DailyTable } from './daily';
 
-type TabId = 'overview' | 'ads' | 'monetization' | 'routing' | 'setup';
-const TAB_IDS: TabId[] = ['overview', 'ads', 'monetization', 'routing', 'setup'];
-const TAB_LABEL: Record<TabId, string> = { overview: 'Overview', ads: 'Ads', monetization: 'Monetization', routing: 'Routing', setup: 'Setup' };
+type TabId = 'overview' | 'ads' | 'monetization' | 'routing' | 'setup' | 'byday';
+const TAB_IDS: TabId[] = ['overview', 'ads', 'monetization', 'routing', 'setup', 'byday'];
+const TAB_LABEL: Record<TabId, string> = { overview: 'Overview', ads: 'Ads', monetization: 'Monetization', routing: 'Routing', setup: 'Setup', byday: 'By day' };
 const POLL_MS = 8000;
 /** Its OWN key — the campaign page's columns are independent of the Analytics page's. */
 const CAMPAIGN_COLUMNS_KEY = 'knn.campaign.columns.v1';
@@ -369,6 +369,18 @@ function CampaignView({ id }: { id: string }) {
         return <RoutingTab campaign={c} />;
       case 'setup':
         return <CampaignWizard campaign={c} embedded />;
+      case 'byday':
+        return (
+          <section className={styles.panel}>
+            <div className={styles.panelHead}>
+              <h2 className={styles.panelTitle}>By day</h2>
+              <p className={styles.panelSub}>
+                Each IST business day in the selected range. Same columns and definitions as Analytics.
+              </p>
+            </div>
+            {stats.daily ? <DailyTable rows={stats.daily} columns={columns} /> : <p className={styles.panelSub}>Loading…</p>}
+          </section>
+        );
     }
   };
 
@@ -417,20 +429,6 @@ function CampaignView({ id }: { id: string }) {
           <SectionBoundary label={TAB_LABEL[tid]}>{panel(tid)}</SectionBoundary>
         </div>
       ))}
-      
-      {/* The campaign day by day, in the columns the buyer picked. Overview only — it belongs with the
-          numbers, not with Routing or Setup. */}
-      {tab === 'overview' && stats.daily && (
-        <section className={styles.panel}>
-          <div className={styles.panelHead}>
-            <h2 className={styles.panelTitle}>By day</h2>
-            <p className={styles.panelSub}>
-              Each IST business day in the selected range. Same columns and definitions as Analytics.
-            </p>
-          </div>
-          <DailyTable rows={stats.daily} columns={columns} />
-        </section>
-      )}
     </div>
   );
 }
