@@ -177,6 +177,18 @@ export interface AdPerf extends FunnelCounts {
   basis: string | null; // allocation basis of the latest day (conversions|clicks|impressions|unallocated)
 }
 
+/** One IST business day of a single campaign's performance. Deliberately the same metric inputs as a
+ *  campaign row, so the Analytics column registry renders a daily table with no per-column work. */
+export interface CampaignDayPerf extends FunnelCounts {
+  /** IST business day, "YYYY-MM-DD". */
+  day: string;
+  spendUsd: number;
+  revenueUsd: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+}
+
 export interface AdSetPerf extends FunnelCounts {
   id: string;
   name: string;

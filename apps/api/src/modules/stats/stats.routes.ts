@@ -5,6 +5,7 @@ import { authenticate, requireRole } from '../../middleware/authenticate.js';
 import {
   getBuyerRollup,
   getCampaignBreakdown,
+  getCampaignDailyBreakdown,
   getCampaignDimBreakdown,
   getCampaignOfferStats,
   getCampaignPerformance,
@@ -77,6 +78,19 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
       if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
       try {
         return reply.send(await getCampaignBreakdown(req.auth, req.params.id, parseRange(req.query)));
+      } catch (err) {
+        return handleRouteError(err, reply);
+      }
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: { from?: string; to?: string } }>(
+    '/campaigns/:id/daily',
+    { preHandler: [authenticate] },
+    async (req, reply) => {
+      if (!req.auth) return reply.code(401).send({ error: 'Unauthenticated' });
+      try {
+        return reply.send({ days: await getCampaignDailyBreakdown(req.auth, req.params.id, parseRange(req.query)) });
       } catch (err) {
         return handleRouteError(err, reply);
       }

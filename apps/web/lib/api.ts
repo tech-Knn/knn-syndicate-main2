@@ -40,6 +40,7 @@ import {
   type ArticleUsage,
   type BuyerRollup,
   type CampaignBreakdown,
+  type CampaignDayPerf,
   type CampaignDraftInput,
   type CampaignPerf,
   type ChannelRow,
@@ -666,6 +667,8 @@ export const stats = {
       .companies,
   campaignOffers: async (id: string, range?: RangeArg): Promise<OfferStat[]> =>
     (await parse<{ offers: OfferStat[] }>(await authedFetch(`/api/stats/campaigns/${id}/offers${rangeQs(range)}`))).offers,
+  campaignDaily: async (id: string, range?: RangeArg): Promise<CampaignDayPerf[]> =>
+    (await parse<{ days: CampaignDayPerf[] }>(await authedFetch(`/api/stats/campaigns/${id}/daily${rangeQs(range)}`))).days,
   campaignDim: async (id: string, dim: 'country' | 'hour', range?: RangeArg): Promise<DimStat[]> => {
     const q = rangeQs(range);
     return (await parse<{ rows: DimStat[] }>(await authedFetch(`/api/stats/campaigns/${id}/dim${q ? `${q}&` : '?'}dim=${dim}`))).rows;

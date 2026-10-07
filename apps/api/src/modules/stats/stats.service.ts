@@ -16,8 +16,10 @@ import {
   ROLES,
   type StatDim,
   type StatsSummary,
+  type CampaignDayPerf,
   SYNC_INTERVALS_SEC,
   SYNC_STATE_KEYS,
+  businessDay,
   addBusinessDays,
   allocateByWeights,
   businessDayBoundsUtc,
@@ -455,12 +457,81 @@ export async function getCampaignBreakdown(
 }
 
 /**
+ * Per-IST-day performance for ONE campaign — the campaign page's date-wise table. Returns the same
+ * metric inputs as a campaign row, so the Analytics columns render it unchanged. Cost + FB counts come
+ * from `ad_stats_daily`, revenue from `ad_revenue_daily` (the ALLOCATED `visibleUsdMinor`, same as the
+ * totals above the table, so the rows sum to them). The funnel is timestamped rather than day-keyed,
+ * so it is folded into business days here. Every day in range is returned, zero-filled: a dead day
+ * must read as a gap, not go missing.
+ */
+export async function getCampaignDailyBreakdown(
+  auth: AuthContext,
+  campaignId: string,
+  range: DateRange,
+): Promise<CampaignDayPerf[]> {
+  return runScoped(auth, async (tx) => {
+    const campaign = await tx.campaign.findUnique({
+      where: { id: campaignId },
+      select: { id: true, buyerId: true, adSets: { select: { ads: { select: { id: true } } } } },
+    });
+    if (!campaign || (auth.role === ROLES.MEDIA_BUYER && campaign.buyerId !== auth.userId)) {
+      throw new AppError(404, 'Campaign not found');
+    }
+
+    const adIds = campaign.adSets.flatMap((s) => s.ads.map((a) => a.id));
+    const where = { day: { gte: range.from, lte: range.to }, adId: { in: adIds } };
+    const { start, end } = rangeBoundsUtc(range);
+
+    const [statRows, revRows, funnelRows] = await Promise.all([
+      adIds.length
+        ? tx.adStatsDaily.groupBy({
+            by: ['day'],
+            where,
+            _sum: { spendUsdMinor: true, impressions: true, clicks: true, conversions: true },
+          })
+        : Promise.resolve([]),
+      adIds.length
+        ? tx.adRevenueDaily.groupBy({ by: ['day'], where, _sum: { visibleUsdMinor: true } })
+        : Promise.resolve([]),
+      tx.conversionEvent.findMany({
+        where: { campaignId, eventName: { in: FUNNEL_EVENTS }, createdAt: { gte: start, lt: end } },
+        select: { eventName: true, createdAt: true },
+      }),
+    ]);
+
+    const statByDay = new Map(statRows.map((r) => [r.day, r._sum]));
+    const revByDay = new Map(revRows.map((r) => [r.day, r._sum.visibleUsdMinor ?? 0]));
+    // Same fold as the per-ad breakdown, keyed by business day instead of ad id.
+    const funnelByDay = foldFunnel(
+      funnelRows.map((r) => ({ key: businessDay(r.createdAt), eventName: r.eventName, count: 1 })),
+    );
+
+    const days: string[] = [];
+    for (let d = range.to; d >= range.from; d = addBusinessDays(d, -1)) days.push(d);
+
+    return days.map((day): CampaignDayPerf => {
+      const s = statByDay.get(day);
+      return {
+        day,
+        spendUsd: round2(centsToDollars(s?.spendUsdMinor ?? 0)),
+        revenueUsd: round2(centsToDollars(revByDay.get(day) ?? 0)),
+        impressions: s?.impressions ?? 0,
+        clicks: s?.clicks ?? 0,
+        conversions: s?.conversions ?? 0,
+        ...(funnelByDay.get(day) ?? { ...NO_FUNNEL }),
+      };
+    });
+  });
+}
+
+/**
  * Per-dimension (country / hour) breakdown for one campaign over a range. Cost +
  * the conversion signal come from `ad_stats_dim_daily` (FB breakdown insights);
  * revenue is allocated from the campaign's total over the range by conversion
  * share (→ clicks → impressions), the same D8 principle as the ad-level split,
  * since AFS revenue has no geo/hour dimension. 404 if out of scope; [] if no data.
  */
+
 export async function getCampaignDimBreakdown(
   auth: AuthContext,
   campaignId: string,

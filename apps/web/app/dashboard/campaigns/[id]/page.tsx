@@ -20,11 +20,16 @@ import { RoutingTab } from './routing';
 import { HAS_DELIVERY, networkName, statusMeta } from './status';
 import { LAUNCHABLE, StatusCard } from './status-card';
 import { type RangeKey, useCampaignStats } from './use-stats';
+import { ColumnPicker } from '../../analytics/column-picker';
+import { ALL_COLUMNS, ESSENTIAL_COLUMNS, type ColKey } from '../../analytics/columns';
+import { DailyTable } from './daily';
 
 type TabId = 'overview' | 'ads' | 'monetization' | 'routing' | 'setup';
 const TAB_IDS: TabId[] = ['overview', 'ads', 'monetization', 'routing', 'setup'];
 const TAB_LABEL: Record<TabId, string> = { overview: 'Overview', ads: 'Ads', monetization: 'Monetization', routing: 'Routing', setup: 'Setup' };
 const POLL_MS = 8000;
+/** Its OWN key — the campaign page's columns are independent of the Analytics page's. */
+const CAMPAIGN_COLUMNS_KEY = 'knn.campaign.columns.v1';
 
 function PageSkeleton() {
   return (
@@ -85,6 +90,27 @@ function CampaignView({ id }: { id: string }) {
   // Tabs already opened stay mounted (hidden), so what someone has typed in one is not lost by looking at another.
   const [opened, setOpened] = useState<Set<TabId>>(() => new Set<TabId>(['overview']));
   const [range, setRange] = useState<RangeKey>('7d');
+  const [columns, setColumns] = useState<ColKey[]>(ESSENTIAL_COLUMNS);
+  // Read in an effect, not the initializer, so server and first client render agree (no hydration mismatch).
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CAMPAIGN_COLUMNS_KEY);
+      const parsed: unknown = raw ? JSON.parse(raw) : null;
+      if (!Array.isArray(parsed)) return;
+      const valid = parsed.filter((k): k is ColKey => ALL_COLUMNS.includes(k as ColKey));
+      if (valid.length) setColumns(valid);
+    } catch {
+      /* private mode or bad JSON → the defaults stand */
+    }
+  }, []);
+  const chooseColumns = (next: ColKey[]): void => {
+    setColumns(next);
+    try {
+      localStorage.setItem(CAMPAIGN_COLUMNS_KEY, JSON.stringify(next));
+    } catch {
+      /* not worth surfacing — the choice still applies for this visit */
+    }
+  };
   const loaded = useRef(false);
 
   const load = useCallback(() => {
@@ -353,9 +379,12 @@ function CampaignView({ id }: { id: string }) {
         menu={menu}
         actions={
           HAS_DELIVERY.has(c.status) ? (
-            <Button variant="secondary" onClick={() => router.push(`/dashboard/analytics?campaign=${c.id}`)}>
-              <IconAnalytics size={16} /> Analytics
-            </Button>
+            <>
+              <ColumnPicker value={columns} onChange={chooseColumns} tag={c.adProvider === 'WHOP' ? 'Whop' : 'FB'} />
+              <Button variant="secondary" onClick={() => router.push(`/dashboard/analytics?campaign=${c.id}`)}>
+                <IconAnalytics size={16} /> Analytics
+              </Button>
+            </>
           ) : undefined
         }
       />
@@ -388,6 +417,20 @@ function CampaignView({ id }: { id: string }) {
           <SectionBoundary label={TAB_LABEL[tid]}>{panel(tid)}</SectionBoundary>
         </div>
       ))}
+      
+      {/* The campaign day by day, in the columns the buyer picked. Overview only — it belongs with the
+          numbers, not with Routing or Setup. */}
+      {tab === 'overview' && stats.daily && (
+        <section className={styles.panel}>
+          <div className={styles.panelHead}>
+            <h2 className={styles.panelTitle}>By day</h2>
+            <p className={styles.panelSub}>
+              Each IST business day in the selected range. Same columns and definitions as Analytics.
+            </p>
+          </div>
+          <DailyTable rows={stats.daily} columns={columns} />
+        </section>
+      )}
     </div>
   );
 }

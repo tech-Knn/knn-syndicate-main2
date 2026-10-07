@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { type CampaignBreakdown, addBusinessDays, currentBusinessDay } from '@knn/shared';
+import { type CampaignBreakdown, type CampaignDayPerf, addBusinessDays, currentBusinessDay } from '@knn/shared';
 import { stats } from '@/lib/api';
 
 export type RangeKey = 'today' | '7d' | '30d';
@@ -29,6 +29,8 @@ export interface SyncInfo {
 
 export interface CampaignStats {
   data: CampaignBreakdown | null;
+  /** One row per IST business day in the range, newest first. Null while loading or if it failed. */
+  daily: CampaignDayPerf[] | null;
   loading: boolean;
   failed: boolean;
   /** When the hourly numbers last refreshed, and how often they do. */
@@ -39,6 +41,7 @@ export interface CampaignStats {
 /** The campaign's numbers for a range, read once per change and re-read on demand; `enabled` false = nothing to show yet. */
 export function useCampaignStats(id: string, enabled: boolean, range: RangeKey): CampaignStats {
   const [data, setData] = useState<CampaignBreakdown | null>(null);
+  const [daily, setDaily] = useState<CampaignDayPerf[] | null>(null);
   const [loading, setLoading] = useState(enabled);
   const [failed, setFailed] = useState(false);
   const [sync, setSync] = useState<SyncInfo | null>(null);
@@ -53,10 +56,16 @@ export function useCampaignStats(id: string, enabled: boolean, range: RangeKey):
     let alive = true;
     setLoading(true);
     setFailed(false);
-    void Promise.all([stats.campaignBreakdown(id, rangeFor(range)), stats.syncStatus().catch(() => null)])
-      .then(([d, s]) => {
+    void Promise.all([
+      stats.campaignBreakdown(id, rangeFor(range)),
+      // Its own catch: a new endpoint failing must never take the existing numbers off the page.
+      stats.campaignDaily(id, rangeFor(range)).catch(() => null),
+      stats.syncStatus().catch(() => null),
+    ])
+      .then(([d, days, s]) => {
         if (!alive) return;
         setData(d);
+        setDaily(days);
         setSync(s?.metrics ?? null);
         loadedAt.current = Date.now();
       })
@@ -86,5 +95,5 @@ export function useCampaignStats(id: string, enabled: boolean, range: RangeKey):
   }, [enabled]);
 
   const reload = useCallback(() => setTick((t) => t + 1), []);
-  return { data, loading, failed, sync, reload };
+  return { data, daily, loading, failed, sync, reload };
 }
