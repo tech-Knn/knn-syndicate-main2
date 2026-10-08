@@ -1,6 +1,6 @@
 'use client';
 
-import { type ReactNode, useEffect, useId, useState } from 'react';
+import { type ReactNode, useEffect, useId, useMemo, useState } from 'react';
 import {
   type AdPerf,
   type CampaignBreakdown,
@@ -28,7 +28,7 @@ import { campaigns as campaignApi, stats } from '@/lib/api';
 import admin from '../admin.module.css';
 import styles from '../analytics.module.css';
 import { BudgetCell } from './budget-cell';
-import { fmtCount, infoFor, networkTag, relabel } from './columns';
+import { type ColKey, fmtCount, infoFor, networkTag, relabel } from './columns';
 
 type Tab = 'ads' | 'websites' | 'countries' | 'hours' | 'byday';
 
@@ -155,6 +155,16 @@ const DIM_COLS: DetailCol<Row>[] = [
   { key: 'cvrFb', label: 'CVR (FB)', info: 'Conv (FB) ÷ FB clicks — the ad-click rate as Facebook sees it.', cell: (r) => formatRate(perVisit(r.conversions, r.clicks)) },
 ];
 
+/**
+ * A breakdown's columns, in the ORDER the buyer ticked them in the Columns picker. Falls back to the
+ * full set when none of their choices exist here (a few picker columns — keyword clicks, ad clicks,
+ * impressions, land rate — have no per-ad/day equivalent), so the table is never just a name column.
+ */
+function pickCols<R>(all: readonly DetailCol<R>[], columns: readonly ColKey[]): DetailCol<R>[] {
+  const chosen = columns.flatMap((k) => all.find((c) => c.key === k) ?? []);
+  return chosen.length ? chosen : [...all];
+}
+
 function sumRows(rows: readonly Row[]): Row {
   return rows.reduce<Row>(
     (t, r) => ({
@@ -233,11 +243,14 @@ export function CampaignDetail({
   campaignId,
   bd,
   range,
+  columns,
   onError,
 }: {
   campaignId: string;
   bd: CampaignBreakdown | undefined;
   range: DateRange;
+  /** The Columns picker's selection, in the buyer's own order — the breakdowns follow the main table. */
+  columns: ColKey[];
   onError: (msg: string) => void;
 }): ReactNode {
   const [tab, setTab] = useState<Tab>('ads');
@@ -245,6 +258,10 @@ export function CampaignDetail({
   const [dim, setDim] = useState<{ countries: DimStat[] | null; hours: DimStat[] | null }>({ countries: null, hours: null });
   const [daily, setDaily] = useState<CampaignDayPerf[] | null>(null);
   const baseId = useId();
+  const adCols = useMemo(() => pickCols(AD_COLS, columns), [columns]);
+  const dimCols = useMemo(() => pickCols(DIM_COLS, columns), [columns]);
+  const dayCols = useMemo(() => pickCols(DAY_COLS, columns), [columns]);
+  const showBudget = columns.includes('budget');
 
   useEffect(() => {
     if (tab === 'websites' && offers === null) {
@@ -326,15 +343,17 @@ export function CampaignDetail({
                       <th scope="col" className={admin.thLeft}>
                         Ad set / Ad
                       </th>
-                      {AD_COLS.map((c) => (
+                      {adCols.map((c) => (
                         <HeadCell key={c.key} label={relabel(c.label, tag)} info={infoFor(c.key === 'revenue' ? 'detail:revenue' : c.key, c.info, tag)} est={c.est} />
                       ))}
-                      <HeadCell label="Budget" info={`The ad set's daily budget. Click to edit — goes live on ${whop ? 'Whop' : 'Facebook'}.`} />
+                      {showBudget && (
+                        <HeadCell label="Budget" info={`The ad set's daily budget. Click to edit — goes live on ${whop ? 'Whop' : 'Facebook'}.`} />
+                      )}
                     </tr>
                   </thead>
                   <tbody>
                     {bd.adSets.map((set) => (
-                      <SetRows key={set.id} campaignId={campaignId} set={set} whop={whop} minBudgetCents={whop ? 1 : 200} onError={onError} />
+                      <SetRows key={set.id} campaignId={campaignId} set={set} cols={adCols} showBudget={showBudget} whop={whop} minBudgetCents={whop ? 1 : 200} onError={onError} />
                     ))}
                   </tbody>
                   <tfoot>
@@ -342,8 +361,8 @@ export function CampaignDetail({
                       <th scope="row" className={admin.thLeft}>
                         Campaign total
                       </th>
-                      <MetricCells r={bd.totals} cols={AD_COLS} />
-                      <td />
+                      <MetricCells r={bd.totals} cols={adCols} />
+                      {showBudget && <td />}
                     </tr>
                   </tfoot>
                 </table>
@@ -413,16 +432,12 @@ export function CampaignDetail({
             <p className={admin.subtle}>No activity in this range.</p>
           ) : (
             <>
-              <p className={styles.detailNote}>
-                Each IST business day in the selected range — the campaign&apos;s own totals, so every
-                number here is exact.
-              </p>
               <div className={styles.detailScroll}>
                 <table className={`${admin.table} ${styles.detailTable}`}>
                   <thead>
                     <tr>
                       <th scope="col" className={admin.thLeft}>Date</th>
-                      {DAY_COLS.map((c) => (
+                      {dayCols.map((c) => (
                         <HeadCell key={c.key} label={relabel(c.label, tag)} info={infoFor(c.key, c.info, tag)} />
                       ))}
                     </tr>
@@ -431,14 +446,14 @@ export function CampaignDetail({
                     {daily.map((d) => (
                       <tr key={d.day}>
                         <td className={admin.name}>{dayLabel(d.day)}</td>
-                        <MetricCells r={d} cols={DAY_COLS} />
+                        <MetricCells r={d} cols={dayCols} />
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr className={styles.detailTotal}>
                       <th scope="row" className={admin.thLeft}>Total</th>
-                      <MetricCells r={{ ...sumRows(daily), ...sumFunnelRows(daily) }} cols={DAY_COLS} />
+                      <MetricCells r={{ ...sumRows(daily), ...sumFunnelRows(daily) }} cols={dayCols} />
                     </tr>
                   </tfoot>
                 </table>
@@ -467,7 +482,7 @@ export function CampaignDetail({
                     <th scope="col" className={admin.thLeft}>
                       {tab === 'countries' ? 'Country' : 'Hour (ad account time)'}
                     </th>
-                    {DIM_COLS.map((c) => (
+                    {dimCols.map((c) => (
                       <HeadCell key={c.key} label={relabel(c.label, tag)} info={infoFor(c.key === 'revenue' ? 'detail:revenue' : c.key, c.info, tag)} est={c.est} />
                     ))}
                   </tr>
@@ -476,7 +491,7 @@ export function CampaignDetail({
                   {dimRows.map((d) => (
                     <tr key={d.dimValue}>
                       <td className={admin.name}>{d.dimValue}</td>
-                      <MetricCells r={d} cols={DIM_COLS} />
+                      <MetricCells r={d} cols={dimCols} />
                     </tr>
                   ))}
                 </tbody>
@@ -485,7 +500,7 @@ export function CampaignDetail({
                     <th scope="row" className={admin.thLeft}>
                       Total
                     </th>
-                    <MetricCells r={sumRows(dimRows)} cols={DIM_COLS} />
+                    <MetricCells r={sumRows(dimRows)} cols={dimCols} />
                   </tr>
                 </tfoot>
               </table>
@@ -497,7 +512,7 @@ export function CampaignDetail({
   );
 }
 
-function SetRows({ campaignId, set, whop, minBudgetCents, onError }: { campaignId: string; set: CampaignBreakdown['adSets'][number]; whop: boolean; minBudgetCents: number; onError: (msg: string) => void }) {
+function SetRows({ campaignId, set, cols, showBudget, whop, minBudgetCents, onError }: { campaignId: string; set: CampaignBreakdown['adSets'][number]; cols: DetailCol<FunnelRow>[]; showBudget: boolean; whop: boolean; minBudgetCents: number; onError: (msg: string) => void }) {
   return (
     <>
       <tr className={styles.setRow}>
@@ -506,17 +521,19 @@ function SetRows({ campaignId, set, whop, minBudgetCents, onError }: { campaignI
             {set.name} <FbStatusBadge status={set.effectiveStatus} />
           </span>
         </th>
-        <MetricCells r={set} cols={AD_COLS} />
-        <td className={admin.num}>
-          <BudgetCell
-            cents={set.dailyBudgetCents}
-            editable={set.editableBudget}
-            label={set.name}
-            minCents={minBudgetCents}
-            save={(c) => campaignApi.setAdSetBudget(campaignId, set.id, c)}
-            onError={onError}
-          />
-        </td>
+        <MetricCells r={set} cols={cols} />
+        {showBudget && (
+          <td className={admin.num}>
+            <BudgetCell
+              cents={set.dailyBudgetCents}
+              editable={set.editableBudget}
+              label={set.name}
+              minCents={minBudgetCents}
+              save={(c) => campaignApi.setAdSetBudget(campaignId, set.id, c)}
+              onError={onError}
+            />
+          </td>
+        )}
       </tr>
       {set.ads.map((ad) => {
         const note = basisNote(ad.basis, whop);
@@ -528,8 +545,8 @@ function SetRows({ campaignId, set, whop, minBudgetCents, onError }: { campaignI
               </span>
               {note && <span className={styles.cellSub}>{note}</span>}
             </th>
-            <MetricCells r={ad} cols={AD_COLS} />
-            <td className={admin.subtle} />
+            <MetricCells r={ad} cols={cols} />
+            {showBudget && <td className={admin.subtle} />}
           </tr>
         );
       })}

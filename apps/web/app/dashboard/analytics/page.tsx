@@ -714,7 +714,7 @@ export default function AnalyticsPage() {
                         <tr id={detailId} className={styles.detailRow}>
                           <td colSpan={colSpan}>
                             <div className={styles.detailPin}>
-                              <CampaignDetail campaignId={r.id} bd={breakdowns[r.id]} range={range} onError={setError} />
+                              <CampaignDetail campaignId={r.id} bd={breakdowns[r.id]} range={range} columns={columns} onError={setError} />
                             </div>
                           </td>
                         </tr>
