@@ -116,7 +116,13 @@ export async function exchangeForLongLivedToken(
     },
     appKind,
   });
-  return { accessToken: r.access_token, expiresInSec: r.expires_in ?? 60 * 24 * 3_600 };
+  // Guard against Meta returning expires_in = 0 (observed on Facebook Login for Business when
+  // re-upgrading a token that already carries a session-scoped expiry): `??` only falls back on
+  // null/undefined, so a literal 0 would be stored as `now()` and the connection would read
+  // "expired 1 min ago" immediately. Treat ≤ 0 as "Meta didn't give us a usable value" and
+  // fall back to the ~60-day default like we do for a missing field.
+  const expiresInSec = r.expires_in && r.expires_in > 0 ? r.expires_in : 60 * 24 * 3_600;
+  return { accessToken: r.access_token, expiresInSec };
 }
 
 export async function getMe(
